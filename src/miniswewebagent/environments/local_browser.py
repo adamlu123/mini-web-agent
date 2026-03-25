@@ -6,6 +6,7 @@ import json
 import os
 import re
 import textwrap
+import time
 import traceback
 from pathlib import Path
 from typing import Any
@@ -176,6 +177,70 @@ class LocalBrowserEnvironment:
             await asyncio.sleep(0.5)
         raise RuntimeError(f"Page did not finish rendering for {start_url!r}.")
 
+    async def _wait_for_observation_ready(self) -> None:
+        timeout_ms = max(self.config.observation_timeout_ms, 1000)
+        deadline = time.monotonic() + (timeout_ms / 1000)
+
+        remaining_ms = max(int((deadline - time.monotonic()) * 1000), 1)
+        try:
+            await self._page.wait_for_load_state("domcontentloaded", timeout=min(remaining_ms, 3000))
+        except Exception:
+            return
+
+        for load_state in ("load", "networkidle"):
+            remaining_ms = max(int((deadline - time.monotonic()) * 1000), 1)
+            if remaining_ms <= 1:
+                break
+            try:
+                await self._page.wait_for_load_state(load_state, timeout=min(remaining_ms, 3000))
+            except Exception:
+                continue
+
+        stable_samples = 0
+        last_snapshot: tuple[str, str, str, int, int] | None = None
+        settle_started = time.monotonic()
+        minimum_settle_seconds = min(0.75, max((timeout_ms / 1000) * 0.5, 0.25))
+        while time.monotonic() < deadline:
+            remaining_seconds = max(deadline - time.monotonic(), 0.1)
+            try:
+                snapshot = await asyncio.wait_for(
+                    self._page.evaluate(
+                        """
+                        () => {
+                          const body = document.body;
+                          const text = body?.innerText?.trim() || "";
+                          return [
+                            window.location.href || "",
+                            document.readyState || "",
+                            document.title || "",
+                            body?.querySelectorAll?.('*')?.length || 0,
+                            text.length,
+                          ];
+                        }
+                        """
+                    ),
+                    timeout=min(remaining_seconds, 1.0),
+                )
+            except Exception:
+                return
+
+            current_snapshot = tuple(snapshot)
+            ready_state = current_snapshot[1]
+            text_length = current_snapshot[4]
+            dom_count = current_snapshot[3]
+            looks_ready = ready_state == "complete" and (text_length > 0 or dom_count > 20)
+            settle_elapsed = time.monotonic() - settle_started
+
+            if looks_ready and current_snapshot == last_snapshot and settle_elapsed >= minimum_settle_seconds:
+                stable_samples += 1
+                if stable_samples >= 2:
+                    return
+            else:
+                stable_samples = 0
+
+            last_snapshot = current_snapshot
+            await asyncio.sleep(0.25)
+
     def _on_console(self, message) -> None:
         line = f"[{message.type}] {message.text}"
         self._console_history.append(line)
@@ -204,7 +269,7 @@ class LocalBrowserEnvironment:
                     self._run_python_code(python_code),
                     timeout=self.config.step_execution_timeout_ms / 1000,
                 )
-            await asyncio.sleep(0.2)
+            await self._wait_for_observation_ready()
         except Exception as exc:
             success = False
             exception_text = "".join(

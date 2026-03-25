@@ -43,3 +43,19 @@ set -a && source /Users/lu/Documents/sandbox/cred.sh >/dev/null 2>&1 && source .
 ```bash
 mini-web --task-id 871e7771cecb989972f138ecc373107b
 ```
+
+5. Run the Online-Mind2Web benchmark JSON in batch mode:
+
+```bash
+mini-web-om2w --tasks-file /Users/lu/Documents/sandbox/Online-Mind2Web/om2w_260220.json --limit 5
+```
+
+By default, `mini-web-om2w` now uses a Browserbase cloud session profile from `benchmark/browserbase.yaml`. It expects `BROWSERBASE_API_KEY` and `BROWSERBASE_PROJECT_ID` in the environment.
+
+If you want to force a local browser run instead, disable it explicitly:
+
+```bash
+mini-web-om2w --tasks-file /Users/lu/Documents/sandbox/Online-Mind2Web/om2w_260220.json --limit 5 -c mini.yaml -c environment.browserbase_enabled=false
+```
+
+The legacy `mini-web-batch` command still works and now points at the same benchmark runner under `src/miniswewebagent/run/benchmarks/`.

@@ -14,6 +14,10 @@ src/miniswewebagent/config/__init__.py
 src/miniswewebagent/config/inspector.tcss
 src/miniswewebagent/config/mini.yaml
 src/miniswewebagent/config/__pycache__/__init__.cpython-312.pyc
+src/miniswewebagent/config/__pycache__/__init__.cpython-314.pyc
+src/miniswewebagent/config/benchmark/browserbase.yaml
+src/miniswewebagent/config/benchmark/webtaibench.yaml
+src/miniswewebagent/config/benchmark/webtaibench_xml.yaml
 src/miniswewebagent/environments/__init__.py
 src/miniswewebagent/environments/local_browser.py
 src/miniswewebagent/models/__init__.py
@@ -21,6 +25,8 @@ src/miniswewebagent/models/phyagi_model.py
 src/miniswewebagent/run/__init__.py
 src/miniswewebagent/run/mini.py
 src/miniswewebagent/run/om2w_batch.py
+src/miniswewebagent/run/benchmarks/__init__.py
+src/miniswewebagent/run/benchmarks/om2w.py
 src/miniswewebagent/run/utilities/__init__.py
 src/miniswewebagent/run/utilities/inspector.py
 src/miniswewebagent/run/utilities/mini_extra.py
@@ -29,4 +35,7 @@ src/miniswewebagent/tasks/om2w.py
 src/miniswewebagent/utils/__init__.py
 src/miniswewebagent/utils/runtime.py
 src/miniswewebagent/utils/serialize.py
+tests/test_end_to_end_smoke.py
 tests/test_local_browser_environment.py
+tests/test_om2w_batch_cli.py
+tests/test_phyagi_model.py

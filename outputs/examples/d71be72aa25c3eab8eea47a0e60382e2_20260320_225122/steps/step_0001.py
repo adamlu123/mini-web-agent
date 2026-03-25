@@ -1,1 +1,0 @@
-await page.goto('https://www.apple.com/', wait_until='domcontentloaded')

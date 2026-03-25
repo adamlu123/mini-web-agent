@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from time import monotonic
 
 from miniswewebagent.environments.local_browser import LocalBrowserEnvironment
 
@@ -90,6 +91,96 @@ assert value == '2', value
     assert (tmp_path / "artifacts" / "steps" / "step_0001.py").exists()
     assert (tmp_path / "artifacts" / "steps" / "step_0002.py").exists()
     assert (tmp_path / "artifacts" / "steps" / "step_0003.py").exists()
+
+
+def test_local_browser_environment_waits_for_post_action_render(tmp_path: Path) -> None:
+        html_path = tmp_path / "delayed.html"
+        html_path.write_text(
+                """
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <title>Delayed Render</title>
+    </head>
+    <body>
+        <main>
+            <p id="status">Idle</p>
+            <button id="start">Start</button>
+        </main>
+        <script>
+            document.getElementById('start').addEventListener('click', () => {
+                setTimeout(() => {
+                    document.title = 'Delayed Render Complete';
+                    document.getElementById('status').textContent = 'Finished loading';
+                    console.log('delayed-render-complete');
+                }, 700);
+            });
+        </script>
+    </body>
+</html>
+                """.strip(),
+                encoding="utf-8",
+        )
+
+        env = LocalBrowserEnvironment(
+                headless=True,
+                devtools=False,
+                keep_open_on_exit=False,
+                prompt_before_close=False,
+                slow_mo_ms=0,
+                browser_timeout_ms=3000,
+                browser_navigation_timeout_ms=3000,
+                step_execution_timeout_ms=3000,
+                observation_timeout_ms=2000,
+                output_dir=tmp_path / "artifacts",
+        )
+
+        env.prepare(start_url=html_path.resolve().as_uri(), task="probe", task_id="probe")
+        step = env.execute(
+                {
+                        "python_code": """
+await page.get_by_role('button', name='Start').click()
+""".strip()
+                }
+        )
+
+        assert step["returncode"] == 0
+        assert step["observation"]["success"] is True
+        assert step["observation"]["title"] == "Delayed Render Complete"
+        assert "Finished loading" in step["observation"]["aria_snapshot"]
+        assert "delayed-render-complete" in step["observation"]["recent_console"]
+
+        env.close()
+
+
+def test_observation_ready_does_not_spin_until_navigation_timeout(tmp_path: Path) -> None:
+    class FakePage:
+        def __init__(self) -> None:
+            self.load_states: list[str] = []
+            self.evaluate_calls = 0
+
+        async def wait_for_load_state(self, load_state: str, timeout: int = 0) -> None:
+            self.load_states.append(load_state)
+
+        async def evaluate(self, script: str):
+            self.evaluate_calls += 1
+            return ["https://example.com", "complete", "Ready", 25, 100]
+
+    env = LocalBrowserEnvironment(
+        observation_timeout_ms=800,
+        browser_navigation_timeout_ms=45000,
+        output_dir=tmp_path / "artifacts",
+    )
+    env._page = FakePage()
+
+    started = monotonic()
+    env._run(env._wait_for_observation_ready())
+    elapsed = monotonic() - started
+
+    assert elapsed < 2
+    assert env._page.load_states.count("domcontentloaded") == 1
+    assert env._page.evaluate_calls >= 2
 
 
 def test_local_browser_environment_prepare_navigates_on_reuse(tmp_path: Path) -> None:

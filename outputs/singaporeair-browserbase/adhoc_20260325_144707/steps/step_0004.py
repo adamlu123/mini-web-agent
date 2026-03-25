@@ -1,5 +1,0 @@
-from_box = page.get_by_role('textbox', name='From')
-await from_box.click()
-await from_box.press('Meta+A')
-await from_box.fill('Singapore')
-await page.wait_for_timeout(1000)

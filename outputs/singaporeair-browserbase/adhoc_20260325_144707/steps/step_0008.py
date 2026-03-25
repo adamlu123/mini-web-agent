@@ -1,2 +1,0 @@
-await page.locator('textbox[name="Depart Date"], input[aria-label="Depart Date"]').first().scroll_into_view_if_needed()
-await page.locator('textbox[name="Depart Date"], input[aria-label="Depart Date"]').first().click()
