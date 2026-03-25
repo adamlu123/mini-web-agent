@@ -1,0 +1,1 @@
+await page.locator('div[role="dialog"], .calendar-root, .ui-datepicker, body').get_by_role('link').nth(1).click()

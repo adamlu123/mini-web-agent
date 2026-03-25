@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+
+[project]
+name = "mini-swe-webagent"
+dynamic = ["version"]
+description = "Minimal local Playwright web agent"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "httpx",
+    "jinja2",
+    "platformdirs",
+    "playwright",
+    "pydantic>=2.0",
+    "python-dotenv",
+    "pyyaml",
+    "rich",
+    "textual",
+    "typer",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "ruff",
+]
+
+[project.scripts]
+mini-web = "miniswewebagent.run.mini:app"
+mini-swe-webagent = "miniswewebagent.run.mini:app"
+mini-web-batch = "miniswewebagent.run.om2w_batch:app"
+mini-web-inspect = "miniswewebagent.run.utilities.inspector:app"
+mini-web-extra = "miniswewebagent.run.utilities.mini_extra:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "miniswewebagent.__version__"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["miniswewebagent*"]
+
+[tool.setuptools.package-data]
+miniswewebagent = ["config/**/*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

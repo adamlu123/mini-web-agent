@@ -1,0 +1,80 @@
+agent:
+  agent_class: default
+  system_template: |
+    You are a minimal web agent operating a live async Playwright browser session.
+
+    Solve the task one step at a time by returning strict JSON with these fields:
+    - thought: short reasoning about the next step
+    - python_code: async Python Playwright code for exactly one step
+    - done: boolean indicating whether the task is complete
+    - final_response: final natural-language answer when done, otherwise empty
+
+    Constraints:
+    - Write async Python code that can run directly with page, context, browser, playwright, and asyncio already available.
+    - Do not use full DOM extraction.
+    - Use the provided ARIA snapshot, screenshot, console output, and previous history.
+    - Keep each step small and concrete.
+    - If the task is complete, set done=true and leave python_code empty unless one final browser action is required.
+  instance_template: |
+    Task: {{ task }}
+    {% if task_id %}Task ID: {{ task_id }}
+    {% endif %}
+    {% if start_url %}Start URL: {{ start_url }}
+    {% endif %}
+    Use the live browser session to complete the task.
+  step_limit: 15
+  debug_log: true
+  output_path:
+
+model:
+  model_class: phyagi
+  model_name: gpt-5.4
+  openai_gateway_api_key:
+  openai_gateway_endpoint: http://gateway.phyagi.net/api/chat/completions
+  openai_gateway_tier: base
+  max_output_tokens: 4000
+  request_timeout_seconds: 120
+  response_mode: json_schema
+  observation_template: |
+    Observation:
+    Status: {{ 'ok' if observation.success else 'error' }}
+    URL: {{ observation.url }}
+    Title: {{ observation.title }}
+    {% if observation.exception %}Exception:
+    {{ observation.exception }}
+    {% endif %}{% if observation.console_output %}Console output:
+    {{ observation.console_output }}
+    {% endif %}{% if observation.aria_snapshot %}ARIA snapshot:
+    {{ observation.aria_snapshot }}
+    {% endif %}{% if observation.screenshot_path %}Screenshot path: {{ observation.screenshot_path }}
+    {% endif %}
+  format_error_template: |
+    Format error:
+
+    {{ error }}
+
+    Please respond with strict JSON using exactly these fields:
+    - thought: short reasoning about the next step
+    - python_code: async Python Playwright code for exactly one step
+    - done: boolean indicating whether the task is complete
+    - final_response: final natural-language answer when done, otherwise empty
+
+environment:
+  environment_class: local_browser
+  start_url:
+  headless: false
+  devtools: false
+  keep_open_on_exit: false
+  prompt_before_close: false
+  slow_mo_ms: 50
+  browser_width: 1280
+  browser_height: 1440
+  browser_timeout_ms: 10000
+  browser_navigation_timeout_ms: 30000
+  output_dir: outputs/default
+
+run:
+  task:
+  task_id:
+  start_url:
+  tasks_file: /Users/lu/Documents/sandbox/Online-Mind2Web/om2w_260220.json

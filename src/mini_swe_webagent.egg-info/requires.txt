@@ -1,0 +1,15 @@
+httpx
+jinja2
+platformdirs
+playwright
+pydantic>=2.0
+python-dotenv
+pyyaml
+rich
+textual
+typer
+
+[dev]
+pytest
+pytest-asyncio
+ruff

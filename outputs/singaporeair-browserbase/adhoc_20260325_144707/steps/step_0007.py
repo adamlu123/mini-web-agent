@@ -1,0 +1,1 @@
+await page.get_by_role('link', name='').last.click()

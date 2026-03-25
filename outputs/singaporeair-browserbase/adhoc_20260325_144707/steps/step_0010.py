@@ -1,0 +1,1 @@
+await page.goto('https://www.singaporeair.com/en_UK/us/home#/book/bookflight')

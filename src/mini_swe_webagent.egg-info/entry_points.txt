@@ -1,0 +1,6 @@
+[console_scripts]
+mini-swe-webagent = miniswewebagent.run.mini:app
+mini-web = miniswewebagent.run.mini:app
+mini-web-batch = miniswewebagent.run.om2w_batch:app
+mini-web-extra = miniswewebagent.run.utilities.mini_extra:main
+mini-web-inspect = miniswewebagent.run.utilities.inspector:app

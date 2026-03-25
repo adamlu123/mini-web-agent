@@ -1,0 +1,129 @@
+{
+  "info": {
+    "config": {
+      "agent": {
+        "system_template": "You are a minimal web agent operating a live async Playwright browser session.\n\nSolve the task one step at a time by returning strict JSON with these fields:\n- thought: short reasoning about the next step\n- python_code: async Python Playwright code for exactly one step\n- done: boolean indicating whether the task is complete\n- final_response: final natural-language answer when done, otherwise empty\n\nConstraints:\n- Write async Python code that can run directly with page, context, browser, playwright, and asyncio already available.\n- Do not use full DOM extraction.\n- Use the provided ARIA snapshot, screenshot, console output, and previous history.\n- Keep each step small and concrete.\n- If the task is complete, set done=true and leave python_code empty unless one final browser action is required.\n",
+        "instance_template": "Task: {{ task }}\n{% if task_id %}Task ID: {{ task_id }}\n{% endif %}\n{% if start_url %}Start URL: {{ start_url }}\n{% endif %}\nUse the live browser session to complete the task.\n",
+        "step_limit": 15,
+        "debug_log": true,
+        "output_path": "outputs/default/adhoc_20260325_105659/trajectory.json"
+      },
+      "agent_type": "miniswewebagent.agents.default.DefaultAgent"
+    },
+    "mini_version": "0.1.0",
+    "exit_status": "Submitted",
+    "submission": "Title: Example Domain; Heading: Example Domain",
+    "api_calls": 2
+  },
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a minimal web agent operating a live async Playwright browser session.\n\nSolve the task one step at a time by returning strict JSON with these fields:\n- thought: short reasoning about the next step\n- python_code: async Python Playwright code for exactly one step\n- done: boolean indicating whether the task is complete\n- final_response: final natural-language answer when done, otherwise empty\n\nConstraints:\n- Write async Python code that can run directly with page, context, browser, playwright, and asyncio already available.\n- Do not use full DOM extraction.\n- Use the provided ARIA snapshot, screenshot, console output, and previous history.\n- Keep each step small and concrete.\n- If the task is complete, set done=true and leave python_code empty unless one final browser action is required.",
+      "extra": {}
+    },
+    {
+      "role": "user",
+      "content": "Task: Tell me the page title and main heading.\n\nStart URL: https://example.com\n\nUse the live browser session to complete the task.",
+      "extra": {}
+    },
+    {
+      "role": "assistant",
+      "content": "Capture the current page state.",
+      "extra": {
+        "actions": [
+          {
+            "python_code": "await page.wait_for_load_state('domcontentloaded')"
+          }
+        ],
+        "done": false,
+        "final_response": "",
+        "raw_response": {
+          "thought": "Capture the current page state.",
+          "python_code": "await page.wait_for_load_state('domcontentloaded')",
+          "done": false,
+          "final_response": ""
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Observation:\nStatus: ok\nURL: https://example.com/\nTitle: Example Domain\nARIA snapshot:\n- heading \"Example Domain\" [level=1]\n- paragraph: This domain is for use in documentation examples without needing permission. Avoid use in operations.\n- paragraph:\n  - link \"Learn more\":\n    - /url: https://iana.org/domains/example\nScreenshot path: outputs/default/adhoc_20260325_105659/screenshots/step_0001.png"
+        },
+        {
+          "type": "input_image",
+          "image_url": "<omitted:data-url>",
+          "detail": "high"
+        }
+      ],
+      "extra": {
+        "observation": {
+          "success": true,
+          "exception": "",
+          "url": "https://example.com/",
+          "title": "Example Domain",
+          "screenshot_path": "outputs/default/adhoc_20260325_105659/screenshots/step_0001.png",
+          "aria_snapshot": "- heading \"Example Domain\" [level=1]\n- paragraph: This domain is for use in documentation examples without needing permission. Avoid use in operations.\n- paragraph:\n  - link \"Learn more\":\n    - /url: https://iana.org/domains/example",
+          "console_output": "",
+          "recent_console": ""
+        }
+      }
+    },
+    {
+      "role": "assistant",
+      "content": "The task is complete.",
+      "extra": {
+        "actions": [],
+        "done": true,
+        "final_response": "Title: Example Domain; Heading: Example Domain",
+        "raw_response": {
+          "thought": "The task is complete.",
+          "python_code": "",
+          "done": true,
+          "final_response": "Title: Example Domain; Heading: Example Domain"
+        }
+      }
+    },
+    {
+      "role": "exit",
+      "content": "Title: Example Domain; Heading: Example Domain",
+      "extra": {
+        "exit_status": "Submitted",
+        "submission": "Title: Example Domain; Heading: Example Domain",
+        "final_response": "Title: Example Domain; Heading: Example Domain"
+      }
+    }
+  ],
+  "trajectory_format": "mini-swe-webagent-0.1",
+  "model": {
+    "config": {
+      "model_name": "gpt-5.4",
+      "openai_gateway_api_key": "<redacted>",
+      "openai_gateway_endpoint": "http://127.0.0.1:8765",
+      "openai_gateway_tier": "base",
+      "max_output_tokens": 4000,
+      "request_timeout_seconds": 120
+    },
+    "model_type": "miniswewebagent.models.phyagi_model.PhyagiModel"
+  },
+  "environment": {
+    "config": {
+      "start_url": "https://example.com",
+      "headless": true,
+      "devtools": false,
+      "keep_open_on_exit": false,
+      "prompt_before_close": false,
+      "slow_mo_ms": 0,
+      "browser_width": 1280,
+      "browser_height": 1440,
+      "browser_timeout_ms": 5000,
+      "browser_navigation_timeout_ms": 10000,
+      "step_execution_timeout_ms": 20000,
+      "observation_timeout_ms": 3000,
+      "output_dir": "outputs/default/adhoc_20260325_105659"
+    },
+    "environment_type": "miniswewebagent.environments.local_browser.LocalBrowserEnvironment"
+  }
+}

@@ -1,0 +1,1 @@
+print(await page.locator('body').aria_snapshot())

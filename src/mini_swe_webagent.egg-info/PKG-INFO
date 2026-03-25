@@ -1,0 +1,64 @@
+Metadata-Version: 2.4
+Name: mini-swe-webagent
+Version: 0.1.0
+Summary: Minimal local Playwright web agent
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: httpx
+Requires-Dist: jinja2
+Requires-Dist: platformdirs
+Requires-Dist: playwright
+Requires-Dist: pydantic>=2.0
+Requires-Dist: python-dotenv
+Requires-Dist: pyyaml
+Requires-Dist: rich
+Requires-Dist: textual
+Requires-Dist: typer
+Provides-Extra: dev
+Requires-Dist: pytest; extra == "dev"
+Requires-Dist: pytest-asyncio; extra == "dev"
+Requires-Dist: ruff; extra == "dev"
+
+# mini-swe-webagent
+
+Minimal local-only web agent modeled after mini-swe-agent.
+
+Current implementation scope:
+
+- Local Playwright runtime instead of a shell environment
+- Phyagi gateway model client for structured step generation
+- Incremental Python Playwright code execution per step
+- Browser observations built from:
+  - `await page.locator("body").aria_snapshot()`
+  - current-step screenshot
+  - console output
+  - previous message history
+
+## Quick start
+
+1. Install dependencies:
+
+```bash
+pip install -e .
+playwright install chromium
+```
+
+2. Export gateway credentials:
+
+```bash
+export OPENAI_GATEWAY_API_KEY=...
+export OPENAI_GATEWAY_ENDPOINT=http://gateway.phyagi.net/api/chat/completions
+export OPENAI_GATEWAY_TIER=base
+```
+
+3. Run a single task:
+
+```bash
+mini-web -t "Find the current weather for Vancouver, British Columbia for the next seven days." --start-url https://www.theweathernetwork.com/
+```
+
+4. Run an Online-Mind2Web task by id:
+
+```bash
+mini-web --task-id 871e7771cecb989972f138ecc373107b
+```

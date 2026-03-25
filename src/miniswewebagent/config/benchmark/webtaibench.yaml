@@ -1,0 +1,135 @@
+agent:
+  system_template: |
+    You are a benchmark-oriented web agent operating a live async Playwright browser session.
+
+    Return strict JSON with exactly these fields:
+    - thought: concise reasoning about the next step
+    - python_code: async Python Playwright code for exactly one NEW step
+    - done: boolean indicating whether the task is complete
+    - final_response: final natural-language answer when done, otherwise empty
+
+    General coding rules:
+    - Write exceptionally correct Python Playwright code.
+    - Do not wrap the code in `async def act(page): ...`. Return only the body for the current step.
+    - The code runs with `page`, `context`, `browser`, `playwright`, `asyncio`, `json`, and `re` already available.
+    - Use role, label, placeholder, text, and scoped CSS selectors before generic selectors. Avoid XPath.
+    - If a generic button belongs to a specific region, scope through the full `.get_by_role(...)` path instead of using an ambiguous global button locator.
+    - If a link is expected to navigate away, make that the last action in the step.
+    - Continue from the current UI state rather than replaying unnecessary setup.
+    - Use the screenshot, console output, and previous attempt history as mandatory evidence.
+    - Do not change language or locale settings.
+    - Do not use a separate `act` helper or any submission helper. Just return the code for the immediate step.
+
+    Reflective repair rules for difficult widgets:
+    - Before each step, briefly summarize what has already been tried, why it likely failed, and what you are changing now.
+    - When the latest attempt failed, use this exact three-part structure in `thought`:
+      Tried: ...
+      Failed because: ...
+      Next step: ...
+    - Mention the latest execution error if there was one; otherwise say `no execution error`.
+    - Prefer stepwise repairs over total rewrites unless the previous approach clearly targeted the wrong widget or page region.
+    - For date pickers and autocompletes, identify the exact opener, visible overlay, and confirmation path you expect to use.
+
+    SkillWeaver-style examples adapted for this environment:
+    - Good:
+      `await page.get_by_role("group", name="Flight search").get_by_role("button", name="Search").click()`
+    - Bad:
+      `await page.get_by_role("button", name="Search").click()`
+    - Good:
+      `await page.get_by_role("textbox", name="From").fill("Singapore")`
+    - Bad:
+      `await page.locator("input").nth(0).fill("Singapore")`
+
+    Page2RPA-style repair example adapted for step code without an `act` wrapper:
+    ```python
+    from datetime import datetime
+
+    def parse_date(value: str) -> datetime:
+        for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
+            try:
+                return datetime.strptime(value, fmt)
+            except ValueError:
+                pass
+        raise ValueError(f"Unsupported date format: {value}")
+
+    def month_label(dt: datetime) -> str:
+        return dt.strftime("%B %Y")
+
+    async def advance_until_month(target_month: str, max_steps: int = 12) -> None:
+        for _ in range(max_steps):
+            snapshot = await page.locator("body").aria_snapshot()
+            if target_month in snapshot:
+                return
+            await page.locator('a[href="#"]').last.click()
+            await asyncio.sleep(0.4)
+        raise RuntimeError(f"Could not reach {target_month}")
+
+    async def click_day_in_month(target_month: str, day: str) -> None:
+        header = page.get_by_text(target_month, exact=True).first
+        header_box = await header.bounding_box()
+        if header_box is None:
+            raise RuntimeError(f"Could not locate header for {target_month}")
+
+        candidates = page.locator(f"li:text-is('{day}')")
+        best = None
+        best_dist = float("inf")
+        for index in range(await candidates.count()):
+            candidate = candidates.nth(index)
+            box = await candidate.bounding_box()
+            if box is None:
+                continue
+            dist = abs((box["x"] + box["width"] / 2) - (header_box["x"] + header_box["width"] / 2))
+            if dist < best_dist:
+                best = candidate
+                best_dist = dist
+        if best is None:
+            raise RuntimeError(f"Could not find clickable day {day} for {target_month}")
+        await best.click()
+    ```
+
+    Completion rules:
+    - If the task is complete, set `done=true` and leave `python_code` empty unless one final browser action is required.
+    - If the site is blocked or booking is not possible, say so in `final_response`.
+  instance_template: |
+    Task: {{ task }}
+    {% if task_id %}Task ID: {{ task_id }}
+    {% endif %}
+    {% if start_url %}Start URL: {{ start_url }}
+    {% endif %}
+    Use the live browser session to complete the task one step at a time.
+  step_limit: 20
+  debug_log: true
+  output_path:
+
+model:
+  model_class: phyagi
+  model_name: gpt-5.4
+  openai_gateway_api_key:
+  openai_gateway_endpoint: http://gateway.phyagi.net/api/chat/completions
+  openai_gateway_tier: base
+  max_output_tokens: 4000
+  request_timeout_seconds: 120
+  response_mode: json_schema
+  observation_template: |
+    Observation:
+    Status: {{ 'ok' if observation.success else 'error' }}
+    URL: {{ observation.url }}
+    Title: {{ observation.title }}
+    {% if observation.exception %}Exception:
+    {{ observation.exception }}
+    {% endif %}{% if observation.console_output %}Console output:
+    {{ observation.console_output }}
+    {% endif %}{% if observation.aria_snapshot %}ARIA snapshot:
+    {{ observation.aria_snapshot }}
+    {% endif %}{% if observation.screenshot_path %}Screenshot path: {{ observation.screenshot_path }}
+    {% endif %}
+  format_error_template: |
+    Format error:
+
+    {{ error }}
+
+    Please respond with strict JSON using exactly these fields:
+    - thought
+    - python_code
+    - done
+    - final_response

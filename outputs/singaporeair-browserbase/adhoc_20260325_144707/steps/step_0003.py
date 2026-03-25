@@ -1,0 +1,1 @@
+await page.get_by_role('button', name='Accept').click()

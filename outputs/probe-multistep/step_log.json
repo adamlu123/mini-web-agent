@@ -1,0 +1,47 @@
+[
+  {
+    "step": 1,
+    "code": "await page.get_by_role('button', name='Increment').click()",
+    "returncode": 0,
+    "observation": {
+      "success": true,
+      "exception": "",
+      "url": "file:///Users/lu/Documents/sandbox/mini-swe-webagent/outputs/probe-multistep/probe_page.html",
+      "title": "Local Browser Probe",
+      "screenshot_path": "/Users/lu/Documents/sandbox/mini-swe-webagent/outputs/probe-multistep/screenshots/step_0001.png",
+      "aria_snapshot": "- main:\n  - heading \"Counter\" [level=1]\n  - paragraph: \"1\"\n  - button \"Increment\"",
+      "console_output": "[log] counter=1",
+      "recent_console": "[log] counter=1"
+    }
+  },
+  {
+    "step": 2,
+    "code": "value = await page.locator('#value').text_content()\nassert value == '1', value",
+    "returncode": 0,
+    "observation": {
+      "success": true,
+      "exception": "",
+      "url": "file:///Users/lu/Documents/sandbox/mini-swe-webagent/outputs/probe-multistep/probe_page.html",
+      "title": "Local Browser Probe",
+      "screenshot_path": "/Users/lu/Documents/sandbox/mini-swe-webagent/outputs/probe-multistep/screenshots/step_0002.png",
+      "aria_snapshot": "- main:\n  - heading \"Counter\" [level=1]\n  - paragraph: \"1\"\n  - button \"Increment\"",
+      "console_output": "",
+      "recent_console": "[log] counter=1"
+    }
+  },
+  {
+    "step": 3,
+    "code": "await page.get_by_role('button', name='Increment').click()\nvalue = await page.locator('#value').text_content()\nassert value == '2', value",
+    "returncode": 0,
+    "observation": {
+      "success": true,
+      "exception": "",
+      "url": "file:///Users/lu/Documents/sandbox/mini-swe-webagent/outputs/probe-multistep/probe_page.html",
+      "title": "Local Browser Probe",
+      "screenshot_path": "/Users/lu/Documents/sandbox/mini-swe-webagent/outputs/probe-multistep/screenshots/step_0003.png",
+      "aria_snapshot": "- main:\n  - heading \"Counter\" [level=1]\n  - paragraph: \"2\"\n  - button \"Increment\"",
+      "console_output": "[log] counter=2",
+      "recent_console": "[log] counter=1\n[log] counter=2"
+    }
+  }
+]
