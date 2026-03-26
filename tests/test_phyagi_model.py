@@ -58,10 +58,14 @@ def test_phyagi_model_query_parses_xml_mode(monkeypatch) -> None:
 
         def json(self) -> dict:
             return {
-                "choices": [
+                "output": [
                     {
-                        "message": {
-                            "content": """
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": """
 <response>
   <thought>Next step</thought>
   <python_code><![CDATA[
@@ -70,8 +74,9 @@ await page.title()
   <done>false</done>
   <final_response></final_response>
 </response>
-                            """.strip()
-                        }
+                                """.strip(),
+                            }
+                        ],
                     }
                 ]
             }
@@ -87,7 +92,9 @@ await page.title()
             return False
 
         async def post(self, url: str, headers: dict, json: dict) -> FakeResponse:
-            assert "response_format" not in json
+            assert "messages" not in json
+            assert "input" in json
+            assert "text" not in json
             return FakeResponse()
 
     monkeypatch.setattr("miniswewebagent.models.phyagi_model.httpx.AsyncClient", FakeAsyncClient)
@@ -110,7 +117,15 @@ def test_phyagi_model_query_raises_format_error_for_bad_xml(monkeypatch) -> None
             return None
 
         def json(self) -> dict:
-            return {"choices": [{"message": {"content": "not valid xml"}}]}
+            return {
+                "output": [
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": "not valid xml"}],
+                    }
+                ]
+            }
 
     class FakeAsyncClient:
         def __init__(self, timeout: int):
@@ -144,11 +159,24 @@ def test_phyagi_model_query_retries_transient_gateway_errors(monkeypatch) -> Non
 
         def json(self) -> dict:
             return {
-                "choices": [
+                "output": [
                     {
-                        "message": {
-                            "content": '{"thought":"Retry worked","python_code":"","done":true,"final_response":"ok"}'
-                        }
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": """
+<response>
+  <thought>Retry worked</thought>
+  <python_code><![CDATA[
+]]></python_code>
+  <done>true</done>
+  <final_response>ok</final_response>
+</response>
+                                """.strip(),
+                            }
+                        ],
                     }
                 ]
             }
@@ -179,7 +207,7 @@ def test_phyagi_model_query_retries_transient_gateway_errors(monkeypatch) -> Non
     monkeypatch.setattr("miniswewebagent.models.phyagi_model.httpx.AsyncClient", FakeAsyncClient)
     monkeypatch.setattr("miniswewebagent.models.phyagi_model.asyncio.sleep", fake_sleep)
 
-    model = PhyagiModel(openai_gateway_api_key="dummy")
+    model = PhyagiModel(openai_gateway_api_key="dummy", response_mode="xml")
     message = model.query([{"role": "user", "content": "Task"}])
 
     assert attempts["count"] == 3

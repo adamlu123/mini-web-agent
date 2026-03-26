@@ -105,7 +105,7 @@ model:
   model_class: phyagi
   model_name: gpt-5.4
   openai_gateway_api_key:
-  openai_gateway_endpoint: http://gateway.phyagi.net/api/chat/completions
+  openai_gateway_endpoint: http://gateway.phyagi.net/api/responses
   openai_gateway_tier: base
   max_output_tokens: 4000
   request_timeout_seconds: 120

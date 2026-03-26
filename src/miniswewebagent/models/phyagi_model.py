@@ -185,13 +185,17 @@ def image_part_from_path(path: Path) -> dict[str, Any]:
     }
 
 
-def _serialize_gateway_content_part(part: dict[str, Any]) -> dict[str, Any]:
+def _serialize_response_content_part(part: dict[str, Any]) -> dict[str, Any]:
     if part.get("type") == "input_image":
-        return {"type": "image_url", "image_url": {"url": part.get("image_url", "")}}
-    return {"type": "text", "text": part.get("text", "")}
+        return {
+            "type": "input_image",
+            "image_url": part.get("image_url", ""),
+            "detail": part.get("detail", "high"),
+        }
+    return {"type": "input_text", "text": part.get("text", "")}
 
 
-def _serialize_gateway_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _serialize_response_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     serialized: list[dict[str, Any]] = []
     for message in messages:
         role = message["role"]
@@ -199,48 +203,55 @@ def _serialize_gateway_messages(messages: list[dict[str, Any]]) -> list[dict[str
             continue
         content = message.get("content", "")
         if isinstance(content, str):
-            serialized_content: str | list[dict[str, Any]] = content
+            serialized_content = [text_part(content)]
         else:
-            parts = [
-                _serialize_gateway_content_part(part)
-                for part in content
-                if isinstance(part, dict)
-            ]
-            if parts and all(part.get("type") == "text" for part in parts):
-                serialized_content = "\n".join(part.get("text", "") for part in parts)
-            else:
-                serialized_content = parts
-        serialized.append({"role": role, "content": serialized_content})
+            serialized_content = [part for part in content if isinstance(part, dict)]
+        mapped_role = "developer" if role == "system" else role
+        serialized.append(
+            {
+                "type": "message",
+                "role": mapped_role,
+                "content": [
+                    _serialize_response_content_part(part)
+                    for part in serialized_content
+                ],
+            }
+        )
     return serialized
 
 
-def _extract_gateway_text(payload: dict[str, Any]) -> str:
-    choices = payload.get("choices") or []
-    if not choices:
-        return ""
-    content = (choices[0].get("message") or {}).get("content", "")
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        texts = []
-        for item in content:
-            if isinstance(item, dict) and isinstance(item.get("text"), str):
-                texts.append(item["text"])
-        return "\n".join(texts)
-    return str(content)
+def _extract_response_text(payload: dict[str, Any]) -> str:
+    output_text = payload.get("output_text")
+    if isinstance(output_text, str) and output_text:
+        return output_text
+
+    texts: list[str] = []
+    for item in payload.get("output") or []:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") != "message":
+            continue
+        for content in item.get("content") or []:
+            if not isinstance(content, dict):
+                continue
+            if isinstance(content.get("text"), str):
+                texts.append(content["text"])
+            elif isinstance(content.get("output_text"), str):
+                texts.append(content["output_text"])
+    return "\n".join(texts)
 
 
 class PhyagiModelConfig(BaseModel):
     model_name: str = "gpt-5.4"
     openai_gateway_api_key: str = ""
-    openai_gateway_endpoint: str = "http://gateway.phyagi.net/api/chat/completions"
+    openai_gateway_endpoint: str = "http://gateway.phyagi.net/api/responses"
     openai_gateway_tier: str = "base"
     max_output_tokens: int = 4000
     request_timeout_seconds: int = 120
     error_log_path: Path | None = None
     observation_template: str = DEFAULT_OBSERVATION_TEMPLATE
-    response_mode: str = "json_schema"
-    format_error_template: str = DEFAULT_JSON_FORMAT_ERROR_TEMPLATE
+    response_mode: str = "xml"
+    format_error_template: str = DEFAULT_XML_FORMAT_ERROR_TEMPLATE
 
     @field_validator(
         "model_name",
@@ -356,18 +367,18 @@ class PhyagiModel:
         }
         payload = {
             "model": self.config.model_name,
-            "messages": _serialize_gateway_messages(messages),
+            "input": _serialize_response_input(messages),
             "tier": self.config.openai_gateway_tier,
-            "max_completion_tokens": self.config.max_output_tokens,
+            "max_output_tokens": self.config.max_output_tokens,
         }
         if self.config.response_mode == "json_schema":
-            payload["response_format"] = {
-                "type": "json_schema",
-                "json_schema": {
+            payload["text"] = {
+                "format": {
+                    "type": "json_schema",
                     "name": "playwright_step",
-                    "strict": True,
                     "schema": self._response_schema(),
-                },
+                    "strict": True,
+                }
             }
 
         last_error: ValueError | None = None
@@ -416,7 +427,7 @@ class PhyagiModel:
             if response_payload is None:
                 raise RuntimeError("Gateway request returned no payload.")
 
-            raw_text = _extract_gateway_text(response_payload)
+            raw_text = _extract_response_text(response_payload)
             try:
                 parsed = self._parse_model_output(raw_text)
                 break

@@ -13,22 +13,26 @@ class _FakeGatewayHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         length = int(self.headers.get("Content-Length", "0"))
         payload = json.loads(self.rfile.read(length))
-        messages = payload.get("messages", [])
+        messages = payload.get("input", [])
         type(self).calls += 1
 
         if type(self).calls == 1:
-            content = {
-                "thought": "Capture the current page state.",
-                "python_code": "await page.wait_for_load_state('domcontentloaded')",
-                "done": False,
-                "final_response": "",
-            }
+            content = """
+<response>
+  <thought>Capture the current page state.</thought>
+  <python_code><![CDATA[
+await page.wait_for_load_state('domcontentloaded')
+]]></python_code>
+  <done>false</done>
+  <final_response></final_response>
+</response>
+            """.strip()
         else:
             observation_text = ""
             last_content = messages[-1].get("content", [])
             if isinstance(last_content, list):
                 for part in last_content:
-                    if part.get("type") == "text":
+                    if part.get("type") == "input_text":
                         observation_text += part.get("text", "") + "\n"
 
             title = ""
@@ -39,14 +43,25 @@ class _FakeGatewayHandler(BaseHTTPRequestHandler):
                 if 'heading "Example Domain"' in line:
                     heading = "Example Domain"
 
-            content = {
-                "thought": "The task is complete.",
-                "python_code": "",
-                "done": True,
-                "final_response": f"Title: {title}; Heading: {heading}",
-            }
+            content = f"""
+<response>
+  <thought>The task is complete.</thought>
+  <python_code><![CDATA[
+]]></python_code>
+  <done>true</done>
+  <final_response>Title: {title}; Heading: {heading}</final_response>
+</response>
+            """.strip()
 
-        response = {"choices": [{"message": {"content": json.dumps(content)}}]}
+        response = {
+            "output": [
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": content}],
+                }
+            ]
+        }
         encoded = json.dumps(response).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json")

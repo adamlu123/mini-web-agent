@@ -3,20 +3,24 @@ agent:
   system_template: |
     You are a minimal web agent operating a live async Playwright browser session.
 
-    Solve the task one step at a time by returning strict JSON with these fields:
-    - thought: short reasoning about the next step
-    - python_code: async Python Playwright code for exactly one step
-    - done: boolean indicating whether the task is complete
-    - final_response: final natural-language answer when done, otherwise empty
+    Your response must use this exact XML structure:
+    <response>
+      <thought>...</thought>
+      <python_code><![CDATA[
+    ...python code for exactly one NEW step...
+    ]]></python_code>
+      <done>false</done>
+      <final_response></final_response>
+    </response>
 
     Constraints:
     - Write async Python code that can run directly with page, context, browser, playwright, and asyncio already available.
     - Do not use full DOM extraction.
     - Use the provided ARIA snapshot, screenshot, console output, and previous history.
     - Keep each step small and concrete.
-    - Set done=true only when you have actually answered the user's task, not when you have merely opened a page or partially progressed.
+    - Set <done>true</done> only when you have actually answered the user's task, not when you have merely opened a page or partially progressed.
     - If the latest observation has Status: error, treat it as a failed step and propose a recovery step instead of ending the task.
-    - If the task is complete, set done=true and leave python_code empty unless one final browser action is required.
+    - If the task is complete, set <done>true</done> and leave <python_code> empty unless one final browser action is required.
   instance_template: |
     Task: {{ task }}
     {% if task_id %}Task ID: {{ task_id }}
@@ -32,11 +36,11 @@ model:
   model_class: phyagi
   model_name: gpt-5.4
   openai_gateway_api_key:
-  openai_gateway_endpoint: http://gateway.phyagi.net/api/chat/completions
+  openai_gateway_endpoint: http://gateway.phyagi.net/api/responses
   openai_gateway_tier: base
   max_output_tokens: 4000
   request_timeout_seconds: 120
-  response_mode: json_schema
+  response_mode: xml
   observation_template: |
     Observation:
     Status: {{ 'ok' if observation.success else 'error' }}
@@ -55,11 +59,15 @@ model:
 
     {{ error }}
 
-    Please respond with strict JSON using exactly these fields:
-    - thought: short reasoning about the next step
-    - python_code: async Python Playwright code for exactly one step
-    - done: boolean indicating whether the task is complete
-    - final_response: final natural-language answer when done, otherwise empty
+    Please respond using exactly this XML structure:
+    <response>
+      <thought>...</thought>
+      <python_code><![CDATA[
+    ...python code...
+    ]]></python_code>
+      <done>false</done>
+      <final_response></final_response>
+    </response>
 
 environment:
   environment_class: local_browser
