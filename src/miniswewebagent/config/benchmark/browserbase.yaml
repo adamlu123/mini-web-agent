@@ -6,4 +6,4 @@ environment:
   browser_timeout_ms: 12000
   browser_navigation_timeout_ms: 45000
   observation_timeout_ms: 6000
-  browserbase_timeout_seconds: 1800
+  browserbase_timeout_seconds: 720

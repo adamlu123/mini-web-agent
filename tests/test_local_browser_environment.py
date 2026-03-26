@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sys
+import types
 from pathlib import Path
 from time import monotonic
 
@@ -39,6 +41,7 @@ def test_local_browser_environment_runs_multiple_steps(tmp_path: Path) -> None:
     )
 
     env = LocalBrowserEnvironment(
+        browserbase_enabled=False,
         headless=True,
         devtools=False,
         keep_open_on_exit=False,
@@ -126,6 +129,7 @@ def test_local_browser_environment_waits_for_post_action_render(tmp_path: Path) 
         )
 
         env = LocalBrowserEnvironment(
+            browserbase_enabled=False,
                 headless=True,
                 devtools=False,
                 keep_open_on_exit=False,
@@ -198,6 +202,7 @@ def test_local_browser_environment_prepare_navigates_on_reuse(tmp_path: Path) ->
     )
 
     env = LocalBrowserEnvironment(
+        browserbase_enabled=False,
         headless=True,
         devtools=False,
         keep_open_on_exit=False,
@@ -321,33 +326,31 @@ def test_local_browser_environment_uses_browserbase_cdp(monkeypatch, tmp_path: P
 
 def test_local_browser_environment_retries_transient_browserbase_session_create(monkeypatch, tmp_path: Path) -> None:
     attempts = {"count": 0}
-    client_kwargs: dict[str, object] = {}
+    create_calls: list[dict[str, object]] = []
 
-    class FakeResponse:
-        def raise_for_status(self) -> None:
-            return None
+    class FakeSession:
+        def __init__(self, session_id: str, connect_url: str) -> None:
+            self.id = session_id
+            self.connect_url = connect_url
 
-        def json(self) -> dict[str, str]:
-            return {"id": "sess_retry", "connectUrl": "wss://cdp.browserbase.example/retry"}
-
-    class FakeAsyncClient:
-        def __init__(self, timeout: float, trust_env: bool = True) -> None:
-            client_kwargs["timeout"] = timeout
-            client_kwargs["trust_env"] = trust_env
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-        async def post(self, url: str, headers: dict[str, str], json: dict[str, object]) -> FakeResponse:
+    class FakeSessions:
+        def create(self, **kwargs) -> FakeSession:
+            create_calls.append(kwargs)
             attempts["count"] += 1
             if attempts["count"] < 3:
-                raise httpx.ConnectError("dns failed", request=httpx.Request("POST", url))
-            return FakeResponse()
+                raise httpx.ConnectError("dns failed", request=httpx.Request("POST", "https://api.browserbase.com"))
+            return FakeSession("sess_retry", "wss://cdp.browserbase.example/retry")
 
-    monkeypatch.setattr("miniswewebagent.environments.local_browser.httpx.AsyncClient", FakeAsyncClient)
+    class FakeBrowserbase:
+        def __init__(self, api_key: str) -> None:
+            self.api_key = api_key
+            self.sessions = FakeSessions()
+
+    async def fake_to_thread(func, /, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    monkeypatch.setitem(sys.modules, "browserbase", types.SimpleNamespace(Browserbase=FakeBrowserbase))
+    monkeypatch.setattr("miniswewebagent.environments.local_browser.asyncio.to_thread", fake_to_thread)
 
     env = LocalBrowserEnvironment(
         browserbase_enabled=True,
@@ -362,5 +365,69 @@ def test_local_browser_environment_retries_transient_browserbase_session_create(
     session = env._run(env._create_browserbase_session())
 
     assert attempts["count"] == 3
-    assert client_kwargs["trust_env"] is False
     assert session["id"] == "sess_retry"
+    assert create_calls[-1] == {
+        "project_id": "project",
+        "proxies": True,
+        "browser_settings": {"advanced_stealth": True},
+        "keep_alive": True,
+        "timeout": 720,
+    }
+
+
+def test_capture_observation_recovers_after_closed_target(monkeypatch, tmp_path: Path) -> None:
+    class FakeLocator:
+        async def wait_for(self, state: str = "attached", timeout: int = 0) -> None:
+            return None
+
+        async def aria_snapshot(self) -> str:
+            return "- document"
+
+    class ClosedTargetError(RuntimeError):
+        pass
+
+    class FailingPage:
+        url = "https://example.com/crashed"
+
+        def locator(self, selector: str) -> FakeLocator:
+            return FakeLocator()
+
+        async def screenshot(self, path: str, full_page: bool = False) -> None:
+            raise ClosedTargetError("Target page, context or browser has been closed")
+
+        async def title(self) -> str:
+            return ""
+
+    class HealthyPage:
+        url = "https://example.com/recovered"
+
+        def locator(self, selector: str) -> FakeLocator:
+            return FakeLocator()
+
+        async def screenshot(self, path: str, full_page: bool = False) -> None:
+            Path(path).write_bytes(b"png")
+
+        async def title(self) -> str:
+            return "Recovered"
+
+    env = LocalBrowserEnvironment(
+        observation_timeout_ms=2000,
+        output_dir=tmp_path / "artifacts",
+    )
+    env._page = FailingPage()
+
+    recovery_calls: list[tuple[str | None, str]] = []
+
+    async def fake_recover_runtime(self, *, url_hint: str | None, source: str) -> bool:
+        recovery_calls.append((url_hint, source))
+        self._page = HealthyPage()
+        return True
+
+    monkeypatch.setattr(LocalBrowserEnvironment, "_recover_runtime", fake_recover_runtime)
+
+    observation = env._run(env._capture_observation(success=False, exception_text=""))
+
+    assert recovery_calls == [("https://example.com/crashed", "observation")]
+    assert observation["screenshot_path"].endswith("step_0000.png")
+    assert Path(observation["screenshot_path"]).exists()
+    assert observation["title"] == "Recovered"

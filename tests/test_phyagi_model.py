@@ -4,7 +4,11 @@ import pytest
 import httpx
 
 from miniswewebagent.exceptions import FormatError
-from miniswewebagent.models.phyagi_model import PhyagiModel, parse_xml_output
+from miniswewebagent.models.phyagi_model import (
+    PhyagiModel,
+    _serialize_response_input,
+    parse_xml_output,
+)
 
 
 def test_parse_xml_output_with_cdata() -> None:
@@ -214,3 +218,20 @@ def test_phyagi_model_query_retries_transient_gateway_errors(monkeypatch) -> Non
     assert attempts["count"] == 3
     assert message["extra"]["done"] is True
     assert message["extra"]["final_response"] == "ok"
+
+
+def test_serialize_response_input_uses_output_text_for_assistant_messages() -> None:
+    serialized = _serialize_response_input(
+        [
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "user"},
+            {"role": "assistant", "content": "assistant"},
+        ]
+    )
+
+    assert serialized[0]["role"] == "developer"
+    assert serialized[0]["content"][0]["type"] == "input_text"
+    assert serialized[1]["role"] == "user"
+    assert serialized[1]["content"][0]["type"] == "input_text"
+    assert serialized[2]["role"] == "assistant"
+    assert serialized[2]["content"][0]["type"] == "output_text"

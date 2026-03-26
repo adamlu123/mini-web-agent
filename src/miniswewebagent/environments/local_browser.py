@@ -31,14 +31,15 @@ class LocalBrowserEnvironmentConfig(BaseModel):
     step_execution_timeout_ms: int = 20000
     observation_timeout_ms: int = 5000
     output_dir: Path = Path("outputs/default")
-    browserbase_enabled: bool = False
+    browserbase_enabled: bool = True
     browserbase_api_key: str = ""
     browserbase_project_id: str = ""
     browserbase_api_url: str = "https://api.browserbase.com/v1/sessions"
     browserbase_region: str | None = None
-    browserbase_proxies: bool = False
-    browserbase_keep_alive: bool = False
-    browserbase_timeout_seconds: int = 1800
+    browserbase_proxies: bool = True
+    browserbase_keep_alive: bool = True
+    browserbase_advanced_stealth: bool = True
+    browserbase_timeout_seconds: int = 720
     browserbase_session_create_retries: int = 4
     browserbase_retry_backoff_seconds: float = 1.0
 
@@ -61,6 +62,185 @@ class LocalBrowserEnvironment:
         self._step_index = 0
         self._prepared_task: dict[str, Any] = {}
         self._browserbase_session: dict[str, Any] | None = None
+
+    def _is_target_closed_error(self, error: BaseException | str) -> bool:
+        text = str(error)
+        if isinstance(error, BaseException) and type(error).__name__ == "TargetClosedError":
+            return True
+        return "Target page, context or browser has been closed" in text
+
+    def _current_page_url(self) -> str:
+        page = self._page
+        if page is None:
+            return self.config.start_url or ""
+        try:
+            url = getattr(page, "url", "")
+        except Exception:
+            url = ""
+        return url or self.config.start_url or ""
+
+    def _page_is_usable(self) -> bool:
+        if self._page is None:
+            return False
+        checker = getattr(self._page, "is_closed", None)
+        if callable(checker):
+            try:
+                return not checker()
+            except Exception:
+                return False
+        return True
+
+    def _context_is_usable(self) -> bool:
+        if self._context is None:
+            return False
+        if not self._browser_is_usable():
+            return False
+        try:
+            getattr(self._context, "pages", None)
+        except Exception:
+            return False
+        return True
+
+    def _browser_is_usable(self) -> bool:
+        if self._browser is None:
+            return False
+        checker = getattr(self._browser, "is_connected", None)
+        if callable(checker):
+            try:
+                return bool(checker())
+            except Exception:
+                return False
+        return True
+
+    async def _dispose_runtime_handles(self, *, stop_playwright: bool, release_browserbase: bool) -> None:
+        page = self._page
+        context = self._context
+        browser = self._browser
+        playwright = self._playwright
+        session = self._browserbase_session
+
+        self._page = None
+        self._context = None
+        self._browser = None
+        if stop_playwright:
+            self._playwright = None
+        self._browserbase_session = None
+
+        for handle in (page, context, browser):
+            if handle is None:
+                continue
+            close = getattr(handle, "close", None)
+            if not callable(close):
+                continue
+            try:
+                await close()
+            except Exception:
+                pass
+
+        if release_browserbase and self.config.browserbase_enabled and session is not None:
+            self._browserbase_session = session
+            try:
+                await self._release_browserbase_session()
+            except Exception:
+                pass
+            finally:
+                self._browserbase_session = None
+
+        if stop_playwright and playwright is not None:
+            try:
+                await playwright.stop()
+            except Exception:
+                pass
+
+    async def _ensure_browser_runtime(self) -> None:
+        if self._playwright is None:
+            from playwright.async_api import async_playwright
+
+            self._playwright = await async_playwright().start()
+
+        if self._browser_is_usable() and self._context_is_usable() and self._page_is_usable():
+            self._page.set_default_timeout(self.config.browser_timeout_ms)
+            self._page.set_default_navigation_timeout(self.config.browser_navigation_timeout_ms)
+            return
+
+        if self._browser_is_usable() and self._context_is_usable() and not self._page_is_usable():
+            try:
+                existing_pages = [page for page in self._context.pages if not getattr(page, "is_closed", lambda: False)()]
+            except Exception:
+                existing_pages = []
+            if existing_pages:
+                self._page = existing_pages[0]
+            else:
+                self._page = await self._context.new_page()
+            self._page.set_default_timeout(self.config.browser_timeout_ms)
+            self._page.set_default_navigation_timeout(self.config.browser_navigation_timeout_ms)
+            self._page.on("console", self._on_console)
+            self._page.on("pageerror", self._on_page_error)
+            return
+
+        await self._dispose_runtime_handles(stop_playwright=False, release_browserbase=False)
+
+        if self.config.browserbase_enabled:
+            session = await self._create_browserbase_session()
+            self._browserbase_session = session
+            self._browser = await self._playwright.chromium.connect_over_cdp(
+                session["connectUrl"],
+                timeout=self.config.browser_navigation_timeout_ms,
+            )
+            if self._browser.contexts:
+                self._context = self._browser.contexts[0]
+            else:
+                self._context = await self._browser.new_context(
+                    viewport={
+                        "width": self.config.browser_width,
+                        "height": self.config.browser_height,
+                    }
+                )
+        else:
+            launch_args: list[str] = []
+            if self.config.devtools:
+                launch_args.append("--auto-open-devtools-for-tabs")
+
+            self._browser = await self._playwright.chromium.launch(
+                headless=self.config.headless,
+                args=launch_args,
+                slow_mo=self.config.slow_mo_ms,
+            )
+            self._context = await self._browser.new_context(
+                viewport={"width": self.config.browser_width, "height": self.config.browser_height}
+            )
+
+        if self._context.pages:
+            self._page = self._context.pages[0]
+        else:
+            self._page = await self._context.new_page()
+        self._page.set_default_timeout(self.config.browser_timeout_ms)
+        self._page.set_default_navigation_timeout(self.config.browser_navigation_timeout_ms)
+        self._page.on("console", self._on_console)
+        self._page.on("pageerror", self._on_page_error)
+
+    async def _recover_runtime(self, *, url_hint: str | None, source: str) -> bool:
+        target_url = url_hint or self.config.start_url or ""
+        self._log_runtime_event(source="browser", event="runtime_recovery_started", trigger=source, url=target_url)
+        try:
+            await self._dispose_runtime_handles(stop_playwright=True, release_browserbase=True)
+            await self._ensure_browser_runtime()
+            if target_url:
+                await self._page.goto(target_url, wait_until="domcontentloaded")
+                await self._wait_for_observation_ready()
+        except Exception as exc:
+            self._log_runtime_event(
+                source="browser",
+                event="runtime_recovery_failed",
+                trigger=source,
+                url=target_url,
+                error_type=type(exc).__name__,
+                error=str(exc),
+            )
+            return False
+
+        self._log_runtime_event(source="browser", event="runtime_recovery_succeeded", trigger=source, url=target_url)
+        return True
 
     def _runtime_log_path(self) -> Path:
         return self.config.output_dir / "runtime_errors.jsonl"
@@ -115,52 +295,12 @@ class LocalBrowserEnvironment:
         self._run(self._prepare_async(start_url=self.config.start_url))
 
     async def _prepare_async(self, start_url: str | None = None) -> None:
-        if self._playwright is None:
-            from playwright.async_api import async_playwright
-
-            self._playwright = await async_playwright().start()
+        try:
+            await self._ensure_browser_runtime()
+        except Exception as exc:
             if self.config.browserbase_enabled:
-                try:
-                    session = await self._create_browserbase_session()
-                    self._browserbase_session = session
-                    self._browser = await self._playwright.chromium.connect_over_cdp(
-                        session["connectUrl"],
-                        timeout=self.config.browser_navigation_timeout_ms,
-                    )
-                    if self._browser.contexts:
-                        self._context = self._browser.contexts[0]
-                    else:
-                        self._context = await self._browser.new_context(
-                            viewport={
-                                "width": self.config.browser_width,
-                                "height": self.config.browser_height,
-                            }
-                        )
-                    if self._context.pages:
-                        self._page = self._context.pages[0]
-                    else:
-                        self._page = await self._context.new_page()
-                except Exception as exc:
-                    self._log_browserbase_error(event="session_prepare_failed", error=exc)
-                    raise
-            else:
-                launch_args: list[str] = []
-                if self.config.devtools:
-                    launch_args.append("--auto-open-devtools-for-tabs")
-
-                self._browser = await self._playwright.chromium.launch(
-                    headless=self.config.headless,
-                    args=launch_args,
-                    slow_mo=self.config.slow_mo_ms,
-                )
-                self._context = await self._browser.new_context(
-                    viewport={"width": self.config.browser_width, "height": self.config.browser_height}
-                )
-                self._page = await self._context.new_page()
-            self._page.set_default_timeout(self.config.browser_timeout_ms)
-            self._page.set_default_navigation_timeout(self.config.browser_navigation_timeout_ms)
-            self._page.on("console", self._on_console)
-            self._page.on("pageerror", self._on_page_error)
+                self._log_browserbase_error(event="session_prepare_failed", error=exc)
+            raise
 
         if start_url:
             await self._page.goto(start_url, wait_until="domcontentloaded")
@@ -172,41 +312,42 @@ class LocalBrowserEnvironment:
         if not self.config.browserbase_project_id:
             raise RuntimeError("Missing BROWSERBASE_PROJECT_ID for Browserbase session.")
 
-        payload: dict[str, Any] = {
-            "projectId": self.config.browserbase_project_id,
-            "keepAlive": self.config.browserbase_keep_alive,
-            "timeout": self.config.browserbase_timeout_seconds,
-            "proxies": self.config.browserbase_proxies,
-        }
-        if self.config.browserbase_region:
-            payload["region"] = self.config.browserbase_region
+        try:
+            from browserbase import Browserbase
+        except ImportError as exc:
+            raise RuntimeError(
+                "The browserbase package is required. Install dependencies with `pip install -e .`."
+            ) from exc
+
+        browserbase = Browserbase(api_key=self.config.browserbase_api_key)
 
         retry_attempts = max(self.config.browserbase_session_create_retries, 1)
-        async with httpx.AsyncClient(
-            timeout=self.config.browser_navigation_timeout_ms / 1000,
-            trust_env=False,
-        ) as client:
-            for attempt in range(1, retry_attempts + 1):
-                try:
-                    response = await client.post(
-                        self.config.browserbase_api_url,
-                        headers={"x-bb-api-key": self.config.browserbase_api_key},
-                        json=payload,
-                    )
-                    response.raise_for_status()
-                    session = response.json()
-                    break
-                except Exception as exc:
-                    should_retry = attempt < retry_attempts and self._is_retryable_browserbase_error(exc)
-                    self._log_browserbase_error(
-                        event="session_create_failed",
-                        error=exc,
-                        attempt=attempt,
-                        retrying=should_retry,
-                    )
-                    if not should_retry:
-                        raise
-                    await asyncio.sleep(self._browserbase_retry_delay_seconds(attempt))
+        for attempt in range(1, retry_attempts + 1):
+            try:
+                created_session = await asyncio.to_thread(
+                    browserbase.sessions.create,
+                    project_id=self.config.browserbase_project_id,
+                    proxies=True,
+                    browser_settings={"advanced_stealth": True},
+                    keep_alive=True,
+                    timeout=720,
+                )
+                session = {
+                    "id": getattr(created_session, "id", "") or created_session.get("id", ""),
+                    "connectUrl": getattr(created_session, "connect_url", "") or created_session.get("connectUrl", ""),
+                }
+                break
+            except Exception as exc:
+                should_retry = attempt < retry_attempts and self._is_retryable_browserbase_error(exc)
+                self._log_browserbase_error(
+                    event="session_create_failed",
+                    error=exc,
+                    attempt=attempt,
+                    retrying=should_retry,
+                )
+                if not should_retry:
+                    raise
+                await asyncio.sleep(self._browserbase_retry_delay_seconds(attempt))
 
         if not session.get("connectUrl"):
             error = RuntimeError("Browserbase session response did not include connectUrl.")
@@ -216,9 +357,10 @@ class LocalBrowserEnvironment:
             source="browserbase",
             event="session_created",
             session_id=session.get("id", ""),
-            keep_alive=self.config.browserbase_keep_alive,
-            proxies=self.config.browserbase_proxies,
-            region=self.config.browserbase_region or "",
+            keep_alive=True,
+            proxies=True,
+            advanced_stealth=True,
+            timeout=720,
         )
         return session
 
@@ -381,6 +523,12 @@ class LocalBrowserEnvironment:
                 traceback.format_exception(type(exc), exc, exc.__traceback__)
             ).strip()
 
+        if exception_text and self._is_target_closed_error(exception_text):
+            recovered = await self._recover_runtime(url_hint=self._current_page_url(), source="execute")
+            if recovered:
+                success = False
+                exception_text = f"{exception_text}\n\n[recovery] Recovered browser runtime after closed target to capture observation."
+
         observation = await self._capture_observation(success=success, exception_text=exception_text)
         return {
             "output": json.dumps(observation, indent=2),
@@ -425,13 +573,33 @@ class LocalBrowserEnvironment:
     async def _capture_observation(self, *, success: bool, exception_text: str) -> dict[str, Any]:
         screenshot_path: Path | None = self.config.output_dir / "screenshots" / f"step_{self._step_index:04d}.png"
         screenshot_path.parent.mkdir(parents=True, exist_ok=True)
-        try:
+        capture_page = self._page
+
+        async def attempt_screenshot() -> Path | None:
+            if capture_page is None:
+                return None
+            await capture_page.locator("body").wait_for(state="attached", timeout=self.config.observation_timeout_ms)
             await asyncio.wait_for(
-                self._page.screenshot(path=str(screenshot_path), full_page=False),
+                capture_page.screenshot(path=str(screenshot_path), full_page=False),
                 timeout=self.config.observation_timeout_ms / 1000,
             )
-        except Exception:
-            screenshot_path = None
+            return screenshot_path
+
+        try:
+            screenshot_path = await attempt_screenshot()
+        except Exception as exc:
+            if self._is_target_closed_error(exc):
+                recovered = await self._recover_runtime(url_hint=self._current_page_url(), source="observation")
+                capture_page = self._page
+                if recovered:
+                    try:
+                        screenshot_path = await attempt_screenshot()
+                    except Exception:
+                        screenshot_path = None
+                else:
+                    screenshot_path = None
+            else:
+                screenshot_path = None
 
         try:
             aria_snapshot = await asyncio.wait_for(
@@ -500,32 +668,17 @@ class LocalBrowserEnvironment:
     async def _close_async(self) -> None:
         close_error: Exception | None = None
         try:
-            if self._page is not None:
-                await self._page.close()
-            if self._context is not None:
-                await self._context.close()
-            if self._browser is not None:
-                await self._browser.close()
-            if self._playwright is not None:
-                await self._playwright.stop()
+            await self._dispose_runtime_handles(stop_playwright=True, release_browserbase=True)
         except Exception as exc:
             close_error = exc
             if self.config.browserbase_enabled:
                 self._log_browserbase_error(event="session_close_failed", error=exc)
         finally:
-            try:
-                await self._release_browserbase_session()
-            finally:
-                if self.config.browserbase_enabled:
-                    self._log_runtime_event(
-                        source="browserbase",
-                        event="session_close_complete",
-                        session_id=(self._browserbase_session or {}).get("id", ""),
-                    )
-                self._page = None
-                self._context = None
-                self._browser = None
-                self._playwright = None
-                self._browserbase_session = None
+            if self.config.browserbase_enabled:
+                self._log_runtime_event(
+                    source="browserbase",
+                    event="session_close_complete",
+                    session_id="",
+                )
         if close_error is not None:
             raise close_error

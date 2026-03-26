@@ -6,6 +6,8 @@ agent:
 environment:
   browserbase_enabled: true
   browserbase_proxies: true
+  browserbase_keep_alive: true
+  browserbase_advanced_stealth: true
   headless: true
   slow_mo_ms: 0
   browser_timeout_ms: 12000

@@ -52,10 +52,14 @@ def test_export_online_mind2web_artifacts_creates_result_and_trajectory(tmp_path
     assert payload["action_history"] == ["await page.goto('https://example.com')"]
     assert payload["thoughts"] == ["Open the homepage."]
     assert payload["final_result_response"] == "Done"
+    assert len(payload["screenshot_paths"]) == 2
 
     exported_image = output_dir / "trajectory" / "0_full_screenshot.png"
+    placeholder_image = output_dir / "trajectory" / "1_full_screenshot.png"
     assert artifacts["trajectory_dir"] == str(output_dir / "trajectory")
     assert exported_image.exists()
+    assert placeholder_image.exists()
+    assert placeholder_image.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
 
 
 def test_normalize_online_mind2web_judge_results_rewrites_missing_history_prompt(tmp_path) -> None:

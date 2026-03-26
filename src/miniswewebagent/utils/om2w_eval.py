@@ -7,6 +7,13 @@ from pathlib import Path
 from typing import Any
 
 
+_PLACEHOLDER_PNG_BYTES = bytes.fromhex(
+    "89504e470d0a1a0a"
+    "0000000d49484452000000010000000108060000001f15c489"
+    "0000000d49444154789c6360606060000000050001a5f64540"
+    "0000000049454e44ae426082"
+)
+
 _MISSING_HISTORY_MARKERS = (
     "action history is missing",
     "provide the action history",
@@ -81,6 +88,26 @@ def _judge_result_file_path(output_dir: Path, judge_model: str) -> Path:
     return output_dir / f"WebJudge_Online_Mind2Web_eval_{judge_model}_score_threshold_3_auto_eval_results.json"
 
 
+def _ordered_step_stems(output_dir: Path) -> list[str]:
+    steps_dir = output_dir / "steps"
+    if steps_dir.exists():
+        stems = [path.stem for path in sorted(steps_dir.glob("step_*.py"))]
+        if stems:
+            return stems
+
+    debug_steps_dir = output_dir / "debug" / "steps"
+    if debug_steps_dir.exists():
+        stems = [path.stem for path in sorted(debug_steps_dir.glob("step_*.json"))]
+        if stems:
+            return stems
+
+    return [path.stem for path in sorted((output_dir / "screenshots").glob("step_*.png"))]
+
+
+def _write_placeholder_screenshot(path: Path) -> None:
+    path.write_bytes(_PLACEHOLDER_PNG_BYTES)
+
+
 def normalize_online_mind2web_judge_results(*, result_file: Path) -> int:
     if not result_file.exists():
         return 0
@@ -127,12 +154,18 @@ def export_online_mind2web_artifacts(
     output_dir.mkdir(parents=True, exist_ok=True)
     trajectory_dir = output_dir / "trajectory"
     trajectory_dir.mkdir(parents=True, exist_ok=True)
+    for stale_path in trajectory_dir.glob("*_full_screenshot.*"):
+        stale_path.unlink()
 
     copied_screenshots: list[str] = []
-    for index, src in enumerate(sorted((output_dir / "screenshots").glob("step_*.png"))):
-        dst = trajectory_dir / f"{index}_full_screenshot{src.suffix or '.png'}"
-        if src.resolve() != dst.resolve():
-            shutil.copy2(src, dst)
+    for index, step_stem in enumerate(_ordered_step_stems(output_dir)):
+        src = output_dir / "screenshots" / f"{step_stem}.png"
+        dst = trajectory_dir / f"{index}_full_screenshot.png"
+        if src.exists():
+            if src.resolve() != dst.resolve():
+                shutil.copy2(src, dst)
+        else:
+            _write_placeholder_screenshot(dst)
         copied_screenshots.append(str(dst))
 
     action_history: list[str] = []

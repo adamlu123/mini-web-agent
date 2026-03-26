@@ -185,14 +185,17 @@ def image_part_from_path(path: Path) -> dict[str, Any]:
     }
 
 
-def _serialize_response_content_part(part: dict[str, Any]) -> dict[str, Any]:
+def _serialize_response_content_part(part: dict[str, Any], *, role: str) -> dict[str, Any]:
     if part.get("type") == "input_image":
         return {
             "type": "input_image",
             "image_url": part.get("image_url", ""),
             "detail": part.get("detail", "high"),
         }
-    return {"type": "input_text", "text": part.get("text", "")}
+    text = part.get("text", "")
+    if role == "assistant":
+        return {"type": "output_text", "text": text}
+    return {"type": "input_text", "text": text}
 
 
 def _serialize_response_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -212,7 +215,7 @@ def _serialize_response_input(messages: list[dict[str, Any]]) -> list[dict[str, 
                 "type": "message",
                 "role": mapped_role,
                 "content": [
-                    _serialize_response_content_part(part)
+                    _serialize_response_content_part(part, role=mapped_role)
                     for part in serialized_content
                 ],
             }
