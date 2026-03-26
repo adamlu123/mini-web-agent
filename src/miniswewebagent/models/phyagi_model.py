@@ -14,10 +14,12 @@ from jinja2 import StrictUndefined, Template
 from pydantic import BaseModel, field_validator
 
 from miniswewebagent.exceptions import FormatError
+from miniswewebagent.utils.logging import append_runtime_log
 from miniswewebagent.utils.runtime import run_async
 
 MAX_JSON_PARSE_RETRIES = 3
 MAX_RATE_LIMIT_RETRIES = 5
+MAX_TRANSIENT_GATEWAY_RETRIES = 5
 DEFAULT_OBSERVATION_TEMPLATE = """Observation:
 Status: {{ 'ok' if observation.success else 'error' }}
 URL: {{ observation.url }}
@@ -67,6 +69,37 @@ def _is_rate_limit_error(exc: BaseException | None) -> bool:
             return True
         text = str(current).lower()
         if "rate limit" in text or "ratelimit" in text or "too many requests" in text:
+            return True
+        current = current.__cause__ if isinstance(current.__cause__, BaseException) else None
+    return False
+
+
+def _is_transient_gateway_error(exc: BaseException | None) -> bool:
+    current: BaseException | None = exc
+    while current is not None:
+        if isinstance(current, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)):
+            return True
+        status_code = getattr(current, "status_code", None)
+        if isinstance(status_code, int) and status_code in {408, 409, 425, 500, 502, 503, 504}:
+            return True
+        response = getattr(current, "response", None)
+        response_status = getattr(response, "status_code", None)
+        if isinstance(response_status, int) and response_status in {408, 409, 425, 500, 502, 503, 504}:
+            return True
+        text = str(current).lower()
+        if any(
+            needle in text
+            for needle in (
+                "bad gateway",
+                "gateway timeout",
+                "server disconnected",
+                "temporary failure",
+                "temporarily unavailable",
+                "connection reset",
+                "connection aborted",
+                "timed out",
+            )
+        ):
             return True
         current = current.__cause__ if isinstance(current.__cause__, BaseException) else None
     return False
@@ -204,6 +237,7 @@ class PhyagiModelConfig(BaseModel):
     openai_gateway_tier: str = "base"
     max_output_tokens: int = 4000
     request_timeout_seconds: int = 120
+    error_log_path: Path | None = None
     observation_template: str = DEFAULT_OBSERVATION_TEMPLATE
     response_mode: str = "json_schema"
     format_error_template: str = DEFAULT_JSON_FORMAT_ERROR_TEMPLATE
@@ -238,6 +272,18 @@ class PhyagiModel:
 
     def get_template_vars(self, **kwargs) -> dict[str, Any]:
         return {"model_name": self.config.model_name, **kwargs}
+
+    def _log_gateway_error(self, *, event: str, attempt: int, error: BaseException) -> None:
+        append_runtime_log(
+            self.config.error_log_path,
+            source="gateway",
+            event=event,
+            model_name=self.config.model_name,
+            endpoint=self.config.openai_gateway_endpoint,
+            attempt=attempt,
+            error_type=type(error).__name__,
+            error=str(error),
+        )
 
     def format_message(self, **kwargs) -> dict[str, Any]:
         role = kwargs["role"]
@@ -340,9 +386,32 @@ class PhyagiModel:
                         response_payload = response.json()
                     break
                 except Exception as exc:
-                    if not _is_rate_limit_error(exc) or rate_limit_attempt >= MAX_RATE_LIMIT_RETRIES:
-                        raise
-                    await asyncio.sleep(min(5 * (rate_limit_attempt + 1), 30))
+                    if _is_rate_limit_error(exc):
+                        self._log_gateway_error(
+                            event="rate_limit_error",
+                            attempt=rate_limit_attempt + 1,
+                            error=exc,
+                        )
+                        if rate_limit_attempt >= MAX_RATE_LIMIT_RETRIES:
+                            raise
+                        await asyncio.sleep(min(5 * (rate_limit_attempt + 1), 30))
+                        continue
+                    if _is_transient_gateway_error(exc):
+                        self._log_gateway_error(
+                            event="transient_gateway_error",
+                            attempt=rate_limit_attempt + 1,
+                            error=exc,
+                        )
+                        if rate_limit_attempt >= MAX_TRANSIENT_GATEWAY_RETRIES:
+                            raise
+                        await asyncio.sleep(min(2 * (rate_limit_attempt + 1), 10))
+                        continue
+                    self._log_gateway_error(
+                        event="fatal_gateway_error",
+                        attempt=rate_limit_attempt + 1,
+                        error=exc,
+                    )
+                    raise
 
             if response_payload is None:
                 raise RuntimeError("Gateway request returned no payload.")

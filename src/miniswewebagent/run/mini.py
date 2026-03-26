@@ -81,6 +81,9 @@ def run_one(
                 "prompt_before_close": True if debug else UNSET,
                 "slow_mo_ms": 250 if debug else UNSET,
             },
+            "model": {
+                "error_log_path": str(resolved_output_dir / "runtime_errors.jsonl"),
+            },
             "agent": {
                 "output_path": str(resolved_output_dir / "trajectory.json"),
             },

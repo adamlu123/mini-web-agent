@@ -14,6 +14,8 @@ from typing import Any
 import httpx
 from pydantic import BaseModel
 
+from miniswewebagent.utils.logging import append_runtime_log
+
 
 class LocalBrowserEnvironmentConfig(BaseModel):
     start_url: str | None = None
@@ -58,6 +60,21 @@ class LocalBrowserEnvironment:
         self._prepared_task: dict[str, Any] = {}
         self._browserbase_session: dict[str, Any] | None = None
 
+    def _runtime_log_path(self) -> Path:
+        return self.config.output_dir / "runtime_errors.jsonl"
+
+    def _log_browserbase_error(self, *, event: str, error: BaseException | str, **extra: Any) -> None:
+        session_id = (self._browserbase_session or {}).get("id", "")
+        append_runtime_log(
+            self._runtime_log_path(),
+            source="browserbase",
+            event=event,
+            session_id=session_id,
+            error_type=type(error).__name__ if isinstance(error, BaseException) else "Error",
+            error=str(error),
+            **extra,
+        )
+
     def _ensure_loop(self) -> asyncio.AbstractEventLoop:
         if self._loop is None or self._loop.is_closed():
             self._loop = asyncio.new_event_loop()
@@ -80,25 +97,29 @@ class LocalBrowserEnvironment:
 
             self._playwright = await async_playwright().start()
             if self.config.browserbase_enabled:
-                session = await self._create_browserbase_session()
-                self._browserbase_session = session
-                self._browser = await self._playwright.chromium.connect_over_cdp(
-                    session["connectUrl"],
-                    timeout=self.config.browser_navigation_timeout_ms,
-                )
-                if self._browser.contexts:
-                    self._context = self._browser.contexts[0]
-                else:
-                    self._context = await self._browser.new_context(
-                        viewport={
-                            "width": self.config.browser_width,
-                            "height": self.config.browser_height,
-                        }
+                try:
+                    session = await self._create_browserbase_session()
+                    self._browserbase_session = session
+                    self._browser = await self._playwright.chromium.connect_over_cdp(
+                        session["connectUrl"],
+                        timeout=self.config.browser_navigation_timeout_ms,
                     )
-                if self._context.pages:
-                    self._page = self._context.pages[0]
-                else:
-                    self._page = await self._context.new_page()
+                    if self._browser.contexts:
+                        self._context = self._browser.contexts[0]
+                    else:
+                        self._context = await self._browser.new_context(
+                            viewport={
+                                "width": self.config.browser_width,
+                                "height": self.config.browser_height,
+                            }
+                        )
+                    if self._context.pages:
+                        self._page = self._context.pages[0]
+                    else:
+                        self._page = await self._context.new_page()
+                except Exception as exc:
+                    self._log_browserbase_error(event="session_prepare_failed", error=exc)
+                    raise
             else:
                 launch_args: list[str] = []
                 if self.config.devtools:
@@ -138,17 +159,48 @@ class LocalBrowserEnvironment:
             payload["region"] = self.config.browserbase_region
 
         async with httpx.AsyncClient(timeout=self.config.browser_navigation_timeout_ms / 1000) as client:
-            response = await client.post(
-                self.config.browserbase_api_url,
-                headers={"x-bb-api-key": self.config.browserbase_api_key},
-                json=payload,
-            )
-            response.raise_for_status()
-            session = response.json()
+            try:
+                response = await client.post(
+                    self.config.browserbase_api_url,
+                    headers={"x-bb-api-key": self.config.browserbase_api_key},
+                    json=payload,
+                )
+                response.raise_for_status()
+                session = response.json()
+            except Exception as exc:
+                self._log_browserbase_error(event="session_create_failed", error=exc)
+                raise
 
         if not session.get("connectUrl"):
-            raise RuntimeError("Browserbase session response did not include connectUrl.")
+            error = RuntimeError("Browserbase session response did not include connectUrl.")
+            self._log_browserbase_error(event="session_create_failed", error=error)
+            raise error
         return session
+
+    async def _release_browserbase_session(self) -> None:
+        if not self.config.browserbase_enabled or not self._browserbase_session:
+            return
+        if not self.config.browserbase_api_key:
+            return
+        session_id = self._browserbase_session.get("id")
+        if not session_id:
+            return
+
+        payload = {
+            "projectId": self.config.browserbase_project_id,
+            "status": "REQUEST_RELEASE",
+        }
+        release_url = f"{self.config.browserbase_api_url.rstrip('/')}/{session_id}"
+        async with httpx.AsyncClient(timeout=self.config.browser_navigation_timeout_ms / 1000) as client:
+            try:
+                response = await client.post(
+                    release_url,
+                    headers={"x-bb-api-key": self.config.browserbase_api_key},
+                    json=payload,
+                )
+                response.raise_for_status()
+            except Exception as exc:
+                self._log_browserbase_error(event="session_release_failed", error=exc)
 
     async def _wait_for_rendered_page(self, start_url: str) -> None:
         for load_state in ("domcontentloaded", "load", "networkidle"):
@@ -391,14 +443,21 @@ class LocalBrowserEnvironment:
         self._loop = None
 
     async def _close_async(self) -> None:
-        if self._page is not None:
-            await self._page.close()
-        if self._context is not None:
-            await self._context.close()
-        if self._browser is not None:
-            await self._browser.close()
-        if self._playwright is not None:
-            await self._playwright.stop()
+        try:
+            if self._page is not None:
+                await self._page.close()
+            if self._context is not None:
+                await self._context.close()
+            if self._browser is not None:
+                await self._browser.close()
+            if self._playwright is not None:
+                await self._playwright.stop()
+        except Exception as exc:
+            if self.config.browserbase_enabled:
+                self._log_browserbase_error(event="session_close_failed", error=exc)
+            raise
+        finally:
+            await self._release_browserbase_session()
         self._page = None
         self._context = None
         self._browser = None

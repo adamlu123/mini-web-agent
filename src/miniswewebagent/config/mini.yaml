@@ -14,6 +14,8 @@ agent:
     - Do not use full DOM extraction.
     - Use the provided ARIA snapshot, screenshot, console output, and previous history.
     - Keep each step small and concrete.
+    - Set done=true only when you have actually answered the user's task, not when you have merely opened a page or partially progressed.
+    - If the latest observation has Status: error, treat it as a failed step and propose a recovery step instead of ending the task.
     - If the task is complete, set done=true and leave python_code empty unless one final browser action is required.
   instance_template: |
     Task: {{ task }}

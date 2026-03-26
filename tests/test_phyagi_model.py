@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+import httpx
 
 from miniswewebagent.exceptions import FormatError
 from miniswewebagent.models.phyagi_model import PhyagiModel, parse_xml_output
@@ -134,3 +135,53 @@ def test_phyagi_model_query_raises_format_error_for_bad_xml(monkeypatch) -> None
 
     with pytest.raises(FormatError):
         model.query([{"role": "user", "content": "Task"}])
+
+
+def test_phyagi_model_query_retries_transient_gateway_errors(monkeypatch) -> None:
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": '{"thought":"Retry worked","python_code":"","done":true,"final_response":"ok"}'
+                        }
+                    }
+                ]
+            }
+
+    attempts = {"count": 0}
+
+    class FakeAsyncClient:
+        def __init__(self, timeout: int):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url: str, headers: dict, json: dict):
+            attempts["count"] += 1
+            if attempts["count"] < 3:
+                request = httpx.Request("POST", url)
+                response = httpx.Response(502, request=request)
+                raise httpx.HTTPStatusError("502 Bad Gateway", request=request, response=response)
+            return FakeResponse()
+
+    async def fake_sleep(_: float) -> None:
+        return None
+
+    monkeypatch.setattr("miniswewebagent.models.phyagi_model.httpx.AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr("miniswewebagent.models.phyagi_model.asyncio.sleep", fake_sleep)
+
+    model = PhyagiModel(openai_gateway_api_key="dummy")
+    message = model.query([{"role": "user", "content": "Task"}])
+
+    assert attempts["count"] == 3
+    assert message["extra"]["done"] is True
+    assert message["extra"]["final_response"] == "ok"
