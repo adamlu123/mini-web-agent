@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
+
+import pytest
 
 from miniswewebagent.run.mini import run_one
 
@@ -161,3 +164,47 @@ def test_default_agent_resets_step_counter_between_runs() -> None:
 
     assert first["final_response"] == "run 1"
     assert second["final_response"] == "run 2"
+
+
+def test_run_one_closes_environment_when_prepare_fails(tmp_path, monkeypatch) -> None:
+    events: list[str] = []
+
+    class DummyAgent:
+        messages: list[dict[str, object]] = []
+
+        def run(self, *args, **kwargs):
+            raise AssertionError("agent.run should not be called when prepare fails")
+
+    class DummyEnvironment:
+        def prepare(self, **kwargs) -> None:
+            events.append("prepare")
+            raise RuntimeError("prepare failed")
+
+        def close(self) -> None:
+            events.append("close")
+
+    monkeypatch.setattr("miniswewebagent.run.mini.get_model", lambda config: object())
+    dummy_env = DummyEnvironment()
+    monkeypatch.setattr("miniswewebagent.run.mini.get_environment", lambda config: dummy_env)
+    monkeypatch.setattr(
+        "miniswewebagent.run.mini.get_agent",
+        lambda model, env, config, default_type="default": DummyAgent(),
+    )
+
+    with pytest.raises(RuntimeError, match="prepare failed"):
+        run_one(
+            task="Probe prepare failure cleanup.",
+            start_url="https://example.com",
+            output_dir=tmp_path / "artifacts",
+            config_spec=["mini.yaml"],
+        )
+
+    assert events == ["prepare", "close"]
+    output_root = tmp_path / "artifacts"
+    task_dirs = [path for path in output_root.iterdir() if path.is_dir()]
+    assert len(task_dirs) == 1
+    result_path = task_dirs[0] / "result.json"
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    assert result["task"] == "Probe prepare failure cleanup."
+    assert result["exit_status"] == "RuntimeError"
+    assert result["run_exception"] == "prepare failed"

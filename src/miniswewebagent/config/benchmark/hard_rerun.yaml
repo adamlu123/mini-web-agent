@@ -1,2 +1,24 @@
+model:
+  response_mode: xml
+
 agent:
   step_limit: 25
+environment:
+  browserbase_enabled: true
+  browserbase_proxies: true
+  headless: true
+  slow_mo_ms: 0
+  browser_timeout_ms: 12000
+  browser_navigation_timeout_ms: 45000
+  observation_timeout_ms: 6000
+  browserbase_timeout_seconds: 1800
+run:
+  tasks_file: /Users/lu/Documents/sandbox/Online-Mind2Web/om2w_260220.json
+  task_level: hard
+  parallel_processes: 33
+  judge_enabled: true
+  judge_model: gpt-4o
+  judge_num_proc: 33
+  judge_python: /Users/lu/Documents/sandbox/Online-Mind2Web/.venv/bin/python
+  judge_script: /Users/lu/Documents/sandbox/Online-Mind2Web/src/run.py
+  logs_root: /Users/lu/Documents/sandbox/mini-swe-agent/logs

@@ -47,7 +47,7 @@ playwright install chromium
 
 ```bash
 export OPENAI_GATEWAY_API_KEY=...
-export OPENAI_GATEWAY_ENDPOINT=http://gateway.phyagi.net/api/chat/completions
+export OPENAI_GATEWAY_ENDPOINT=http://gateway.phyagi.net/api/responses
 export OPENAI_GATEWAY_TIER=base
 ```
 

@@ -95,6 +95,7 @@ await page.title()
             assert "messages" not in json
             assert "input" in json
             assert "text" not in json
+            assert json["max_output_tokens"] == 4000
             return FakeResponse()
 
     monkeypatch.setattr("miniswewebagent.models.phyagi_model.httpx.AsyncClient", FakeAsyncClient)

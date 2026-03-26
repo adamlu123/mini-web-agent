@@ -273,6 +273,14 @@ class PhyagiModelConfig(BaseModel):
 class PhyagiModel:
     def __init__(self, *, config_class: type = PhyagiModelConfig, **kwargs):
         self.config = config_class(**kwargs)
+        default_tier = PhyagiModelConfig.model_fields["openai_gateway_tier"].default
+        env_tier = os.environ.get(
+            "OPENAI_GATEWAY_TIER",
+            os.environ.get("PHYAGI_TIER", ""),
+        )
+        if env_tier and self.config.openai_gateway_tier == default_tier:
+            self.config.openai_gateway_tier = env_tier
+
         if not self.config.openai_gateway_api_key:
             self.config.openai_gateway_api_key = os.environ.get(
                 "OPENAI_GATEWAY_API_KEY",
@@ -285,6 +293,16 @@ class PhyagiModel:
         return {"model_name": self.config.model_name, **kwargs}
 
     def _log_gateway_error(self, *, event: str, attempt: int, error: BaseException) -> None:
+        response = getattr(error, "response", None)
+        response_text = ""
+        if response is not None:
+            try:
+                response_text = str(getattr(response, "text", "") or "")
+            except Exception:
+                response_text = ""
+        if len(response_text) > 4000:
+            response_text = response_text[:4000]
+
         append_runtime_log(
             self.config.error_log_path,
             source="gateway",
@@ -294,6 +312,8 @@ class PhyagiModel:
             attempt=attempt,
             error_type=type(error).__name__,
             error=str(error),
+            status_code=getattr(response, "status_code", None),
+            response_text=response_text,
         )
 
     def format_message(self, **kwargs) -> dict[str, Any]:

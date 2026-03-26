@@ -12,6 +12,7 @@ from miniswewebagent.config import get_config_from_spec
 from miniswewebagent.environments import get_environment
 from miniswewebagent.models import get_model
 from miniswewebagent.tasks.om2w import load_om2w_task
+from miniswewebagent.utils.om2w_eval import export_online_mind2web_artifacts
 from miniswewebagent.utils.serialize import UNSET, recursive_merge
 
 DEFAULT_CONFIG = "mini.yaml"
@@ -35,6 +36,7 @@ def run_one(
     start_url: str | None = None,
     config_spec: list[str] | None = None,
     output_dir: Path | None = None,
+    resolved_output_dir: Path | None = None,
     debug: bool = False,
 ) -> Any:
     config_spec = config_spec or [DEFAULT_CONFIG]
@@ -58,7 +60,7 @@ def run_one(
     if not resolved_task:
         raise ValueError("A task is required. Use --task or --task-id.")
 
-    resolved_output_dir = _timestamped_output_dir(
+    resolved_output_dir = resolved_output_dir or _timestamped_output_dir(
         output_dir or config.get("environment", {}).get("output_dir") or "outputs",
         resolved_task_id,
     )
@@ -94,23 +96,56 @@ def run_one(
     env = get_environment(config.get("environment", {}))
     agent = get_agent(model, env, config.get("agent", {}), default_type="default")
 
-    env.prepare(
-        task=resolved_task,
-        task_id=resolved_task_id,
-        start_url=resolved_start_url,
-        task_record=task_record,
-    )
-
     console.print(f"Running task in [bold green]{resolved_output_dir}[/bold green]")
+    run_exception: Exception | None = None
+    close_exception: Exception | None = None
+    result: dict[str, Any] = {}
     try:
+        env.prepare(
+            task=resolved_task,
+            task_id=resolved_task_id,
+            start_url=resolved_start_url,
+            task_record=task_record,
+        )
         result = agent.run(
             resolved_task,
             task_id=resolved_task_id or "",
             start_url=resolved_start_url or "",
         )
+    except Exception as exc:
+        run_exception = exc
+        if getattr(agent, "messages", None):
+            result = dict(agent.messages[-1].get("extra", {}))
+        result.setdefault("exit_status", type(exc).__name__)
+        result.setdefault("submission", "")
+        result.setdefault("final_response", "")
+        result["run_exception"] = str(exc)
     finally:
-        env.close()
+        try:
+            env.close()
+        except Exception as exc:
+            close_exception = exc
+            result.setdefault("exit_status", type(exc).__name__)
+            result.setdefault("submission", "")
+            result.setdefault("final_response", "")
+            result.setdefault("run_exception", str(exc))
+            result["close_exception"] = str(exc)
+            if run_exception is None:
+                run_exception = exc
+    judge_artifacts = export_online_mind2web_artifacts(
+        output_dir=resolved_output_dir,
+        task=resolved_task,
+        task_id=resolved_task_id,
+        start_url=resolved_start_url,
+        agent_result=result,
+    )
+    result["_output_dir"] = str(resolved_output_dir)
+    result["_judge_artifacts"] = judge_artifacts
+    if close_exception is not None:
+        result["_close_exception"] = str(close_exception)
     console.print(result.get("final_response") or result.get("submission") or "Task finished.")
+    if run_exception is not None:
+        raise run_exception
     return result
 
 

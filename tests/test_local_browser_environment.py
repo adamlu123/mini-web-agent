@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from time import monotonic
 
+import httpx
+
 from miniswewebagent.environments.local_browser import LocalBrowserEnvironment
 
 
@@ -315,3 +317,50 @@ def test_local_browser_environment_uses_browserbase_cdp(monkeypatch, tmp_path: P
     assert env.serialize()["environment"]["browserbase_session"]["id"] == "sess_123"
 
     env.close()
+
+
+def test_local_browser_environment_retries_transient_browserbase_session_create(monkeypatch, tmp_path: Path) -> None:
+    attempts = {"count": 0}
+    client_kwargs: dict[str, object] = {}
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, str]:
+            return {"id": "sess_retry", "connectUrl": "wss://cdp.browserbase.example/retry"}
+
+    class FakeAsyncClient:
+        def __init__(self, timeout: float, trust_env: bool = True) -> None:
+            client_kwargs["timeout"] = timeout
+            client_kwargs["trust_env"] = trust_env
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url: str, headers: dict[str, str], json: dict[str, object]) -> FakeResponse:
+            attempts["count"] += 1
+            if attempts["count"] < 3:
+                raise httpx.ConnectError("dns failed", request=httpx.Request("POST", url))
+            return FakeResponse()
+
+    monkeypatch.setattr("miniswewebagent.environments.local_browser.httpx.AsyncClient", FakeAsyncClient)
+
+    env = LocalBrowserEnvironment(
+        browserbase_enabled=True,
+        browserbase_api_key="key",
+        browserbase_project_id="project",
+        browser_navigation_timeout_ms=3000,
+        browserbase_session_create_retries=3,
+        browserbase_retry_backoff_seconds=0,
+        output_dir=tmp_path / "artifacts",
+    )
+
+    session = env._run(env._create_browserbase_session())
+
+    assert attempts["count"] == 3
+    assert client_kwargs["trust_env"] is False
+    assert session["id"] == "sess_retry"

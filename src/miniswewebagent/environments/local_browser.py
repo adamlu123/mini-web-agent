@@ -39,6 +39,8 @@ class LocalBrowserEnvironmentConfig(BaseModel):
     browserbase_proxies: bool = False
     browserbase_keep_alive: bool = False
     browserbase_timeout_seconds: int = 1800
+    browserbase_session_create_retries: int = 4
+    browserbase_retry_backoff_seconds: float = 1.0
 
 
 class LocalBrowserEnvironment:
@@ -63,10 +65,17 @@ class LocalBrowserEnvironment:
     def _runtime_log_path(self) -> Path:
         return self.config.output_dir / "runtime_errors.jsonl"
 
-    def _log_browserbase_error(self, *, event: str, error: BaseException | str, **extra: Any) -> None:
-        session_id = (self._browserbase_session or {}).get("id", "")
+    def _log_runtime_event(self, *, source: str, event: str, **extra: Any) -> None:
         append_runtime_log(
             self._runtime_log_path(),
+            source=source,
+            event=event,
+            **extra,
+        )
+
+    def _log_browserbase_error(self, *, event: str, error: BaseException | str, **extra: Any) -> None:
+        session_id = (self._browserbase_session or {}).get("id", "")
+        self._log_runtime_event(
             source="browserbase",
             event=event,
             session_id=session_id,
@@ -83,6 +92,20 @@ class LocalBrowserEnvironment:
     def _run(self, coro):
         loop = self._ensure_loop()
         return loop.run_until_complete(coro)
+
+    def _is_retryable_browserbase_error(self, error: Exception) -> bool:
+        if isinstance(error, (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout, httpx.PoolTimeout)):
+            return True
+        if isinstance(error, httpx.HTTPStatusError):
+            status_code = error.response.status_code
+            return status_code in {408, 409, 425, 429, 500, 502, 503, 504}
+        return False
+
+    def _browserbase_retry_delay_seconds(self, attempt: int) -> float:
+        base_delay = max(self.config.browserbase_retry_backoff_seconds, 0.0)
+        if base_delay == 0:
+            return 0.0
+        return min(base_delay * (2 ** (attempt - 1)), 8.0)
 
     def prepare(self, **kwargs) -> None:
         self._prepared_task = dict(kwargs)
@@ -158,23 +181,45 @@ class LocalBrowserEnvironment:
         if self.config.browserbase_region:
             payload["region"] = self.config.browserbase_region
 
-        async with httpx.AsyncClient(timeout=self.config.browser_navigation_timeout_ms / 1000) as client:
-            try:
-                response = await client.post(
-                    self.config.browserbase_api_url,
-                    headers={"x-bb-api-key": self.config.browserbase_api_key},
-                    json=payload,
-                )
-                response.raise_for_status()
-                session = response.json()
-            except Exception as exc:
-                self._log_browserbase_error(event="session_create_failed", error=exc)
-                raise
+        retry_attempts = max(self.config.browserbase_session_create_retries, 1)
+        async with httpx.AsyncClient(
+            timeout=self.config.browser_navigation_timeout_ms / 1000,
+            trust_env=False,
+        ) as client:
+            for attempt in range(1, retry_attempts + 1):
+                try:
+                    response = await client.post(
+                        self.config.browserbase_api_url,
+                        headers={"x-bb-api-key": self.config.browserbase_api_key},
+                        json=payload,
+                    )
+                    response.raise_for_status()
+                    session = response.json()
+                    break
+                except Exception as exc:
+                    should_retry = attempt < retry_attempts and self._is_retryable_browserbase_error(exc)
+                    self._log_browserbase_error(
+                        event="session_create_failed",
+                        error=exc,
+                        attempt=attempt,
+                        retrying=should_retry,
+                    )
+                    if not should_retry:
+                        raise
+                    await asyncio.sleep(self._browserbase_retry_delay_seconds(attempt))
 
         if not session.get("connectUrl"):
             error = RuntimeError("Browserbase session response did not include connectUrl.")
             self._log_browserbase_error(event="session_create_failed", error=error)
             raise error
+        self._log_runtime_event(
+            source="browserbase",
+            event="session_created",
+            session_id=session.get("id", ""),
+            keep_alive=self.config.browserbase_keep_alive,
+            proxies=self.config.browserbase_proxies,
+            region=self.config.browserbase_region or "",
+        )
         return session
 
     async def _release_browserbase_session(self) -> None:
@@ -191,7 +236,10 @@ class LocalBrowserEnvironment:
             "status": "REQUEST_RELEASE",
         }
         release_url = f"{self.config.browserbase_api_url.rstrip('/')}/{session_id}"
-        async with httpx.AsyncClient(timeout=self.config.browser_navigation_timeout_ms / 1000) as client:
+        async with httpx.AsyncClient(
+            timeout=self.config.browser_navigation_timeout_ms / 1000,
+            trust_env=False,
+        ) as client:
             try:
                 response = await client.post(
                     release_url,
@@ -199,6 +247,11 @@ class LocalBrowserEnvironment:
                     json=payload,
                 )
                 response.raise_for_status()
+                self._log_runtime_event(
+                    source="browserbase",
+                    event="session_release_requested",
+                    session_id=session_id,
+                )
             except Exception as exc:
                 self._log_browserbase_error(event="session_release_failed", error=exc)
 
@@ -437,12 +490,15 @@ class LocalBrowserEnvironment:
                     return
             else:
                 return
-        self._run(self._close_async())
-        if self._loop is not None and not self._loop.is_closed():
-            self._loop.close()
-        self._loop = None
+        try:
+            self._run(self._close_async())
+        finally:
+            if self._loop is not None and not self._loop.is_closed():
+                self._loop.close()
+            self._loop = None
 
     async def _close_async(self) -> None:
+        close_error: Exception | None = None
         try:
             if self._page is not None:
                 await self._page.close()
@@ -453,12 +509,23 @@ class LocalBrowserEnvironment:
             if self._playwright is not None:
                 await self._playwright.stop()
         except Exception as exc:
+            close_error = exc
             if self.config.browserbase_enabled:
                 self._log_browserbase_error(event="session_close_failed", error=exc)
-            raise
         finally:
-            await self._release_browserbase_session()
-        self._page = None
-        self._context = None
-        self._browser = None
-        self._playwright = None
+            try:
+                await self._release_browserbase_session()
+            finally:
+                if self.config.browserbase_enabled:
+                    self._log_runtime_event(
+                        source="browserbase",
+                        event="session_close_complete",
+                        session_id=(self._browserbase_session or {}).get("id", ""),
+                    )
+                self._page = None
+                self._context = None
+                self._browser = None
+                self._playwright = None
+                self._browserbase_session = None
+        if close_error is not None:
+            raise close_error
