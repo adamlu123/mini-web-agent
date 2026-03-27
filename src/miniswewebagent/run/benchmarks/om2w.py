@@ -4,6 +4,7 @@ import concurrent.futures
 import contextlib
 import json
 import os
+import sys
 import traceback
 from datetime import datetime
 from pathlib import Path
@@ -21,11 +22,11 @@ from miniswewebagent.utils.serialize import recursive_merge
 app = typer.Typer(no_args_is_help=False)
 console = Console(highlight=False)
 
-DEFAULT_BENCHMARK_CONFIG = "benchmark/hard_rerun.yaml"
+DEFAULT_BENCHMARK_CONFIG = "benchmark/om2w_hard_xml.yaml"
 DEFAULT_OM2W_CONFIGS = [DEFAULT_CONFIG, DEFAULT_BENCHMARK_CONFIG]
 DEFAULT_LOG_ROOT = Path("/Users/lu/Documents/sandbox/mini-swe-agent/logs")
-DEFAULT_JUDGE_PYTHON = Path("/Users/lu/Documents/sandbox/Online-Mind2Web/.venv/bin/python")
-DEFAULT_JUDGE_SCRIPT = Path("/Users/lu/Documents/sandbox/Online-Mind2Web/src/run.py")
+DEFAULT_JUDGE_PYTHON = Path(sys.executable)
+DEFAULT_JUDGE_SCRIPT = Path(__file__).resolve().parents[4] / "om2w_judge" / "run.py"
 
 
 def _merged_config(config_spec: list[str]) -> dict[str, Any]:

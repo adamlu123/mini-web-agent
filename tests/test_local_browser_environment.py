@@ -233,6 +233,9 @@ def test_local_browser_environment_uses_browserbase_cdp(monkeypatch, tmp_path: P
         def __init__(self) -> None:
             self.url = "about:blank"
 
+        async def set_viewport_size(self, viewport: dict[str, int]) -> None:
+            events.append(("set_viewport_size", f"{viewport['width']}x{viewport['height']}"))
+
         def set_default_timeout(self, timeout: int) -> None:
             events.append(("page_timeout", str(timeout)))
 
@@ -318,6 +321,7 @@ def test_local_browser_environment_uses_browserbase_cdp(monkeypatch, tmp_path: P
 
     assert ("create_session", "1") in events
     assert ("connect_over_cdp", "wss://cdp.browserbase.example/session") in events
+    assert ("set_viewport_size", "1280x1440") in events
     assert ("goto", "https://example.com") in events
     assert env.serialize()["environment"]["browserbase_session"]["id"] == "sess_123"
 
@@ -371,7 +375,8 @@ def test_local_browser_environment_retries_transient_browserbase_session_create(
         "proxies": True,
         "browser_settings": {"advanced_stealth": True},
         "keep_alive": True,
-        "timeout": 720,
+        "timeout": 1200,
+        "region": "us-east-1",
     }
 
 

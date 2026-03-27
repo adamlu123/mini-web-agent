@@ -12,6 +12,11 @@ subcommands = [
         ["inspect", "i", "inspector"],
         "Run inspector (browse trajectories)",
     ),
+    (
+        "miniswewebagent.run.utilities.trace_viewer",
+        ["trace-viewer", "traces", "viewer"],
+        "Serve a browser trace viewer for outputs/default",
+    ),
 ]
 
 

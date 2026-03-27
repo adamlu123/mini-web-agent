@@ -35,11 +35,6 @@ class LocalBrowserEnvironmentConfig(BaseModel):
     browserbase_api_key: str = ""
     browserbase_project_id: str = ""
     browserbase_api_url: str = "https://api.browserbase.com/v1/sessions"
-    browserbase_region: str | None = None
-    browserbase_proxies: bool = True
-    browserbase_keep_alive: bool = True
-    browserbase_advanced_stealth: bool = True
-    browserbase_timeout_seconds: int = 720
     browserbase_session_create_retries: int = 4
     browserbase_retry_backoff_seconds: float = 1.0
 
@@ -62,6 +57,8 @@ class LocalBrowserEnvironment:
         self._step_index = 0
         self._prepared_task: dict[str, Any] = {}
         self._browserbase_session: dict[str, Any] | None = None
+        self._captcha_event = asyncio.Event()
+        self._captcha_event.set()
 
     def _is_target_closed_error(self, error: BaseException | str) -> bool:
         text = str(error)
@@ -112,6 +109,19 @@ class LocalBrowserEnvironment:
                 return False
         return True
 
+    async def _apply_page_viewport(self, page: Any | None) -> None:
+        if page is None:
+            return
+        set_viewport_size = getattr(page, "set_viewport_size", None)
+        if not callable(set_viewport_size):
+            return
+        await set_viewport_size(
+            {
+                "width": self.config.browser_width,
+                "height": self.config.browser_height,
+            }
+        )
+
     async def _dispose_runtime_handles(self, *, stop_playwright: bool, release_browserbase: bool) -> None:
         page = self._page
         context = self._context
@@ -159,6 +169,7 @@ class LocalBrowserEnvironment:
             self._playwright = await async_playwright().start()
 
         if self._browser_is_usable() and self._context_is_usable() and self._page_is_usable():
+            await self._apply_page_viewport(self._page)
             self._page.set_default_timeout(self.config.browser_timeout_ms)
             self._page.set_default_navigation_timeout(self.config.browser_navigation_timeout_ms)
             return
@@ -172,6 +183,7 @@ class LocalBrowserEnvironment:
                 self._page = existing_pages[0]
             else:
                 self._page = await self._context.new_page()
+            await self._apply_page_viewport(self._page)
             self._page.set_default_timeout(self.config.browser_timeout_ms)
             self._page.set_default_navigation_timeout(self.config.browser_navigation_timeout_ms)
             self._page.on("console", self._on_console)
@@ -214,6 +226,7 @@ class LocalBrowserEnvironment:
             self._page = self._context.pages[0]
         else:
             self._page = await self._context.new_page()
+        await self._apply_page_viewport(self._page)
         self._page.set_default_timeout(self.config.browser_timeout_ms)
         self._page.set_default_navigation_timeout(self.config.browser_navigation_timeout_ms)
         self._page.on("console", self._on_console)
@@ -302,6 +315,8 @@ class LocalBrowserEnvironment:
                 self._log_browserbase_error(event="session_prepare_failed", error=exc)
             raise
 
+        await self.wait_for_captcha_resolution()
+
         if start_url:
             await self._page.goto(start_url, wait_until="domcontentloaded")
             await self._wait_for_rendered_page(start_url)
@@ -330,7 +345,8 @@ class LocalBrowserEnvironment:
                     proxies=True,
                     browser_settings={"advanced_stealth": True},
                     keep_alive=True,
-                    timeout=720,
+                    timeout=1200,
+                    region="us-east-1",
                 )
                 session = {
                     "id": getattr(created_session, "id", "") or created_session.get("id", ""),
@@ -360,7 +376,8 @@ class LocalBrowserEnvironment:
             keep_alive=True,
             proxies=True,
             advanced_stealth=True,
-            timeout=720,
+            timeout=1200,
+            region="us-east-1",
         )
         return session
 
@@ -488,10 +505,29 @@ class LocalBrowserEnvironment:
             last_snapshot = current_snapshot
             await asyncio.sleep(0.25)
 
+    async def wait_for_captcha_resolution(self) -> None:
+        await self._captcha_event.wait()
+
     def _on_console(self, message) -> None:
         line = f"[{message.type}] {message.text}"
         self._console_history.append(line)
         self._step_console.append(line)
+
+        if message.text == "browserbase-solving-started":
+            self._log_runtime_event(source="browserbase", event="captcha_solving_started")
+            self._captcha_event.clear()
+        elif message.text == "browserbase-solving-finished":
+            self._log_runtime_event(source="browserbase", event="captcha_solving_finished")
+
+            async def delayed_resume() -> None:
+                await asyncio.sleep(3)
+                try:
+                    await self._page.wait_for_load_state("networkidle")
+                except Exception:
+                    pass
+                self._captcha_event.set()
+
+            asyncio.create_task(delayed_resume())
 
     def _on_page_error(self, error) -> None:
         line = f"[pageerror] {error}"
@@ -503,6 +539,7 @@ class LocalBrowserEnvironment:
 
     async def _execute_async(self, action: dict[str, Any]) -> dict[str, Any]:
         await self._prepare_async()
+        await self.wait_for_captcha_resolution()
         self._step_index += 1
         self._step_console = []
         python_code = action.get("python_code", "")

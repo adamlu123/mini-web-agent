@@ -59,3 +59,19 @@ mini-web-om2w --tasks-file /Users/lu/Documents/sandbox/Online-Mind2Web/om2w_2602
 ```
 
 The legacy `mini-web-batch` command still works and now points at the same benchmark runner under `src/miniswewebagent/run/benchmarks/`.
+
+## Trace viewer
+
+To inspect runs under `outputs/default` in a browser:
+
+```bash
+mini-web-traces --root outputs/default --port 8009
+```
+
+Or through the shared utility entry point:
+
+```bash
+mini-web-extra trace-viewer --root outputs/default --port 8009
+```
+
+The viewer scans each run folder, lists per-task traces, and shows per-step screenshots, actions, thoughts, console output, and ARIA snapshots.

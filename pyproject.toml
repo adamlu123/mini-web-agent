@@ -37,6 +37,7 @@ mini-web-om2w = "miniswewebagent.run.benchmarks.om2w:app"
 mini-web-batch = "miniswewebagent.run.om2w_batch:app"
 mini-web-inspect = "miniswewebagent.run.utilities.inspector:app"
 mini-web-extra = "miniswewebagent.run.utilities.mini_extra:main"
+mini-web-traces = "miniswewebagent.run.utilities.trace_viewer:app"
 
 [tool.setuptools.dynamic]
 version = {attr = "miniswewebagent.__version__"}
@@ -46,7 +47,7 @@ where = ["src"]
 include = ["miniswewebagent*"]
 
 [tool.setuptools.package-data]
-miniswewebagent = ["config/**/*"]
+miniswewebagent = ["config/**/*", "viewer/*"]
 
 [tool.ruff]
 line-length = 100

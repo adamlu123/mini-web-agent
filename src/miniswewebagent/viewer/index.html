@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Mini Trace Viewer</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <header class="hero card">
+        <div>
+          <p class="eyebrow">mini-swe-webagent</p>
+          <h1>Trace Viewer</h1>
+          <p class="hero-copy">
+            Inspect run folders under outputs/default, browse task traces, and drill into each browser step.
+          </p>
+        </div>
+        <div class="hero-controls">
+          <label class="control">
+            <span>Run</span>
+            <select id="runSelect"></select>
+          </label>
+          <label class="control grow">
+            <span>Search Tasks</span>
+            <input id="taskSearch" type="search" placeholder="task id, title, or final response" />
+          </label>
+          <button id="refreshBtn" type="button">Refresh</button>
+        </div>
+        <div class="meta-row">
+          <div class="meta-pill"><span>Root</span><strong id="rootDir">-</strong></div>
+          <div class="meta-pill"><span>Runs</span><strong id="runCount">0</strong></div>
+          <div class="meta-pill"><span>Tasks</span><strong id="taskCount">0</strong></div>
+          <div class="meta-pill"><span>Status</span><strong id="statusText">Loading...</strong></div>
+        </div>
+      </header>
+
+      <section class="workspace">
+        <aside class="sidebar card">
+          <div class="sidebar-top">
+            <h2>Tasks</h2>
+            <div class="legend">
+              <span class="legend-chip submitted">Submitted</span>
+              <span class="legend-chip finished">Finished</span>
+              <span class="legend-chip incomplete">Incomplete</span>
+              <span class="legend-chip error">Error</span>
+            </div>
+          </div>
+          <ul id="taskList" class="task-list"></ul>
+        </aside>
+
+        <main class="main-panel">
+          <section class="summary card">
+            <div class="summary-grid">
+              <div>
+                <span class="label">Task ID</span>
+                <strong id="taskId">-</strong>
+              </div>
+              <div>
+                <span class="label">Trace Status</span>
+                <strong id="taskStatus">-</strong>
+              </div>
+              <div>
+                <span class="label">Steps</span>
+                <strong id="taskSteps">-</strong>
+              </div>
+              <div>
+                <span class="label">Exit</span>
+                <strong id="taskExit">-</strong>
+              </div>
+            </div>
+            <div class="summary-block">
+              <span class="label">Task</span>
+              <p id="taskText">-</p>
+            </div>
+            <div class="summary-block">
+              <span class="label">Start URL</span>
+              <p id="taskStartUrl">-</p>
+            </div>
+            <div class="summary-block warning" id="taskWarnings" hidden>
+              <span class="label">Runtime Notes</span>
+              <pre id="taskWarningsText">-</pre>
+            </div>
+            <div class="summary-block">
+              <span class="label">Final Response</span>
+              <pre id="taskFinal">-</pre>
+            </div>
+          </section>
+
+          <section class="step-card card">
+            <div class="step-header">
+              <div>
+                <h2>Step Detail</h2>
+                <p id="stepLabel">Step - / -</p>
+              </div>
+              <div class="step-nav">
+                <button id="prevStepBtn" type="button">Prev</button>
+                <button id="nextStepBtn" type="button">Next</button>
+              </div>
+            </div>
+
+            <div class="step-grid">
+              <section class="panel visual-panel">
+                <h3>Screenshot</h3>
+                <div class="image-frame">
+                  <img id="stepImage" alt="Step screenshot" />
+                  <p id="stepImageEmpty">No screenshot for this step.</p>
+                </div>
+              </section>
+
+              <section class="panel info-panel">
+                <div class="info-block">
+                  <h3>Thought</h3>
+                  <pre id="stepThought">-</pre>
+                </div>
+                <div class="info-block">
+                  <h3>Action</h3>
+                  <pre id="stepAction">-</pre>
+                </div>
+                <div class="info-block two-col">
+                  <div>
+                    <h3>Page URL</h3>
+                    <pre id="stepUrl">-</pre>
+                  </div>
+                  <div>
+                    <h3>Page Title</h3>
+                    <pre id="stepTitle">-</pre>
+                  </div>
+                </div>
+                <div class="info-block two-col">
+                  <div>
+                    <h3>Observation Status</h3>
+                    <pre id="stepSuccess">-</pre>
+                  </div>
+                  <div>
+                    <h3>Exception</h3>
+                    <pre id="stepException">-</pre>
+                  </div>
+                </div>
+              </section>
+            </div>
+
+            <div class="detail-grid">
+              <section class="panel">
+                <h3>Console Output</h3>
+                <pre id="stepConsole">-</pre>
+              </section>
+              <section class="panel">
+                <h3>ARIA Snapshot</h3>
+                <pre id="stepAria">-</pre>
+              </section>
+            </div>
+
+            <details class="panel raw-panel">
+              <summary>Raw Result JSON</summary>
+              <pre id="rawResult">-</pre>
+            </details>
+          </section>
+        </main>
+      </section>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
