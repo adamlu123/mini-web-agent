@@ -6,6 +6,7 @@ const state = {
   selectedTask: null,
   taskDetail: null,
   stepIndex: 0,
+  judgeIndex: 0,
 };
 
 const runSelect = document.getElementById("runSelect");
@@ -26,6 +27,12 @@ const taskStartUrl = document.getElementById("taskStartUrl");
 const taskWarnings = document.getElementById("taskWarnings");
 const taskWarningsText = document.getElementById("taskWarningsText");
 const taskFinal = document.getElementById("taskFinal");
+const judgeSelect = document.getElementById("judgeSelect");
+const judgeModel = document.getElementById("judgeModel");
+const judgeStatus = document.getElementById("judgeStatus");
+const judgeFile = document.getElementById("judgeFile");
+const judgeUpdatedAt = document.getElementById("judgeUpdatedAt");
+const judgeResponse = document.getElementById("judgeResponse");
 
 const prevStepBtn = document.getElementById("prevStepBtn");
 const nextStepBtn = document.getElementById("nextStepBtn");
@@ -121,6 +128,7 @@ function renderTaskDetail() {
     taskStartUrl.textContent = "-";
     taskWarnings.hidden = true;
     taskFinal.textContent = "-";
+    renderJudgeDetail();
     rawResult.textContent = "-";
     renderStep();
     return;
@@ -139,7 +147,44 @@ function renderTaskDetail() {
   taskWarnings.hidden = !warnings;
   taskWarningsText.textContent = warnings || "-";
 
+  renderJudgeDetail();
   renderStep();
+}
+
+function renderJudgeDetail() {
+  const judges = state.taskDetail?.judges || [];
+  judgeSelect.innerHTML = "";
+
+  if (!judges.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "No judge result for this task";
+    judgeSelect.appendChild(option);
+    judgeSelect.disabled = true;
+    judgeModel.textContent = "-";
+    judgeStatus.textContent = "-";
+    judgeFile.textContent = "-";
+    judgeUpdatedAt.textContent = "-";
+    judgeResponse.textContent = "-";
+    return;
+  }
+
+  state.judgeIndex = Math.max(0, Math.min(state.judgeIndex, judges.length - 1));
+  judges.forEach((judge, index) => {
+    const option = document.createElement("option");
+    option.value = String(index);
+    option.textContent = `${judge.model} · ${judge.status}`;
+    judgeSelect.appendChild(option);
+  });
+  judgeSelect.value = String(state.judgeIndex);
+  judgeSelect.disabled = false;
+
+  const judge = judges[state.judgeIndex];
+  judgeModel.textContent = judge.model || "-";
+  judgeStatus.textContent = judge.status || "-";
+  judgeFile.textContent = judge.fileName || "-";
+  judgeUpdatedAt.textContent = judge.updatedAt || "-";
+  judgeResponse.textContent = formatMultiline(judge.response, "(no judge response recorded)");
 }
 
 function renderStep() {
@@ -270,6 +315,7 @@ async function loadTaskDetail() {
     `/api/task?run=${encodeURIComponent(state.selectedRun)}&task=${encodeURIComponent(state.selectedTask)}`
   );
   state.stepIndex = 0;
+  state.judgeIndex = 0;
   renderTaskList();
   renderTaskDetail();
   setStatus(`Showing ${state.taskDetail.taskId}`);
@@ -315,6 +361,11 @@ prevStepBtn.addEventListener("click", () => {
 nextStepBtn.addEventListener("click", () => {
   state.stepIndex += 1;
   renderStep();
+});
+
+judgeSelect.addEventListener("change", () => {
+  state.judgeIndex = Number.parseInt(judgeSelect.value || "0", 10) || 0;
+  renderJudgeDetail();
 });
 
 loadRuns().catch((error) => {

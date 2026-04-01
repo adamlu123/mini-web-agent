@@ -91,6 +91,7 @@ def test_run_one_completes_live_page_task_with_fake_gateway(tmp_path) -> None:
                 "mini.yaml",
                 "model.openai_gateway_api_key=dummy",
                 f"model.openai_gateway_endpoint=http://127.0.0.1:{server.server_port}",
+                "environment.browserbase_enabled=false",
                 "environment.headless=true",
                 "environment.slow_mo_ms=0",
                 "environment.browser_timeout_ms=5000",
@@ -208,3 +209,50 @@ def test_run_one_closes_environment_when_prepare_fails(tmp_path, monkeypatch) ->
     assert result["task"] == "Probe prepare failure cleanup."
     assert result["exit_status"] == "RuntimeError"
     assert result["run_exception"] == "prepare failed"
+
+
+def test_run_one_accepts_explicit_task_id_without_tasks_file(tmp_path, monkeypatch) -> None:
+    prepare_calls: list[dict[str, object]] = []
+
+    class DummyAgent:
+        messages: list[dict[str, object]] = []
+
+        def run(self, *args, **kwargs):
+            return {
+                "exit_status": "Submitted",
+                "submission": "",
+                "final_response": "ok",
+            }
+
+    class DummyEnvironment:
+        def prepare(self, **kwargs) -> None:
+            prepare_calls.append(kwargs)
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr("miniswewebagent.run.mini.get_model", lambda config: object())
+    monkeypatch.setattr("miniswewebagent.run.mini.get_environment", lambda config: DummyEnvironment())
+    monkeypatch.setattr(
+        "miniswewebagent.run.mini.get_agent",
+        lambda model, env, config, default_type="default": DummyAgent(),
+    )
+    monkeypatch.setattr("miniswewebagent.run.mini.export_online_mind2web_artifacts", lambda **kwargs: {})
+
+    result = run_one(
+        task="Search for a flight.",
+        task_id="flight__one",
+        start_url="https://example.com/flight",
+        output_dir=tmp_path / "artifacts",
+        config_spec=["mini.yaml"],
+    )
+
+    assert result["final_response"] == "ok"
+    assert prepare_calls == [
+        {
+            "task": "Search for a flight.",
+            "task_id": "flight__one",
+            "start_url": "https://example.com/flight",
+            "task_record": None,
+        }
+    ]

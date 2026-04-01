@@ -23,6 +23,19 @@ def _load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _load_jsonl(path: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        payload = json.loads(stripped)
+        if not isinstance(payload, dict):
+            raise ValueError(f"Expected object on line {line_number} of '{path.name}'.")
+        rows.append(payload)
+    return rows
+
+
 def _isoformat_mtime(path: Path) -> str:
     return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
 
@@ -55,6 +68,22 @@ def _status_from_result(result: dict[str, Any]) -> str:
     if result.get("final_result_response") or result.get("submission"):
         return "finished"
     return "incomplete"
+
+
+def _judge_status_from_label(predicted_label: Any) -> str:
+    if predicted_label == 1:
+        return "success"
+    if predicted_label == 0:
+        return "failure"
+    return "unknown"
+
+
+def _judge_model_from_filename(file_name: str) -> str:
+    marker = "_eval_"
+    suffix = "_score_threshold_"
+    if marker in file_name and suffix in file_name:
+        return file_name.split(marker, 1)[1].split(suffix, 1)[0]
+    return file_name
 
 
 def _extract_observation(step_payload: dict[str, Any]) -> dict[str, Any]:
@@ -159,6 +188,49 @@ class TraceCatalog:
     def _task_dir(self, run_id: str, task_id: str) -> Path:
         return _safe_join(self._run_dir(run_id), task_id)
 
+    def _judge_files(self, run_dir: Path) -> list[Path]:
+        return sorted(run_dir.glob("WebJudge_*_auto_eval_results.json"))
+
+    def _judge_entries_for_task(self, run_dir: Path, *, task_key: str, task_id: str) -> list[dict[str, Any]]:
+        judge_entries: list[dict[str, Any]] = []
+        task_identifiers = {task_key.strip(), task_id.strip()}
+        task_identifiers.discard("")
+
+        for judge_path in self._judge_files(run_dir):
+            matching_row = next(
+                (
+                    row
+                    for row in _load_jsonl(judge_path)
+                    if str(row.get("task_id") or "").strip() in task_identifiers
+                ),
+                None,
+            )
+            if matching_row is None:
+                continue
+
+            evaluation_details = matching_row.get("evaluation_details")
+            if not isinstance(evaluation_details, dict):
+                evaluation_details = {}
+
+            predicted_label = matching_row.get("predicted_label")
+            judge_entries.append(
+                {
+                    "id": judge_path.name,
+                    "fileName": judge_path.name,
+                    "filePath": str(judge_path),
+                    "updatedAt": _isoformat_mtime(judge_path),
+                    "model": _judge_model_from_filename(judge_path.name),
+                    "predictedLabel": predicted_label,
+                    "status": _judge_status_from_label(predicted_label),
+                    "response": str(evaluation_details.get("response") or ""),
+                    "evaluationDetails": evaluation_details,
+                    "imageJudgeRecord": matching_row.get("image_judge_record"),
+                    "raw": matching_row,
+                }
+            )
+
+        return judge_entries
+
     def list_runs(self) -> list[dict[str, Any]]:
         if not self.root_dir.exists():
             return []
@@ -208,6 +280,7 @@ class TraceCatalog:
 
     def task_detail(self, run_id: str, task_id: str) -> dict[str, Any]:
         task_dir = self._task_dir(run_id, task_id)
+        run_dir = self._run_dir(run_id)
         result_path = task_dir / "result.json"
         if not result_path.exists():
             raise FileNotFoundError(f"Task '{task_id}' was not found in run '{run_id}'.")
@@ -219,11 +292,14 @@ class TraceCatalog:
         else:
             steps = _build_fallback_steps(task_dir, result)
 
+        resolved_task_id = str(result.get("task_id") or task_id)
+        judges = self._judge_entries_for_task(run_dir, task_key=task_id, task_id=resolved_task_id)
+
         return {
             "runId": run_id,
             "taskKey": task_id,
             "status": _status_from_result(result),
-            "taskId": str(result.get("task_id") or task_id),
+            "taskId": resolved_task_id,
             "task": str(result.get("task") or ""),
             "startUrl": str(result.get("start_url") or ""),
             "finalResult": str(result.get("final_result_response") or result.get("submission") or ""),
@@ -231,6 +307,7 @@ class TraceCatalog:
             "runException": str(result.get("run_exception") or ""),
             "closeException": str(result.get("close_exception") or ""),
             "stepCount": len(steps),
+            "judges": judges,
             "result": result,
             "steps": steps,
         }

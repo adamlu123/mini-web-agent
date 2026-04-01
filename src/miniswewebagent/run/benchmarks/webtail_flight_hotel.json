@@ -1,0 +1,827 @@
+{
+  "metadata": {
+    "description": "Merged WebTailBench flight and hotel tasks normalized from Page2RPA task fields only.",
+    "generated_on": "2026-03-29",
+    "total_tasks": 81,
+    "families": {
+      "flight": 50,
+      "hotel": 31
+    },
+    "sources": [
+      "/home/luyadong/sandbox/Page2RPA/page2rpa/task_families/flight/tasks.json",
+      "/home/luyadong/sandbox/Page2RPA/page2rpa/task_families/hotel/tasks.json"
+    ]
+  },
+  "tasks": [
+    {
+      "task_id": "flight__united_13",
+      "source_family": "flight",
+      "source_id": "united_13",
+      "source_row": 1,
+      "task": "Search for a United Airlines round-trip flight from Chicago to Sao Paulo from 11/24/2026 to 12/14/2026. If there are no available flights for those dates, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.united.com",
+      "website_url": "https://www.united.com",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__ryanair_55",
+      "source_family": "flight",
+      "source_id": "ryanair_55",
+      "source_row": 2,
+      "task": "Search for a Ryanair round-trip flight from Birmingham, UK to Porto, Portugal flying out 11/23/2026 and coming back 12/07/2026. If there are no available flights for those dates, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.ryanair.com/en/us/",
+      "website_url": "https://www.ryanair.com/en/us/",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__westjet_47",
+      "source_family": "flight",
+      "source_id": "westjet_47",
+      "source_row": 3,
+      "task": "Search for a WestJet round-trip flight from Waterloo, Ontario to Calgary, Alberta September 10, 2026 - September 27, 2026. If there are no available flights for those dates, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.westjet.com/en-ca/",
+      "website_url": "https://www.westjet.com/en-ca/",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__airasia_88",
+      "source_family": "flight",
+      "source_id": "airasia_88",
+      "source_row": 4,
+      "task": "Search for a direct AirAsia flight from Singapore to Langkawi from November 24 to November 27, 2026. If there are no available flights for those dates, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.airasia.com",
+      "website_url": "https://www.airasia.com",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__jal_61",
+      "source_family": "flight",
+      "source_id": "jal_61",
+      "source_row": 5,
+      "task": "Search for a Japan Airlines round-trip flight from Dallas/Fort Worth to Singapore leaving on April 23, 2026 returning May 3, 2026. If there are no available flights for those dates, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.jal.co.jp/flights/en-us/",
+      "website_url": "https://www.jal.co.jp/flights/en-us/",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__cathaypacific_59",
+      "source_family": "flight",
+      "source_id": "cathaypacific_59",
+      "source_row": 6,
+      "task": "Search for a Cathay Pacific round-trip flight from Manila to Hong Kong November 17 - December 12, 2026. If there are no available flights for those dates, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.cathaypacific.com/cx/en_US.html",
+      "website_url": "https://www.cathaypacific.com/cx/en_US.html",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__alitalia_37",
+      "source_family": "flight",
+      "source_id": "alitalia_37",
+      "source_row": 7,
+      "task": "Search for an ITA Airways round-trip flight from Rome to Naples leaving on April 23, 2026 returning May 18, 2026. If there are no available flights for those dates, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.ita-airways.com/en_us/",
+      "website_url": "https://www.ita-airways.com/en_us/",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__jetstar_22",
+      "source_family": "flight",
+      "source_id": "jetstar_22",
+      "source_row": 8,
+      "task": "Search for a Jetstar round-trip flight from Darwin to Adelaide departing April 13, 2026 and returning April 27, 2026. If there are no available flights for those dates, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.jetstar.com/au/en/home",
+      "website_url": "https://www.jetstar.com/au/en/home",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__alaskaair_6",
+      "source_family": "flight",
+      "source_id": "alaskaair_6",
+      "source_row": 9,
+      "task": "Search for an Alaska Airlines round-trip flight from Seattle, WA to Honolulu, HI departing 11/29/2026 returning 12/03/2026. If there are no available flights for those dates, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.alaskaair.com",
+      "website_url": "https://www.alaskaair.com",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__easyjet_87",
+      "source_family": "flight",
+      "source_id": "easyjet_87",
+      "source_row": 10,
+      "task": "Search for an EasyJet round-trip flight from Palma de Mallorca to Newcastle December 3 - December 23, 2026. If there are no available flights for those dates, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.easyjet.com/en/",
+      "website_url": "https://www.easyjet.com/en/",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__jetstar_10",
+      "source_family": "flight",
+      "source_id": "jetstar_10",
+      "source_row": 11,
+      "task": "Search for a Jetstar round-trip flight from Adelaide to Sunshine Coast November 18 - November 25, 2026. If there are no available flights for those dates, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.jetstar.com/au/en/home",
+      "website_url": "https://www.jetstar.com/au/en/home",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__singaporeair_9",
+      "source_family": "flight",
+      "source_id": "singaporeair_9",
+      "source_row": 12,
+      "task": "Search for a Singapore Airlines round-trip flight from London (LHR) to Sydney (SYD) leaving July 2, 2026 and coming back July 28, 2026. If there are no available flights for those dates, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.singaporeair.com/en_UK/us/",
+      "website_url": "https://www.singaporeair.com/en_UK/us/",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__spirit_9",
+      "source_family": "flight",
+      "source_id": "spirit_9",
+      "source_row": 13,
+      "task": "Search for a Spirit Airlines round-trip flight from Houston to Los Angeles beginning April 5, 2026 till April 20, 2026. If there are no available flights for those dates, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.spirit.com",
+      "website_url": "https://www.spirit.com",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__goindigo_52",
+      "source_family": "flight",
+      "source_id": "goindigo_52",
+      "source_row": 14,
+      "task": "Search for an IndiGo round-trip flight from Sharjah (SHJ) to Delhi (DEL) outbound on April 13, 2026 returning April 19, 2026. If there are no available flights for those dates, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.goindigo.in/",
+      "website_url": "https://www.goindigo.in/",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__thaiairways_13",
+      "source_family": "flight",
+      "source_id": "thaiairways_13",
+      "source_row": 15,
+      "task": "Search for a flight with Thai Airways from Bangkok, Thailand to Singapore, outbound on November 19, 2026 returning December 4, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.thaiairways.com/en_TH/index.page",
+      "website_url": "https://www.thaiairways.com/en_TH/index.page",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__vueling_15",
+      "source_family": "flight",
+      "source_id": "vueling_15",
+      "source_row": 16,
+      "task": "Search for a flight with Vueling from Birmingham, UK to Barcelona, Spain departing November 28, 2026 and returning December 16, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.vueling.com/en",
+      "website_url": "https://www.vueling.com/en",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__turkishairlines_11",
+      "source_family": "flight",
+      "source_id": "turkishairlines_11",
+      "source_row": 17,
+      "task": "Search for a round-trip flight with Turkish Airlines from Istanbul Airport (IST) to John F. Kennedy International Airport (JFK) for a two week trip starting April 4, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.turkishairlines.com/en-us/",
+      "website_url": "https://www.turkishairlines.com/en-us/",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__airasia_50",
+      "source_family": "flight",
+      "source_id": "airasia_50",
+      "source_row": 18,
+      "task": "Search for a flight with AirAsia from Hong Kong to Manila leaving December 2, 2026 and coming back December 8, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.airasia.com",
+      "website_url": "https://www.airasia.com",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__britishairways_11",
+      "source_family": "flight",
+      "source_id": "britishairways_11",
+      "source_row": 19,
+      "task": "Search for a round-trip flight with British Airways from Manchester Airport to London Heathrow, departing April 3, 2026 and returning April 7, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.britishairways.com/content/flights",
+      "website_url": "https://www.britishairways.com/content/flights",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__suncountry_2",
+      "source_family": "flight",
+      "source_id": "suncountry_2",
+      "source_row": 20,
+      "task": "Search for a flight with Sun Country Airlines from Duluth, MN to Phoenix, AZ from April 17, 2026 to May 1, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.suncountry.com/",
+      "website_url": "https://www.suncountry.com/",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__thaiairways_9",
+      "source_family": "flight",
+      "source_id": "thaiairways_9",
+      "source_row": 21,
+      "task": "Search for a flight with Thai Airways from Bangkok to London departing November 16, 2026 and returning November 26, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.thaiairways.com/en_TH/index.page",
+      "website_url": "https://www.thaiairways.com/en_TH/index.page",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__lufthansa_39",
+      "source_family": "flight",
+      "source_id": "lufthansa_39",
+      "source_row": 22,
+      "task": "Search for a flight with Lufthansa from Frankfurt, Germany to Tel Aviv, Israel beginning November 18, 2026 till November 30, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.lufthansa.com/us/en/",
+      "website_url": "https://www.lufthansa.com/us/en/",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__suncountry_9",
+      "source_family": "flight",
+      "source_id": "suncountry_9",
+      "source_row": 23,
+      "task": "Search for a flight with Sun Country Airlines from Tampa, FL to Dallas, TX outbound on April 9, 2026 returning April 28, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.suncountry.com/",
+      "website_url": "https://www.suncountry.com/",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__klm_9",
+      "source_family": "flight",
+      "source_id": "klm_9",
+      "source_row": 24,
+      "task": "Search for a flight with KLM from Lagos, Nigeria to Frankfurt, Germany flying out 11/18/2026, coming back 11/25/2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.klm.com/",
+      "website_url": "https://www.klm.com/",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__jetstar_82",
+      "source_family": "flight",
+      "source_id": "jetstar_82",
+      "source_row": 25,
+      "task": "Search for a flight with Jetstar from Brisbane to Perth from 05/20/2026 to 06/03/2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.jetstar.com/au/en/home",
+      "website_url": "https://www.jetstar.com/au/en/home",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__aircanada_54",
+      "source_family": "flight",
+      "source_id": "aircanada_54",
+      "source_row": 26,
+      "task": "Search for a flight with Air Canada from Vancouver to Penticton June 9, 2026 - July 4, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.aircanada.com/us/en/aco/home.html",
+      "website_url": "https://www.aircanada.com/us/en/aco/home.html",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__southwest_18",
+      "source_family": "flight",
+      "source_id": "southwest_18",
+      "source_row": 27,
+      "task": "Search for a flight with Southwest Airlines from Portland, OR to Salt Lake City, UT flying out 05/15/2026, coming back 05/17/2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.southwest.com/",
+      "website_url": "https://www.southwest.com/",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__allegiantair_18",
+      "source_family": "flight",
+      "source_id": "allegiantair_18",
+      "source_row": 28,
+      "task": "Search for a flight with United Airlines from Houston to Newark, NJ April 11, 2026 - April 30, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.united.com",
+      "website_url": "https://www.united.com",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__airasia_7",
+      "source_family": "flight",
+      "source_id": "airasia_7",
+      "source_row": 29,
+      "task": "Search for a round-trip flight with Delta from Boston, MA to San Francisco, CA outbound on April 4, 2026, returning April 18, 2026 (two weeks). If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.delta.com",
+      "website_url": "https://www.delta.com",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__philippineairlines_45",
+      "source_family": "flight",
+      "source_id": "philippineairlines_45",
+      "source_row": 30,
+      "task": "Search for a flight with Philippine Airlines from Manila to Singapore from November 16, 2026 to December 15, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.philippineairlines.com/en/",
+      "website_url": "https://www.philippineairlines.com/en/",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__aircanada_27",
+      "source_family": "flight",
+      "source_id": "aircanada_27",
+      "source_row": 31,
+      "task": "Search for a flight with Air Canada from Toronto, ON to New York City, NY leaving on September 10, 2026 returning October 7, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.aircanada.com/us/en/aco/home.html",
+      "website_url": "https://www.aircanada.com/us/en/aco/home.html",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__singaporeair_41",
+      "source_family": "flight",
+      "source_id": "singaporeair_41",
+      "source_row": 32,
+      "task": "Search for a flight with Singapore Airlines from Singapore to Naha, Japan beginning April 10, 2026 till April 17, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.singaporeair.com/en_UK/us/",
+      "website_url": "https://www.singaporeair.com/en_UK/us/",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__suncountry_12",
+      "source_family": "flight",
+      "source_id": "suncountry_12",
+      "source_row": 33,
+      "task": "Search for a flight with Sun Country Airlines from San Francisco (SFO) to Minneapolis (MSP) October 18, 2026 - November 3, 2026 round trip. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.suncountry.com/",
+      "website_url": "https://www.suncountry.com/",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__lot_5",
+      "source_family": "flight",
+      "source_id": "lot_5",
+      "source_row": 34,
+      "task": "Search for a flight with LOT Polish Airlines from Warsaw, Poland to New York City, USA April 25, 2026 - May 22, 2026 round trip. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.lot.com/us/en/",
+      "website_url": "https://www.lot.com/us/en/",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__allegiantair_53",
+      "source_family": "flight",
+      "source_id": "allegiantair_53",
+      "source_row": 35,
+      "task": "Search for a flight with Allegiant Air from Asheville, NC to Boston, MA leaving on November 22, 2026 returning December 12, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.allegiantair.com/",
+      "website_url": "https://www.allegiantair.com/",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__spirit_5",
+      "source_family": "flight",
+      "source_id": "spirit_5",
+      "source_row": 36,
+      "task": "Search for a Spirit Airlines flight from BWI airport to Newark Liberty International Airport (EWR) beginning May 2, 2026 till June 2, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.spirit.com",
+      "website_url": "https://www.spirit.com",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__malaysiaairlines_95",
+      "source_family": "flight",
+      "source_id": "malaysiaairlines_95",
+      "source_row": 37,
+      "task": "Search for a flight with Malaysia Airlines from Kuala Lumpur to Kathmandu outbound on April 4, 2026 returning April 21, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.malaysiaairlines.com/us/en.html",
+      "website_url": "https://www.malaysiaairlines.com/us/en.html",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__swiss_48",
+      "source_family": "flight",
+      "source_id": "swiss_48",
+      "source_row": 38,
+      "task": "Search for a Swiss Airlines flight to Mumbai from Zurich outbound on November 22, 2026 returning December 12, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.swiss.com/us/en/",
+      "website_url": "https://www.swiss.com/us/en/",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__iberia_41",
+      "source_family": "flight",
+      "source_id": "iberia_41",
+      "source_row": 39,
+      "task": "Search for a flight for two people with Iberia from Madrid, Spain to Santiago, Chile beginning July 17, 2026 till August 11, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.iberia.com/us/",
+      "website_url": "https://www.iberia.com/us/",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__vueling_28",
+      "source_family": "flight",
+      "source_id": "vueling_28",
+      "source_row": 40,
+      "task": "Search for a flight with Vueling from London to Asturias Airport (OVD) from May 22, 2026 to June 17, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.vueling.com/en",
+      "website_url": "https://www.vueling.com/en",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__ana_22",
+      "source_family": "flight",
+      "source_id": "ana_22",
+      "source_row": 41,
+      "task": "Search for a flight with ANA from Singapore to Fukuoka April 24, 2026 - April 27, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.ana.co.jp/en/us/",
+      "website_url": "https://www.ana.co.jp/en/us/",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__thaiairways_11",
+      "source_family": "flight",
+      "source_id": "thaiairways_11",
+      "source_row": 42,
+      "task": "Search for a flight with Thai Airways from Bangkok, Thailand to Sydney, Australia from November 16, 2026 through December 11, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.thaiairways.com/en_TH/index.page",
+      "website_url": "https://www.thaiairways.com/en_TH/index.page",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__wizzair_96",
+      "source_family": "flight",
+      "source_id": "wizzair_96",
+      "source_row": 43,
+      "task": "Search for a flight with Wizz Air from Larnaca, Cyprus to Athens, Greece outbound on April 9, 2026 returning April 21, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://wizzair.com/en-gb/",
+      "website_url": "https://wizzair.com/en-gb/",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__jetstar_66",
+      "source_family": "flight",
+      "source_id": "jetstar_66",
+      "source_row": 44,
+      "task": "Search for a cheap flight with Jetstar from Sydney to Hobart outbound on October 20, 2026 returning November 6, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.jetstar.com/au/en/home",
+      "website_url": "https://www.jetstar.com/au/en/home",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__klm_21",
+      "source_family": "flight",
+      "source_id": "klm_21",
+      "source_row": 45,
+      "task": "Search for a flight with KLM from Geneva, Switzerland to Osaka, Japan from 11/22/2026 to 11/28/2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.klm.com/",
+      "website_url": "https://www.klm.com/",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__iberia_27",
+      "source_family": "flight",
+      "source_id": "iberia_27",
+      "source_row": 46,
+      "task": "Search for a flight with Iberia from Alicante to Funchal leaving on April 11, 2026 returning April 25, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.iberia.com/us/",
+      "website_url": "https://www.iberia.com/us/",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__koreanair_0",
+      "source_family": "flight",
+      "source_id": "koreanair_0",
+      "source_row": 47,
+      "task": "Search for a cheap flight with Korean Air from Los Angeles, CA to Seoul, South Korea from November 30, 2026 to December 30, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.koreanair.com/us/en/",
+      "website_url": "https://www.koreanair.com/us/en/",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__thaiairways_18",
+      "source_family": "flight",
+      "source_id": "thaiairways_18",
+      "source_row": 48,
+      "task": "Search for a flight with Thai Airways from Bangkok to Singapore leaving on May 1, 2026 returning May 21, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.thaiairways.com/en_TH/index.page",
+      "website_url": "https://www.thaiairways.com/en_TH/index.page",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__jetblue_48",
+      "source_family": "flight",
+      "source_id": "jetblue_48",
+      "source_row": 49,
+      "task": "Search for a flight with JetBlue from Orlando, FL to Denver, CO from October 19, 2026 through November 12, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.jetblue.com/",
+      "website_url": "https://www.jetblue.com/",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "flight__goindigo_24",
+      "source_family": "flight",
+      "source_id": "goindigo_24",
+      "source_row": 50,
+      "task": "Search for a flight with IndiGo from Bhubaneswar (BBSR) to Delhi (DEL) from April 20, 2026 to May 3, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+      "start_url": "https://www.goindigo.in/",
+      "website_url": "https://www.goindigo.in/",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "hotel__mgmgrand.mgmresorts_1",
+      "source_family": "hotel",
+      "source_id": "mgmgrand.mgmresorts_1",
+      "source_row": 1,
+      "task": "Search for a room at MGM Grand in Las Vegas, Nevada checking in November 27, 2026 and checking out December 9, 2026. If the hotel doesn't take reservations for that date or there are no available rooms for that time, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the hotel search results page shows available room options. Do NOT proceed to guest details, payment, or account creation.",
+      "start_url": "https://mgmgrand.mgmresorts.com",
+      "website_url": "https://mgmgrand.mgmresorts.com",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "hotel__kayak_256",
+      "source_family": "hotel",
+      "source_id": "kayak_256",
+      "source_row": 2,
+      "task": "Search for a room at Red Roof Inn in St. Louis, Missouri checking in November 23, 2026 and checking out December 4, 2026. If the hotel doesn't take reservations for that date or there are no available rooms for that time, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the hotel search results page shows available room options. Do NOT proceed to guest details, payment, or account creation.",
+      "start_url": "https://www.kayak.com",
+      "website_url": "https://www.kayak.com",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "hotel__caesars_313",
+      "source_family": "hotel",
+      "source_id": "caesars_313",
+      "source_row": 3,
+      "task": "Search for a stay at Harrah's Cherokee in Cherokee, North Carolina checking in 11/25/2026 and checking out 11/27/2026. If the hotel doesn't take reservations for that date or there are no available rooms for that time, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the hotel search results page shows available room options. Do NOT proceed to guest details, payment, or account creation.",
+      "start_url": "https://www.caesars.com",
+      "website_url": "https://www.caesars.com",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "hotel__holidayinnclub_211",
+      "source_family": "hotel",
+      "source_id": "holidayinnclub_211",
+      "source_row": 4,
+      "task": "Search for a room at Holiday Inn Club Scottsdale in Scottsdale, Arizona checking in December 6, 2026 and checking out December 19, 2026. If the hotel doesn't take reservations for that date or there are no available rooms for that time, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the hotel search results page shows available room options. Do NOT proceed to guest details, payment, or account creation.",
+      "start_url": "https://www.holidayinnclub.com",
+      "website_url": "https://www.holidayinnclub.com",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "hotel__hilton_248",
+      "source_family": "hotel",
+      "source_id": "hilton_248",
+      "source_row": 5,
+      "task": "Search for a room at DoubleTree by Hilton Rapid City Downtown Convention Center in Rapid City, South Dakota checking in December 17, 2026 and checking out December 30, 2026. If the hotel doesn't take reservations for that date or there are no available rooms for that time, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the hotel search results page shows available room options. Do NOT proceed to guest details, payment, or account creation.",
+      "start_url": "https://www.hilton.com",
+      "website_url": "https://www.hilton.com",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "hotel__airbnb_437",
+      "source_family": "hotel",
+      "source_id": "airbnb_437",
+      "source_row": 6,
+      "task": "Search for a stay at Bella's House from Twilight in St. Helens, Oregon checking in 11/13/2026 and checking out 11/25/2026. If the hotel doesn't take reservations for that date or there are no available rooms for that time, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the hotel search results page shows available room options. Do NOT proceed to guest details, payment, or account creation.",
+      "start_url": "https://www.airbnb.com",
+      "website_url": "https://www.airbnb.com",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "hotel__orbitz_8",
+      "source_family": "hotel",
+      "source_id": "orbitz_8",
+      "source_row": 7,
+      "task": "Search for a room at Legoland Hotel in Carlsbad, California checking in November 19, 2026 and checking out November 21, 2026. If the hotel doesn't take reservations for that date or there are no available rooms for that time, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the hotel search results page shows available room options. Do NOT proceed to guest details, payment, or account creation.",
+      "start_url": "https://www.orbitz.com",
+      "website_url": "https://www.orbitz.com",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "hotel__resortsandlodges_43",
+      "source_family": "hotel",
+      "source_id": "resortsandlodges_43",
+      "source_row": 8,
+      "task": "Search for a pet-friendly resort in New Jersey checking in November 18, 2026 and checking out December 2, 2026. If the hotel doesn't take reservations for that date or there are no available rooms for that time, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the hotel search results page shows available room options. Do NOT proceed to guest details, payment, or account creation.",
+      "start_url": "https://www.resortsandlodges.com",
+      "website_url": "https://www.resortsandlodges.com",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "hotel__hotels_131",
+      "source_family": "hotel",
+      "source_id": "hotels_131",
+      "source_row": 9,
+      "task": "Search for a hotel in Edisto Beach, South Carolina checking in 12/18/2026 and checking out 12/28/2026. If the hotel doesn't take reservations for that date or there are no available rooms for that time, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the hotel search results page shows available room options. Do NOT proceed to guest details, payment, or account creation.",
+      "start_url": "https://www.hotels.com",
+      "website_url": "https://www.hotels.com",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "hotel__uniquehotels.me_13",
+      "source_family": "hotel",
+      "source_id": "uniquehotels.me_13",
+      "source_row": 10,
+      "task": "Search for a unique accommodation in Havelock North, New Zealand checking in 11/17/2026 and checking out 11/19/2026. If the hotel doesn't take reservations for that date or there are no available rooms for that time, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the hotel search results page shows available room options. Do NOT proceed to guest details, payment, or account creation.",
+      "start_url": "https://uniquehotels.me",
+      "website_url": "https://uniquehotels.me",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "hotel__tripadvisor_347",
+      "source_family": "hotel",
+      "source_id": "tripadvisor_347",
+      "source_row": 11,
+      "task": "Search for a hotel near the Grand Canyon in Las Vegas, Nevada checking in April 3, 2026 and checking out April 8, 2026. If the hotel doesn't take reservations for that date or there are no available rooms for that time, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the hotel search results page shows available room options. Do NOT proceed to guest details, payment, or account creation.",
+      "start_url": "https://www.tripadvisor.com",
+      "website_url": "https://www.tripadvisor.com",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "hotel__choicehotels_52",
+      "source_family": "hotel",
+      "source_id": "choicehotels_52",
+      "source_row": 12,
+      "task": "Search for a room at Clarion Inn in Idaho Falls, Idaho checking in April 18, 2026 and checking out May 1, 2026. If the hotel doesn't take reservations for that date or there are no available rooms for that time, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the hotel search results page shows available room options. Do NOT proceed to guest details, payment, or account creation.",
+      "start_url": "https://www.choicehotels.com",
+      "website_url": "https://www.choicehotels.com",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "hotel__motel6_76",
+      "source_family": "hotel",
+      "source_id": "motel6_76",
+      "source_row": 14,
+      "task": "Search for a room at Motel 6 in Lenexa, Kansas checking in November 26, 2026 and checking out November 30, 2026. If the hotel doesn't take reservations for that date or there are no available rooms for that time, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the hotel search results page shows available room options. Do NOT proceed to guest details, payment, or account creation.",
+      "start_url": "https://www.motel6.com",
+      "website_url": "https://www.motel6.com",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "hotel__hostelworld_27",
+      "source_family": "hotel",
+      "source_id": "hostelworld_27",
+      "source_row": 15,
+      "task": "Search for a hostel in Mykonos, Greece checking in November 24, 2026 and checking out December 6, 2026. If the hotel doesn't take reservations for that date or there are no available rooms for that time, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the hotel search results page shows available room options. Do NOT proceed to guest details, payment, or account creation.",
+      "start_url": "https://www.hostelworld.com",
+      "website_url": "https://www.hostelworld.com",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "hotel__agoda_121",
+      "source_family": "hotel",
+      "source_id": "agoda_121",
+      "source_row": 18,
+      "task": "Search for a room at SO Sofitel Hua Hin in Hua Hin, Cha-Am, Thailand checking in December 18, 2026 and checking out December 23, 2026. If the hotel doesn't take reservations for that date or there are no available rooms for that time, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the hotel search results page shows available room options. Do NOT proceed to guest details, payment, or account creation.",
+      "start_url": "https://www.agoda.com",
+      "website_url": "https://www.agoda.com",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "hotel__travelocity_36",
+      "source_family": "hotel",
+      "source_id": "travelocity_36",
+      "source_row": 19,
+      "task": "Search for a hotel in Lauderdale-by-the-Sea, Florida checking in April 4, 2026 and checking out April 11, 2026. If the hotel doesn't take reservations for that date or there are no available rooms for that time, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the hotel search results page shows available room options. Do NOT proceed to guest details, payment, or account creation.",
+      "start_url": "https://www.travelocity.com",
+      "website_url": "https://www.travelocity.com",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "hotel__oyster_72",
+      "source_family": "hotel",
+      "source_id": "oyster_72",
+      "source_row": 20,
+      "task": "Search for a 2-bedroom suite at Ocean Lodge in St. Simons Island checking in April 4, 2026 and checking out April 15, 2026. If the hotel doesn't take reservations for that date or there are no available rooms for that time, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the hotel search results page shows available room options. Do NOT proceed to guest details, payment, or account creation.",
+      "start_url": "https://www.oyster.com",
+      "website_url": "https://www.oyster.com",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "hotel__vrbo_282",
+      "source_family": "hotel",
+      "source_id": "vrbo_282",
+      "source_row": 21,
+      "task": "Search for a stay at Harbor House in Treasure Island, Florida checking in December 14, 2026 and checking out December 16, 2026. If the hotel doesn't take reservations for that date or there are no available rooms for that time, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the hotel search results page shows available room options. Do NOT proceed to guest details, payment, or account creation.",
+      "start_url": "https://www.vrbo.com",
+      "website_url": "https://www.vrbo.com",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "hotel__ihg_11",
+      "source_family": "hotel",
+      "source_id": "ihg_11",
+      "source_row": 23,
+      "task": "Search for a hotel in Green River, Utah checking in April 5, 2026 and checking out April 17, 2026. If the hotel doesn't take reservations for that date or there are no available rooms for that time, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the hotel search results page shows available room options. Do NOT proceed to guest details, payment, or account creation.",
+      "start_url": "https://www.ihg.com",
+      "website_url": "https://www.ihg.com",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "hotel__marriott_20",
+      "source_family": "hotel",
+      "source_id": "marriott_20",
+      "source_row": 24,
+      "task": "Search for a room at Gaylord Opryland Resort and Convention Center in Nashville, Tennessee checking in 04/13/2026 and checking out 04/15/2026. If the hotel doesn't take reservations for that date or there are no available rooms for that time, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the hotel search results page shows available room options. Do NOT proceed to guest details, payment, or account creation.",
+      "start_url": "https://www.marriott.com",
+      "website_url": "https://www.marriott.com",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "hotel__bestwestern_370",
+      "source_family": "hotel",
+      "source_id": "bestwestern_370",
+      "source_row": 25,
+      "task": "Search for a room at Best Western Wapakoneta Inn in Wapakoneta, Ohio checking in December 18, 2026 and checking out December 22, 2026. If the hotel doesn't take reservations for that date or there are no available rooms for that time, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the hotel search results page shows available room options. Do NOT proceed to guest details, payment, or account creation.",
+      "start_url": "https://www.bestwestern.com",
+      "website_url": "https://www.bestwestern.com",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "hotel__bluegreenvacations_23",
+      "source_family": "hotel",
+      "source_id": "bluegreenvacations_23",
+      "source_row": 26,
+      "task": "Search for a room at Bluegreen at Tradewinds in Florida checking in December 3, 2026 and checking out December 5, 2026. If the hotel doesn't take reservations for that date or there are no available rooms for that time, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the hotel search results page shows available room options. Do NOT proceed to guest details, payment, or account creation.",
+      "start_url": "https://www.bluegreenvacations.com",
+      "website_url": "https://www.bluegreenvacations.com",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "hotel__hyattinclusivecollection_265",
+      "source_family": "hotel",
+      "source_id": "hyattinclusivecollection_265",
+      "source_row": 28,
+      "task": "Search for a room at Dreams Onyx Resort & Spa - All Inclusive in the Dominican Republic checking in December 16, 2026 and checking out December 27, 2026. If the hotel doesn't take reservations for that date or there are no available rooms for that time, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the hotel search results page shows available room options. Do NOT proceed to guest details, payment, or account creation.",
+      "start_url": "https://www.hyattinclusivecollection.com",
+      "website_url": "https://www.hyattinclusivecollection.com",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "hotel__premierinn_26",
+      "source_family": "hotel",
+      "source_id": "premierinn_26",
+      "source_row": 29,
+      "task": "Search for a room at Premier Inn Edinburgh City Centre in Scotland checking in December 3, 2026 and checking out December 8, 2026. If the hotel doesn't take reservations for that date or there are no available rooms for that time, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the hotel search results page shows available room options. Do NOT proceed to guest details, payment, or account creation.",
+      "start_url": "https://www.premierinn.com",
+      "website_url": "https://www.premierinn.com",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "hotel__planethollywoodhotels_25",
+      "source_family": "hotel",
+      "source_id": "planethollywoodhotels_25",
+      "source_row": 30,
+      "task": "Search for a room at Planet Hollywood Cancun Resort with Star Class in Cancun, Mexico checking in December 19, 2026 and checking out December 24, 2026. If the hotel doesn't take reservations for that date or there are no available rooms for that time, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the hotel search results page shows available room options. Do NOT proceed to guest details, payment, or account creation.",
+      "start_url": "https://www.planethollywoodhotels.com",
+      "website_url": "https://www.planethollywoodhotels.com",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "hotel__druryhotels_224",
+      "source_family": "hotel",
+      "source_id": "druryhotels_224",
+      "source_row": 32,
+      "task": "Search for a room at Drury Inn and Suites Columbus Polaris in Columbus, Ohio checking in April 9, 2026 and checking out April 22, 2026. If the hotel doesn't take reservations for that date or there are no available rooms for that time, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the hotel search results page shows available room options. Do NOT proceed to guest details, payment, or account creation.",
+      "start_url": "https://www.druryhotels.com",
+      "website_url": "https://www.druryhotels.com",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "hotel__hyatt_305",
+      "source_family": "hotel",
+      "source_id": "hyatt_305",
+      "source_row": 33,
+      "task": "Search for a room at Hyatt Regency Hotel at Orlando International Airport in Orlando, Florida checking in 12/06/2026 and checking out 12/19/2026. If the hotel doesn't take reservations for that date or there are no available rooms for that time, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the hotel search results page shows available room options. Do NOT proceed to guest details, payment, or account creation.",
+      "start_url": "https://www.hyatt.com",
+      "website_url": "https://www.hyatt.com",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "hotel__hiltongrandvacations_128",
+      "source_family": "hotel",
+      "source_id": "hiltongrandvacations_128",
+      "source_row": 38,
+      "task": "Search for a room at Hilton Grand Vacations in South Lake Tahoe, California checking in 11/20/2026 and checking out 11/25/2026. If the hotel doesn't take reservations for that date or there are no available rooms for that time, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the hotel search results page shows available room options. Do NOT proceed to guest details, payment, or account creation.",
+      "start_url": "https://www.hiltongrandvacations.com",
+      "website_url": "https://www.hiltongrandvacations.com",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "hotel__marriott-hotels.marriott_9",
+      "source_family": "hotel",
+      "source_id": "marriott-hotels.marriott_9",
+      "source_row": 42,
+      "task": "Search for a Marriott hotel with a lounge in Orlando, Florida checking in November 19, 2026 and checking out November 29, 2026. If the hotel doesn't take reservations for that date or there are no available rooms for that time, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the hotel search results page shows available room options. Do NOT proceed to guest details, payment, or account creation.",
+      "start_url": "https://marriott-hotels.marriott.com",
+      "website_url": "https://marriott-hotels.marriott.com",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "hotel__sandals_14",
+      "source_family": "hotel",
+      "source_id": "sandals_14",
+      "source_row": 43,
+      "task": "Search for an all-inclusive stay at Sandals Turks and Caicos checking in April 27, 2026 and checking out May 4, 2026. If the hotel doesn't take reservations for that date or there are no available rooms for that time, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the hotel search results page shows available room options. Do NOT proceed to guest details, payment, or account creation.",
+      "start_url": "https://www.sandals.com",
+      "website_url": "https://www.sandals.com",
+      "source_type": "booking"
+    },
+    {
+      "task_id": "hotel__kempinski_30",
+      "source_family": "hotel",
+      "source_id": "kempinski_30",
+      "source_row": 44,
+      "task": "Search for a room at Kempinski Budapest Hotel in Budapest, Hungary checking in November 29, 2026 and checking out December 6, 2026. If the hotel doesn't take reservations for that date or there are no available rooms for that time, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the hotel search results page shows available room options. Do NOT proceed to guest details, payment, or account creation.",
+      "start_url": "https://www.kempinski.com",
+      "website_url": "https://www.kempinski.com",
+      "source_type": "booking"
+    }
+  ]
+}

@@ -55,6 +55,20 @@ def test_trace_catalog_lists_runs_tasks_and_detail(tmp_path) -> None:
     )
     (task_dir / "screenshots" / "step_0001.png").write_bytes(b"png")
     (task_dir / "trajectory" / "0_full_screenshot.png").write_bytes(b"png")
+    (root / "run_a" / "WebJudge_Online_Mind2Web_eval_o4-mini_score_threshold_3_auto_eval_results.json").write_text(
+        json.dumps(
+            {
+                "task_id": "task-001",
+                "predicted_label": 1,
+                "evaluation_details": {
+                    "response": "Thoughts: The task was completed.\nStatus: success",
+                    "predicted_label": 1,
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
     catalog = TraceCatalog(root)
 
@@ -72,3 +86,7 @@ def test_trace_catalog_lists_runs_tasks_and_detail(tmp_path) -> None:
     assert detail["stepCount"] == 1
     assert detail["steps"][0]["url"] == "https://example.com"
     assert detail["steps"][0]["screenshotRelPath"] == "screenshots/step_0001.png"
+    assert len(detail["judges"]) == 1
+    assert detail["judges"][0]["model"] == "o4-mini"
+    assert detail["judges"][0]["status"] == "success"
+    assert detail["judges"][0]["response"] == "Thoughts: The task was completed.\nStatus: success"

@@ -149,7 +149,7 @@ button:disabled {
 
 .workspace {
   display: grid;
-  grid-template-columns: minmax(320px, 430px) 1fr;
+  grid-template-columns: 1fr;
   gap: 18px;
   margin-top: 18px;
 }
@@ -161,13 +161,13 @@ button:disabled {
 }
 
 .sidebar {
-  height: calc(100vh - 180px);
   display: flex;
   flex-direction: column;
 }
 
 .sidebar-top {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: 12px;
   align-items: start;
@@ -225,7 +225,10 @@ button:disabled {
   margin: 16px 0 0;
   overflow: auto;
   display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 10px;
+  max-height: 320px;
+  align-content: start;
 }
 
 .task-empty {
@@ -291,6 +294,17 @@ button:disabled {
 
 .summary-block {
   margin-top: 16px;
+}
+
+.judge-toolbar {
+  display: flex;
+  gap: 12px;
+  align-items: end;
+}
+
+.judge-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-top: 14px;
 }
 
 .summary-block p,
@@ -402,16 +416,11 @@ pre,
 }
 
 @media (max-width: 1200px) {
-  .workspace,
   .step-grid,
   .detail-grid,
   .summary-grid,
   .two-col {
     grid-template-columns: 1fr;
-  }
-
-  .sidebar {
-    height: auto;
   }
 }
 

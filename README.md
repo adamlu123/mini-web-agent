@@ -75,3 +75,27 @@ mini-web-extra trace-viewer --root outputs/default --port 8009
 ```
 
 The viewer scans each run folder, lists per-task traces, and shows per-step screenshots, actions, thoughts, console output, and ARIA snapshots.
+
+To relaunch it with a shareable Cloudflare link from the repo root, use:
+
+```bash
+PYTHONPATH=src python -m miniswewebagent.run.utilities.trace_viewer --root outputs/default --host 127.0.0.1 --port 52869
+```
+
+Then, in a second terminal:
+
+```bash
+cloudflared tunnel --url http://127.0.0.1:52869
+```
+
+Share the `https://*.trycloudflare.com` URL printed by `cloudflared`.
+
+To stop the shared viewer and free the local port, kill all matching viewer and tunnel PIDs with:
+
+```bash
+pids=$(ps -eo pid=,command= | awk '/miniswewebagent\.run\.utilities\.trace_viewer --root outputs\/default --host 127\.0\.0\.1 --port 52869/ || /cloudflared tunnel --url http:\/\/127\.0\.0\.1:52869/ {print $1}'); [ -n "$pids" ] && kill $pids
+```
+
+## Docs
+
+- Main execution flow: [docs/execution-flow.md](docs/execution-flow.md)

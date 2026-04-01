@@ -50,9 +50,10 @@ def run_one(
     resolved_start_url = start_url or run_config.get("start_url")
 
     task_record = None
-    if resolved_task_id:
+    should_load_task_record = bool(resolved_task_id) and (not resolved_task or not resolved_start_url)
+    if should_load_task_record:
         if not resolved_tasks_file:
-            raise ValueError("--task-id requires --tasks-file or run.tasks_file in config.")
+            raise ValueError("--task-id requires --tasks-file unless --task and --start-url are both set.")
         task_record = load_om2w_task(resolved_tasks_file, resolved_task_id)
         resolved_task = resolved_task or task_record["task"]
         resolved_start_url = resolved_start_url or task_record["start_url"]
