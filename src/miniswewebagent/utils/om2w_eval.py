@@ -32,6 +32,19 @@ def _load_debug_steps(output_dir: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def _extract_observation(row: dict[str, Any]) -> dict[str, Any]:
+    outputs = row.get("outputs", [])
+    if not isinstance(outputs, list):
+        return {}
+    for item in reversed(outputs):
+        if not isinstance(item, dict):
+            continue
+        observation = item.get("observation")
+        if isinstance(observation, dict):
+            return observation
+    return {}
+
+
 def _fallback_actions_and_thoughts(trajectory_path: Path) -> tuple[list[str], list[str]]:
     if not trajectory_path.exists():
         return [], []
@@ -104,6 +117,35 @@ def _ordered_step_stems(output_dir: Path) -> list[str]:
     return [path.stem for path in sorted((output_dir / "screenshots").glob("step_*.png"))]
 
 
+def _resolve_step_screenshot_path(output_dir: Path, row: dict[str, Any], step_stem: str) -> Path | None:
+    observation = _extract_observation(row)
+
+    candidates: list[str] = []
+    screenshot_path = observation.get("screenshot_path")
+    if screenshot_path:
+        candidates.append(str(screenshot_path))
+
+    recent_screenshots = observation.get("recent_screenshots", [])
+    if isinstance(recent_screenshots, list):
+        candidates.extend(str(item) for item in recent_screenshots if str(item).strip())
+
+    candidates.append(f"screenshots/{step_stem}.png")
+
+    seen: set[Path] = set()
+    for candidate in candidates:
+        path = Path(candidate)
+        if not path.is_absolute():
+            path = output_dir / path
+        path = path.resolve()
+        if path in seen:
+            continue
+        seen.add(path)
+        if path.exists():
+            return path
+
+    return None
+
+
 def _write_placeholder_screenshot(path: Path) -> None:
     path.write_bytes(_PLACEHOLDER_PNG_BYTES)
 
@@ -157,11 +199,20 @@ def export_online_mind2web_artifacts(
     for stale_path in trajectory_dir.glob("*_full_screenshot.*"):
         stale_path.unlink()
 
+    debug_steps = _load_debug_steps(output_dir)
+    ordered_step_stems = _ordered_step_stems(output_dir)
+
     copied_screenshots: list[str] = []
-    for index, step_stem in enumerate(_ordered_step_stems(output_dir)):
-        src = output_dir / "screenshots" / f"{step_stem}.png"
+    for index, step_stem in enumerate(ordered_step_stems):
+        src = None
+        if index < len(debug_steps):
+            src = _resolve_step_screenshot_path(output_dir, debug_steps[index], step_stem)
+        if src is None:
+            legacy_src = output_dir / "screenshots" / f"{step_stem}.png"
+            if legacy_src.exists():
+                src = legacy_src
         dst = trajectory_dir / f"{index}_full_screenshot.png"
-        if src.exists():
+        if src is not None:
             if src.resolve() != dst.resolve():
                 shutil.copy2(src, dst)
         else:
@@ -170,7 +221,7 @@ def export_online_mind2web_artifacts(
 
     action_history: list[str] = []
     thoughts: list[str] = []
-    for row in _load_debug_steps(output_dir):
+    for row in debug_steps:
         python_code = str(row.get("python_code", "")).strip()
         if not python_code:
             continue

@@ -22,7 +22,7 @@ from miniswewebagent.utils.serialize import recursive_merge
 app = typer.Typer(no_args_is_help=False)
 console = Console(highlight=False)
 
-DEFAULT_BENCHMARK_CONFIG = "benchmark/om2w_hard_xml.yaml"
+DEFAULT_BENCHMARK_CONFIG = "benchmark/om2w_hard_local_workspace.yaml"
 DEFAULT_OM2W_CONFIGS = [DEFAULT_CONFIG, DEFAULT_BENCHMARK_CONFIG]
 DEFAULT_LOG_ROOT = Path("/Users/lu/Documents/sandbox/mini-swe-agent/logs")
 DEFAULT_JUDGE_PYTHON = Path(sys.executable)

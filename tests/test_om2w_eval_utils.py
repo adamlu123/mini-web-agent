@@ -62,6 +62,49 @@ def test_export_online_mind2web_artifacts_creates_result_and_trajectory(tmp_path
     assert placeholder_image.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
 
 
+def test_export_online_mind2web_artifacts_uses_workspace_observation_screenshots(tmp_path) -> None:
+    output_dir = tmp_path / "task"
+    (output_dir / "debug" / "steps").mkdir(parents=True)
+    (output_dir / "screenshots").mkdir(parents=True)
+
+    screenshot_path = output_dir / "screenshots" / "named_capture.png"
+    screenshot_bytes = b"workspace-png"
+    screenshot_path.write_bytes(screenshot_bytes)
+
+    (output_dir / "debug" / "steps" / "step_0001.json").write_text(
+        json.dumps(
+            {
+                "step": 1,
+                "thought": "Explore the page.",
+                "python_code": "python explore.py",
+                "done": False,
+                "outputs": [
+                    {
+                        "observation": {
+                            "screenshot_path": str(screenshot_path),
+                            "recent_screenshots": ["screenshots/named_capture.png"],
+                        }
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    artifacts = export_online_mind2web_artifacts(
+        output_dir=output_dir,
+        task="Example task",
+        task_id="task-1",
+        start_url="https://example.com",
+        agent_result={"final_response": "Done", "exit_status": "Submitted", "submission": "Done"},
+    )
+
+    exported_image = output_dir / "trajectory" / "0_full_screenshot.png"
+    assert artifacts["trajectory_dir"] == str(output_dir / "trajectory")
+    assert exported_image.exists()
+    assert exported_image.read_bytes() == screenshot_bytes
+
+
 def test_normalize_online_mind2web_judge_results_rewrites_missing_history_prompt(tmp_path) -> None:
     result_file = tmp_path / "judge_results.json"
     result_file.write_text(
