@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 import httpx
 
@@ -53,6 +55,59 @@ def test_phyagi_model_formats_observations_from_template() -> None:
 
     assert messages[0]["role"] == "user"
     assert messages[0]["content"][0]["text"] == "Status=ok URL=https://example.com"
+
+
+def test_phyagi_model_attaches_observation_screenshot_by_default(tmp_path: Path) -> None:
+    screenshot = tmp_path / "shot.png"
+    screenshot.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    model = PhyagiModel(
+        openai_gateway_api_key="dummy",
+        observation_template="Status={{ 'ok' if observation.success else 'error' }}",
+    )
+
+    messages = model.format_observation_messages(
+        {},
+        [
+            {
+                "observation": {
+                    "success": True,
+                    "url": "https://example.com",
+                    "title": "Example",
+                    "screenshot_path": str(screenshot),
+                }
+            }
+        ],
+    )
+
+    assert [part["type"] for part in messages[0]["content"]] == ["input_text", "input_image"]
+
+
+def test_phyagi_model_can_disable_observation_screenshot_attachment(tmp_path: Path) -> None:
+    screenshot = tmp_path / "shot.png"
+    screenshot.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    model = PhyagiModel(
+        openai_gateway_api_key="dummy",
+        observation_template="Status={{ 'ok' if observation.success else 'error' }}",
+        attach_observation_screenshot=False,
+    )
+
+    messages = model.format_observation_messages(
+        {},
+        [
+            {
+                "observation": {
+                    "success": True,
+                    "url": "https://example.com",
+                    "title": "Example",
+                    "screenshot_path": str(screenshot),
+                }
+            }
+        ],
+    )
+
+    assert [part["type"] for part in messages[0]["content"]] == ["input_text"]
 
 
 def test_phyagi_model_query_parses_xml_mode(monkeypatch) -> None:

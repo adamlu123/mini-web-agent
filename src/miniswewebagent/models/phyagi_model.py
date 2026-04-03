@@ -255,6 +255,7 @@ class PhyagiModelConfig(BaseModel):
     observation_template: str = DEFAULT_OBSERVATION_TEMPLATE
     response_mode: str = "xml"
     format_error_template: str = DEFAULT_XML_FORMAT_ERROR_TEMPLATE
+    attach_observation_screenshot: bool = True
 
     @field_validator(
         "model_name",
@@ -342,7 +343,7 @@ class PhyagiModel:
 
             parts: list[dict[str, Any]] = [text_part(content)]
             screenshot_path = observation.get("screenshot_path")
-            if screenshot_path:
+            if self.config.attach_observation_screenshot and screenshot_path:
                 parts.append(image_part_from_path(Path(screenshot_path)))
 
             observation_messages.append(
