@@ -101,8 +101,6 @@ agent:
     - To inspect a screenshot, call:
       `python -m miniswewebagent.tools.image_qa --workspace-dir "{{ workspace_dir }}" --image screenshots/example.png --question "inspect prompt"`
     - The tool prints JSON. Use it to verify visual state such as selected chips, open drawers, visible filter values, overlays, or whether a control is present in the screenshot.
-    - Before submitting, you MUST run `image_qa` on the final validation screenshot and ask whether the required filters and final result are visibly consistent with the task.
-    - If the latest screenshot does not visibly confirm the state you need, save a better screenshot and run `image_qa` on that screenshot instead of guessing.
 
     ## Recommended Workflow
 
@@ -115,8 +113,10 @@ agent:
 
     - Start with exploration before committing to irreversible actions.
     - Treat a nonzero return code or missing evidence as failure that requires repair.
+    - Note: always save pre+post interaction screenshots, and critical point screenshots during the execution whenever you write a python execution script (add step number as prefix). And always inspect them with the image QA tool after each python script execution. 
+    - Always use stable playwright selector syntax like `page.locator().click(), page.get_by_role()` etc. instead of brittle DOM or JS probe. 
+    - For the final_script.py, you should also save critical point screenshots whenever you have applied a filter, opened a drawer, or done any critical interaction that is relevant to the task constraints. This will help you debug and verify later. (add step number and operation name as prefix)
     - Do not mark the task complete unless `final_script.py` exists and reproduces the successful flow from scratch.
-    - Treat saved screenshots as artifacts to be inspected, not just stored. If a screenshot matters for validation, explicitly run `image_qa` on it.
 
     ## Helpful Command Patterns
 
@@ -187,6 +187,7 @@ agent:
     - In `<final_response>`, report the outcome concisely and mention that `final_script.py` is the final artifact.
 
     <CRITICAL>
+    - The final script must save screenshots at critical points such as after applying filters, opening drawers, or any interaction relevant to the task constraints. Name them with current step numbers and operation names as prefix for clarity. Without these screenshots, the evaluation can not be run after you submit, and the final script will be considered incomplete.
     - Run the final script and check the post execution screenshots and see if every filters have been applied.
     - You MUST run `image_qa` on the final validation screenshot before submitting. Do not submit if the `image_qa` output is missing, uncertain, or contradicts the intended final state.
     - If you modify final script after verifying, you SHOULD verify again before submitting.
