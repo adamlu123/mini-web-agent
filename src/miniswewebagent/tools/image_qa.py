@@ -15,7 +15,7 @@ from miniswewebagent.models.phyagi_model import _extract_response_text, text_par
 
 def _build_prompt(question: str) -> str:
     return (
-        "Answer the user's question using only visible evidence from the screenshot. "
+        "Answer the user's question using only visible evidence from the provided image or images. "
         "If the answer is not visible, say so instead of guessing.\n\n"
         f"Question: {question.strip()}"
     )
@@ -42,6 +42,19 @@ def _resolve_image_path(image_path: str, workspace_dir: str = "") -> Path:
     return path
 
 
+def _normalize_image_paths(
+    *,
+    image_path: Path | None = None,
+    image_paths: list[Path] | tuple[Path, ...] | None = None,
+) -> list[Path]:
+    normalized = list(image_paths or [])
+    if image_path is not None:
+        normalized.insert(0, image_path)
+    if not normalized:
+        raise ValueError("At least one image path is required.")
+    return normalized
+
+
 def _gateway_config(args: argparse.Namespace) -> tuple[str, str, str]:
     api_key = (
         args.api_key
@@ -58,24 +71,23 @@ def _gateway_config(args: argparse.Namespace) -> tuple[str, str, str]:
 
 def run_image_qa(
     *,
-    image_path: Path,
+    image_path: Path | None = None,
+    image_paths: list[Path] | tuple[Path, ...] | None = None,
     question: str,
     api_key: str,
     endpoint: str,
     model: str,
     timeout_seconds: int,
 ) -> dict[str, Any]:
-    image_part = _high_detail_image_part_from_path(image_path)
+    resolved_image_paths = _normalize_image_paths(image_path=image_path, image_paths=image_paths)
     payload = {
         "model": model,
         "input": [
             {
                 "type": "message",
                 "role": "user",
-                "content": [
-                    text_part(_build_prompt(question)),
-                    image_part,
-                ],
+                "content": [text_part(_build_prompt(question))]
+                + [_high_detail_image_part_from_path(path) for path in resolved_image_paths],
             }
         ],
         "max_output_tokens": 500,
@@ -116,16 +128,24 @@ def run_image_qa(
 
     raw_text = _extract_response_text(response_payload).strip()
     parsed = json.loads(raw_text)
-    return {
-        "image_path": str(image_path),
+    result = {
+        "image_paths": [str(path) for path in resolved_image_paths],
         "question": question,
         **parsed,
     }
+    if len(resolved_image_paths) == 1:
+        result["image_path"] = str(resolved_image_paths[0])
+    return result
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Ask a visual question about a local image and print JSON.")
-    parser.add_argument("--image", required=True, help="Path to the image file.")
+    parser.add_argument(
+        "--image",
+        required=True,
+        action="append",
+        help="Path to an image file. Repeat --image to include multiple images.",
+    )
     parser.add_argument("--question", required=True, help="Question to answer from the image.")
     parser.add_argument("--workspace-dir", default="", help="Optional base directory for relative image paths.")
     parser.add_argument("--model", default="", help="Override the gateway model name.")
@@ -138,10 +158,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    image_path = _resolve_image_path(args.image, workspace_dir=args.workspace_dir)
+    image_paths = [_resolve_image_path(image_path, workspace_dir=args.workspace_dir) for image_path in args.image]
     api_key, endpoint, model = _gateway_config(args)
     result = run_image_qa(
-        image_path=image_path,
+        image_paths=image_paths,
         question=args.question,
         api_key=api_key,
         endpoint=endpoint,

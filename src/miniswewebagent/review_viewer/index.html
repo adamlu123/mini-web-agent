@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sandbox Review Viewer</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <header class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">mini-swe-webagent</p>
+          <h1>Sandbox Review Viewer</h1>
+          <p>
+            Select a run folder, select a judge file, pick a task, then inspect any screenshot on the left while reading the judge reason on the right.
+          </p>
+        </div>
+        <div class="controls">
+          <label class="control">
+            <span>Run Folder</span>
+            <select id="runSelect"></select>
+          </label>
+          <label class="control">
+            <span>Judge File</span>
+            <select id="judgeSelect"></select>
+          </label>
+          <label class="control grow">
+            <span>Search Tasks</span>
+            <input id="taskSearch" type="search" placeholder="task id or task text" />
+          </label>
+          <button id="refreshBtn" type="button">Refresh</button>
+        </div>
+        <div class="meta-row">
+          <div class="meta-pill"><span>Runs Root</span><strong id="runsRoot">-</strong></div>
+          <div class="meta-pill"><span>Judge Root</span><strong id="judgeRoot">-</strong></div>
+          <div class="meta-pill"><span>Tasks</span><strong id="taskCount">0</strong></div>
+          <div class="meta-pill"><span>Status</span><strong id="statusText">Loading...</strong></div>
+        </div>
+      </header>
+
+      <section class="workspace">
+        <section class="sidebar top-panel">
+          <div class="sidebar-header">
+            <h2>Tasks</h2>
+          </div>
+          <ul id="taskList" class="task-list"></ul>
+        </section>
+
+        <main class="content">
+          <section class="task-summary">
+            <div class="summary-row">
+              <div>
+                <span class="label">Task ID</span>
+                <strong id="taskId">-</strong>
+              </div>
+              <div>
+                <span class="label">Judge Status</span>
+                <strong id="taskJudgeStatus">-</strong>
+              </div>
+              <div>
+                <span class="label">Start URL</span>
+                <strong id="taskStartUrl">-</strong>
+              </div>
+            </div>
+            <div class="summary-block">
+              <span class="label">Task Description</span>
+              <p id="taskText">-</p>
+            </div>
+          </section>
+
+          <section class="image-panel top-panel">
+            <div class="panel-header">
+              <div>
+                <h2>Screenshots</h2>
+                <p id="imageCountLabel">0 image(s)</p>
+              </div>
+            </div>
+            <div id="imageList" class="image-list"></div>
+          </section>
+
+          <section class="main-grid">
+            <section class="image-panel">
+              <div class="image-toolbar">
+                <button id="prevImageBtn" type="button">Prev</button>
+                <button id="nextImageBtn" type="button">Next</button>
+                <span id="imagePositionLabel">- / -</span>
+                <button id="zoomOutBtn" type="button">-</button>
+                <button id="zoomInBtn" type="button">+</button>
+                <button id="zoomResetBtn" type="button">Reset</button>
+                <span id="zoomLabel">100%</span>
+                <span class="image-hint">Wheel or pinch to zoom. Drag or arrow keys to move.</span>
+              </div>
+              <div class="image-frame">
+                <div id="imageViewport" class="image-viewport" tabindex="0">
+                  <img id="selectedImage" alt="Selected task screenshot" hidden />
+                </div>
+                <p id="selectedImageEmpty">No screenshot selected.</p>
+              </div>
+            </section>
+
+            <section class="reason-panel">
+              <div class="panel-header">
+                <div>
+                  <h2>Judge Reason</h2>
+                  <p id="judgeMeta">-</p>
+                </div>
+              </div>
+              <div class="summary-row compact">
+                <div>
+                  <span class="label">Judge Status</span>
+                  <strong id="judgeStatus">-</strong>
+                </div>
+                <div>
+                  <span class="label">Judge Model</span>
+                  <strong id="judgeModel">-</strong>
+                </div>
+              </div>
+              <pre id="judgeReason">-</pre>
+              <div class="response-block">
+                <span class="label">Judge Response</span>
+                <pre id="judgeResponse">-</pre>
+              </div>
+              <div class="response-block">
+                <span class="label">Final Response</span>
+                <pre id="finalResponse">-</pre>
+              </div>
+              <div class="response-block">
+                <span class="label">Last Action</span>
+                <pre id="lastAction">-</pre>
+              </div>
+              <div class="response-block">
+                <span class="label">Exit Status</span>
+                <pre id="exitStatus">-</pre>
+              </div>
+              <div class="response-block">
+                <span class="label">Last Thought</span>
+                <pre id="lastThought">-</pre>
+              </div>
+            </section>
+          </section>
+        </main>
+      </section>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>

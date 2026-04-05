@@ -95,11 +95,33 @@ agent:
     - Print concise ARIA snapshots, URLs, titles, visible labels, and any extracted state needed for the next step.
     - Keep each command purposeful. Avoid unrelated cleanup or broad file dumps.
 
+    ## Your must strictly follow the following criteria to complete a task:
+    *Important task success Criteria*:
+    1: The filtered results must be displayed correctly. If filters were not properly applied (i.e., missing selection, missing confirmation, or no visible effect in results), the task is not considered successful.
+    2: You must carefully check whether these snapshots meet these key points. Ensure that specific filter conditions, such as "best," "highest," "cheapest," "latest," "most recent," "lowest," "closest," "highest-rated," "largest," and "newest" are correctly applied using the filter function(e.g., sort function).
+    3: Certain key points or requirements should be applied by the filter. Otherwise, a search with all requirements as input will be deemed a failure since it cannot guarantee that all results meet the requirements!
+    4: If the task requires filtering by a specific range of money, years, or the number of beds and bathrooms, the applied filter must exactly match the given requirement. Any deviation results in failure. To ensure the task is successful, the applied filter must precisely match the specified range without being too broad or too narrow.
+    Examples of Failure Cases:
+    - If the requirement is less than $50, but the applied filter is less than $25, it is a failure.
+    - If the requirement is $1500-$2500, but the applied filter is $2000-$2500, it is a failure.
+    - If the requirement is $25-$200, but the applied filter is $0-$200, it is a failure.
+    - If the required years are 2004-2012, but the filter applied is 2001-2012, it is a failure.
+    - If the required years are before 2015, but the applied filter is 2000-2014, it is a failure.
+    - If the task requires exactly 2 beds, but the filter applied is 2+ beds, it is a failure.
+    5: Some tasks require a submission action or a display of results to be considered successful.
+    6: If the retrieved information is invalid or empty(e.g., No match was found), but the agent has correctly performed the required action, it should still be considered successful.
+    7: When a task specifies multiple explicit filters or sort constraints, the agent must apply each one through the site controls when those controls exist. It is not sufficient to infer compliance from unfiltered or broadly searched results.
+    8: If a relevant site control does not exist, the trajectory must show direct verification of that constraint from the page content or item details before the task can be marked successful.
+
+
+
     ## Image QA Tool
 
     - Screenshots are not attached automatically in this benchmark variant.
     - To inspect a screenshot, call:
       `python -m miniswewebagent.tools.image_qa --workspace-dir "{{ workspace_dir }}" --image screenshots/example.png --question "inspect prompt"`
+    - The tool also supports multiple images in one call by repeating `--image`.
+    - Use multiple images when the task state is distributed across several critical screenshots and you need one combined visual verification answer.
     - The tool prints JSON. Use it to verify visual state such as selected chips, open drawers, visible filter values, overlays, or whether a control is present in the screenshot.
 
     ## Recommended Workflow
@@ -107,7 +129,7 @@ agent:
     1. Planning phase: break down all the required constraints and options/filters into a `plan.md` file, each constraint as one individual item.
     2. Targeted exploration phase: inspect `task.json`, create or update a python file for exploration `xxx.py`, launch the target site with Playwright + Browserbase, and print ARIA/page structure evidence before acting. Identify the next concrete UI action from evidence, especially every target filter in `plan.md`, sort controls, or expandable sections.
     3. Final script crafting and fixing phase: create and refine `final_script.py`, save pre/post execution screenshots, rerun it from scratch, and debug using printed outputs, plus inspecting the saved screenshots. 
-    4. Validation phase: rerun the final script from scratch, verify the task goal is complete, and only then finish. Before you determine the task complete, always check `plan.md`, the logs, and screenshots to confirm that every constraint and option/filter has been applied. You MUST also run `image_qa` on the final validation screenshot and use that JSON output as explicit visual confirmation.
+    4. Validation phase: rerun the final script from scratch, verify the task goal is complete, and only then finish. Before you determine the task complete, always check `plan.md`, the logs, and screenshots to confirm that every constraint and option/filter has been applied. You MUST also run `image_qa` on the full set of final execution verification screenshots and use that JSON output as explicit visual confirmation.
 
     ## Required Habits
 
@@ -115,7 +137,7 @@ agent:
     - Treat a nonzero return code or missing evidence as failure that requires repair.
     - Note: always save pre+post interaction screenshots, and critical point screenshots during the execution whenever you write a python execution script (add step number as prefix). And always inspect them with the image QA tool after each python script execution. 
     - Always use stable playwright selector syntax like `page.locator().click(), page.get_by_role()` etc. instead of brittle DOM or JS probe. 
-    - For the final_script.py, you should also save critical point screenshots whenever you have applied a filter, opened a drawer, or done any critical interaction that is relevant to the task constraints. This will help you debug and verify later. (add step number and operation name as prefix)
+    - For the final_script.py, you should also save critical point screenshots **whenever you have applied a filter, opened a drawer, or done any critical interaction that is relevant to the task constraints**. You should make sure it always contain those steps in the code. This will help you debug and verify later. (add step number and operation name as prefix)
     - Do not mark the task complete unless `final_script.py` exists and reproduces the successful flow from scratch.
 
     ## Helpful Command Patterns
@@ -136,8 +158,8 @@ agent:
       `sed -n '1,200p' logs/step_0001.log`
     - Ask a question about a saved screenshot:
       `python -m miniswewebagent.tools.image_qa --workspace-dir "{{ workspace_dir }}" --image screenshots/explore.png --question "Is there a selected BMW filter chip visible?"`
-    - Inspect the screenshots for verification:
-      `python -m miniswewebagent.tools.image_qa --workspace-dir "{{ workspace_dir }}" --image screenshots/xxx.png --question "xxx?"`
+    - Inspect multiple screenshots together for verification:
+      `python -m miniswewebagent.tools.image_qa --workspace-dir "{{ workspace_dir }}" --image screenshots/final_execution_1_{apply_constraint_1}.png --image screenshots/final_execution_2_{apply_constraint_2}.png --image screenshots/final_execution_3_{final_state}.png --question "Using all screenshots together, is the final state correct with all required filters applied, correct sort order, and visible results that match the task constraints?"`
 
     ## Playwright Example
 
@@ -187,14 +209,16 @@ agent:
     - In `<final_response>`, report the outcome concisely and mention that `final_script.py` is the final artifact.
 
     <CRITICAL>
-    - The final script must save screenshots at critical points such as after applying filters, opening drawers, or any interaction relevant to the task constraints. Name them with current step numbers and operation names as prefix for clarity. Without these screenshots, the evaluation can not be run after you submit, and the final script will be considered incomplete.
+    - The final script **must** save screenshots at critical points during execution, such as after applying filters, opening drawers, or any interaction relevant to the task constraints. Name them with 'final_execution_{idx}_{critical_point_name}.png' for clarity. Without these screenshots, the evaluation can not be run after you submit, and the final script will be considered incomplete.
+    - The final script must be step by step use the stable selectors to apply the filters and constraints, do not directly use goto_url to jumpt to the intermediate or final state, because that will skip the critical interactions and make the final script incomplete.
     - Run the final script and check the post execution screenshots and see if every filters have been applied.
-    - You MUST run `image_qa` on the final validation screenshot before submitting. Do not submit if the `image_qa` output is missing, uncertain, or contradicts the intended final state.
+    - Final task completion verification MUST use all screenshots matching `screenshots/final_execution_{idx}_{critical_point_name}.png` together in one multi-image `image_qa` call. The question should ask whether the full set of screenshots, taken together, confirms task completion and every required constraint/filter/sort/selection.
+    - You **MUST** run that final multi-image `image_qa` verification before submitting. Do not submit if the `image_qa` output is missing, uncertain, or contradicts the intended final state. In this case, you should start over repeat the loop to fix the error in the final script, and then run the final multi-image `image_qa` verification again until you get a clear confirmation that the final state is correct in all aspects. 
     - If you modify final script after verifying, you SHOULD verify again before submitting.
     - You CANNOT continue working (reading, editing, testing) in any way on this task after submitting.
     </CRITICAL>
     </instructions>
-  step_limit: 40
+  step_limit: 50
   debug_log: true
   output_path:
 
