@@ -118,6 +118,34 @@ To stop the shared viewer and free the local port, kill all matching viewer and 
 pids=$(ps -eo pid=,command= | awk '/miniswewebagent\.run\.utilities\.trace_viewer --root outputs\/default --host 127\.0\.0\.1 --port 52869/ || /cloudflared tunnel --url http:\/\/127\.0\.0\.1:52869/ {print $1}'); [ -n "$pids" ] && kill $pids
 ```
 
+## Review viewer
+
+To inspect sandbox runs alongside judge outputs:
+
+```bash
+mini-web-review --runs-root outputs/sandbox --judge-root om2w_judge --port 8010
+```
+
+Or use the repo helper that mirrors the remote viewer workflow:
+
+```bash
+bash scripts/start_review_viewer.sh 8010
+```
+
+To launch it on a remote machine and keep it localhost-only:
+
+```bash
+bash scripts/start_remote_review_viewer.sh 52870
+```
+
+Then, in a second terminal on that same machine:
+
+```bash
+bash scripts/start_public_tunnel.sh 52870
+```
+
+Share the `https://*.trycloudflare.com` URL printed by `cloudflared`.
+
 ## Docs
 
 - Main execution flow: [docs/execution-flow.md](docs/execution-flow.md)

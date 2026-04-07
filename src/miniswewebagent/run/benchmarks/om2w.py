@@ -13,7 +13,7 @@ from typing import Any
 import typer
 from rich.console import Console
 
-from miniswewebagent.config import get_config_from_spec
+from miniswewebagent.config import get_config_from_spec, snapshot_config_specs
 from miniswewebagent.run.mini import DEFAULT_CONFIG, _timestamped_output_dir, run_one
 from miniswewebagent.tasks.om2w import load_om2w_tasks
 from miniswewebagent.utils.om2w_eval import run_online_mind2web_judge
@@ -95,6 +95,7 @@ def _run_task_worker(
                     start_url=str(task.get("start_url", "")),
                     config_spec=config_spec,
                     resolved_output_dir=task_output_dir,
+                    snapshot_config=False,
                 )
                 return {
                     "task_id": task_id,
@@ -177,6 +178,7 @@ def main(
     base_output_root = Path(output_dir or env_config.get("output_dir") or "outputs").expanduser()
     batch_output_dir = base_output_root / batch_name if output_dir is None else Path(output_dir).expanduser()
     batch_output_dir.mkdir(parents=True, exist_ok=True)
+    config_snapshot_dir = snapshot_config_specs(config_spec, batch_output_dir, merged_config=config)
 
     batch_log_dir = resolved_log_root / batch_name
     batch_log_dir.mkdir(parents=True, exist_ok=True)
@@ -190,6 +192,7 @@ def main(
     _write_batch_log_line(batch_log_path, f"task_level={resolved_task_level or '<all>'}")
     _write_batch_log_line(batch_log_path, f"workers={resolved_workers}")
     _write_batch_log_line(batch_log_path, f"output_dir={batch_output_dir}")
+    _write_batch_log_line(batch_log_path, f"config_snapshot_dir={config_snapshot_dir}")
 
     console.print(f"Running {len(tasks)} Online-Mind2Web task(s)")
     console.print(f"Outputs: [bold green]{batch_output_dir}[/bold green]")
@@ -238,6 +241,7 @@ def main(
         "task_level": resolved_task_level,
         "workers": resolved_workers,
         "output_dir": str(batch_output_dir),
+        "config_snapshot_dir": str(config_snapshot_dir),
         "log_dir": str(batch_log_dir),
         "n_tasks": len(tasks),
         "n_failed_generation": sum(1 for row in generation_rows if row["status"] != "ok"),
@@ -262,7 +266,7 @@ def main(
             log_path=judge_log_path,
         )
         result_file = eval_output_dir / (
-            f"WebJudge_Online_Mind2Web_eval_{resolved_judge_model}_score_threshold_3_auto_eval_results.json"
+            f"WebJudge_Online_Mind2Web_Sandbox_eval_{resolved_judge_model}_score_threshold_3_auto_eval_results.json"
         )
         eval_rows = _read_eval_rows(result_file)
         summary.update(

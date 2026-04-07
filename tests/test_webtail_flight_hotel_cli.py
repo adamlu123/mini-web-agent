@@ -45,6 +45,7 @@ def test_load_webtail_tasks_supports_metadata_wrapper(tmp_path) -> None:
 
 def test_webtail_cli_filters_and_runs_selected_tasks(tmp_path, monkeypatch) -> None:
     tasks_file = tmp_path / "webtail.json"
+    output_dir = tmp_path / "batch_output"
     tasks_file.write_text(
         json.dumps(
             {
@@ -85,6 +86,8 @@ def test_webtail_cli_filters_and_runs_selected_tasks(tmp_path, monkeypatch) -> N
             "hotel",
             "--workers",
             "1",
+            "--output-dir",
+            str(output_dir),
         ],
     )
 
@@ -95,3 +98,5 @@ def test_webtail_cli_filters_and_runs_selected_tasks(tmp_path, monkeypatch) -> N
     assert calls[0]["start_url"] == "https://example.com/hotel"
     assert calls[0]["config_spec"] == DEFAULT_WEBTAIL_CONFIGS
     assert calls[0]["resolved_output_dir"].name == "hotel__two"
+    assert (output_dir / "config_snapshot" / "config_spec_manifest.json").exists()
+    assert (output_dir / "config_snapshot" / "merged_config.yaml").exists()

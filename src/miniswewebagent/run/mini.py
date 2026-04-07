@@ -8,7 +8,7 @@ import typer
 from rich.console import Console
 
 from miniswewebagent.agents import get_agent
-from miniswewebagent.config import get_config_from_spec
+from miniswewebagent.config import get_config_from_spec, snapshot_config_specs
 from miniswewebagent.environments import get_environment
 from miniswewebagent.models import get_model
 from miniswewebagent.tasks.om2w import load_om2w_task
@@ -38,6 +38,7 @@ def run_one(
     output_dir: Path | None = None,
     resolved_output_dir: Path | None = None,
     debug: bool = False,
+    snapshot_config: bool = True,
 ) -> Any:
     config_spec = config_spec or [DEFAULT_CONFIG]
     configs = [get_config_from_spec(spec) for spec in config_spec]
@@ -65,6 +66,8 @@ def run_one(
         output_dir or config.get("environment", {}).get("output_dir") or "outputs",
         resolved_task_id,
     )
+    if snapshot_config:
+        snapshot_config_specs(config_spec, resolved_output_dir, merged_config=config)
 
     config = recursive_merge(
         config,

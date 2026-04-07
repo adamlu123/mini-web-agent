@@ -105,11 +105,14 @@ def test_run_one_completes_live_page_task_with_fake_gateway(tmp_path) -> None:
 
     assert result["final_response"] == "Title: Example Domain; Heading: Example Domain"
     assert (tmp_path / "artifacts").exists()
-    steps_md = (tmp_path / "artifacts" / next((tmp_path / "artifacts").iterdir()).name / "debug" / "steps.md")
+    run_dir = tmp_path / "artifacts" / next((tmp_path / "artifacts").iterdir()).name
+    steps_md = run_dir / "debug" / "steps.md"
     steps_md_text = steps_md.read_text(encoding="utf-8")
     assert '"console_output"' in steps_md_text
     assert '"recent_console"' in steps_md_text
     assert '"aria_snapshot"' not in steps_md_text
+    assert (run_dir / "config_snapshot" / "config_spec_manifest.json").exists()
+    assert (run_dir / "config_snapshot" / "merged_config.yaml").exists()
 
 
 def test_default_agent_resets_step_counter_between_runs() -> None:

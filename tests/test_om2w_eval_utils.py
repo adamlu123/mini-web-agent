@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 
 from miniswewebagent.utils.om2w_eval import export_online_mind2web_artifacts, normalize_online_mind2web_judge_results
 
@@ -105,6 +106,46 @@ def test_export_online_mind2web_artifacts_uses_workspace_observation_screenshots
     assert exported_image.read_bytes() == screenshot_bytes
 
 
+def test_export_online_mind2web_artifacts_prefers_final_script_log_for_action_history(tmp_path) -> None:
+    output_dir = tmp_path / "task"
+    (output_dir / "debug" / "steps").mkdir(parents=True)
+    (output_dir / "screenshots").mkdir(parents=True)
+
+    (output_dir / "debug" / "steps" / "step_0001.json").write_text(
+        json.dumps(
+            {
+                "step": 1,
+                "thought": "Explore filters.",
+                "python_code": "python explore.py",
+                "done": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (output_dir / "screenshots" / "step_0001.png").write_bytes(b"png")
+    (output_dir / "final_script_log.txt").write_text(
+        "step 1 action: open filters\n"
+        "noise that should be ignored\n"
+        "step 2 action: set exact price range\n",
+        encoding="utf-8",
+    )
+
+    export_online_mind2web_artifacts(
+        output_dir=output_dir,
+        task="Example task",
+        task_id="task-1",
+        start_url="https://example.com",
+        agent_result={"final_response": "Done", "exit_status": "Submitted", "submission": "Done"},
+    )
+
+    payload = json.loads((output_dir / "result.json").read_text(encoding="utf-8"))
+    assert payload["action_history"] == [
+        "step 1 action: open filters",
+        "step 2 action: set exact price range",
+    ]
+    assert payload["action_history_source"] == "final_script_log"
+
+
 def test_normalize_online_mind2web_judge_results_rewrites_missing_history_prompt(tmp_path) -> None:
     result_file = tmp_path / "judge_results.json"
     result_file.write_text(
@@ -167,3 +208,29 @@ def test_normalize_online_mind2web_judge_results_leaves_valid_failure_unchanged(
     assert replacements == 0
     payload = json.loads(result_file.read_text(encoding="utf-8").strip())
     assert payload["evaluation_details"]["response"] == original_response
+
+
+def test_run_online_mind2web_judge_defaults_to_sandbox_eval(tmp_path, monkeypatch) -> None:
+    from miniswewebagent.utils import om2w_eval
+
+    captured = {}
+
+    def fake_run(cmd, text, capture_output):
+        captured["cmd"] = cmd
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(om2w_eval.subprocess, "run", fake_run)
+
+    om2w_eval.run_online_mind2web_judge(
+        judge_python=tmp_path / "python",
+        judge_script=tmp_path / "run.py",
+        trajectories_dir=tmp_path / "traj",
+        output_dir=tmp_path / "out",
+        judge_model="o4-mini",
+        num_proc=4,
+        api_key="key",
+    )
+
+    cmd = captured["cmd"]
+    assert cmd[2] == "--mode"
+    assert cmd[3] == "WebJudge_Online_Mind2Web_Sandbox_eval"

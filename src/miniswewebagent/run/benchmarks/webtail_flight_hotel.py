@@ -11,7 +11,7 @@ from typing import Any, Literal
 import typer
 from rich.console import Console
 
-from miniswewebagent.config import get_config_from_spec
+from miniswewebagent.config import get_config_from_spec, snapshot_config_specs
 from miniswewebagent.run.mini import DEFAULT_CONFIG, run_one
 from miniswewebagent.utils.serialize import recursive_merge
 
@@ -120,6 +120,7 @@ def _run_task_worker(
                     start_url=str(task.get("start_url", "")),
                     config_spec=config_spec,
                     resolved_output_dir=task_output_dir,
+                    snapshot_config=False,
                 )
                 return {
                     "task_id": task_id,
@@ -187,6 +188,7 @@ def main(
     base_output_root = Path(output_dir or env_config.get("output_dir") or "outputs/webtail_flight_hotel").expanduser()
     batch_output_dir = base_output_root / batch_name if output_dir is None else Path(output_dir).expanduser()
     batch_output_dir.mkdir(parents=True, exist_ok=True)
+    config_snapshot_dir = snapshot_config_specs(config_spec, batch_output_dir, merged_config=config)
 
     batch_log_dir = resolved_log_root / batch_name
     batch_log_dir.mkdir(parents=True, exist_ok=True)
@@ -199,6 +201,7 @@ def main(
     _write_batch_log_line(batch_log_path, f"family={family}")
     _write_batch_log_line(batch_log_path, f"workers={resolved_workers}")
     _write_batch_log_line(batch_log_path, f"output_dir={batch_output_dir}")
+    _write_batch_log_line(batch_log_path, f"config_snapshot_dir={config_snapshot_dir}")
     _write_batch_log_line(batch_log_path, f"config_spec={json.dumps(config_spec)}")
 
     console.print(f"Running {len(tasks)} WebTail flight/hotel task(s)")
@@ -246,6 +249,7 @@ def main(
         "family": family,
         "workers": resolved_workers,
         "output_dir": str(batch_output_dir),
+        "config_snapshot_dir": str(config_snapshot_dir),
         "log_dir": str(batch_log_dir),
         "config_spec": config_spec,
         "n_tasks": len(tasks),

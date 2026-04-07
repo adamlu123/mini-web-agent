@@ -1,6 +1,7 @@
 import base64
 import io
 import os
+import re
 from typing import Optional
 
 import backoff
@@ -29,12 +30,17 @@ def extract_predication(response, mode):
         "WebJudge_Online_Mind2Web_eval",
         "WebJudge_Online_Mind2Web_Sandbox_eval",
         "WebJudge_Online_Mind2Web_Sandbox_eval_ctime",
+        "WebJudge_Online_Mind2Web_Sandbox_WithThoughts_eval",
         "WebJudge_Online_Mind2Web_Sandbox_ThoughtsOnly_eval",
         "WebJudge_general_eval",
     }:
         try:
-            if "success" in response.lower().split("status:")[1]:
-                return 1
+            matches = list(re.finditer(r"(?i)status:\s*", response))
+            if matches:
+                tail = response[matches[-1].end() :].strip()
+                verdict_match = re.match(r'^[\'"“”‘’\s]*(success|failure)\b', tail, re.IGNORECASE)
+                if verdict_match:
+                    return 1 if verdict_match.group(1).lower() == "success" else 0
             return 0
         except Exception:
             return 0

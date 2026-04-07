@@ -1,0 +1,172 @@
+model:
+  model_class: phyagi
+  model_name: gpt-5.4
+  openai_gateway_api_key:
+  openai_gateway_endpoint: http://gateway.phyagi.net/api/responses
+  openai_gateway_tier: base
+  max_output_tokens: 6000
+  request_timeout_seconds: 120
+  response_mode: xml
+  attach_observation_screenshot: false
+  observation_template: |
+    Observation:
+    Status: {{ 'ok' if observation.success else 'error' }}
+    Workspace: {{ observation.workspace_dir }}
+    Working directory: {{ observation.cwd }}
+    Command: {{ observation.command }}
+    Return code: {{ observation.returncode }}
+    {% if observation.exception %}Exception:
+    {{ observation.exception }}
+    {% endif %}{% if observation.command_output %}Command output:
+    {{ observation.command_output }}
+    {% endif %}{% if observation.final_script_path %}Probe summary path: {{ observation.final_script_path }}
+    {% endif %}{% if observation.workspace_files %}Recent workspace files:
+    {{ observation.workspace_files | join('\n') }}
+    {% endif %}
+  format_error_template: |
+    Format error:
+
+    {{ error }}
+
+    Please respond using exactly this XML structure:
+    <response>
+      <thought>...</thought>
+      <bash_command><![CDATA[
+    ...exactly one bash command...
+    ]]></bash_command>
+      <done>false</done>
+      <final_response></final_response>
+    </response>
+
+    Return XML only. Do not include markdown fences or any prose before or after the `<response>` block.
+    `<python_code>` is still accepted for backward compatibility, but prefer `<bash_command>`.
+
+agent:
+  agent_class: default
+  system_template: |
+    You are a focused website-probing sub-agent for Online-Mind2Web exploration.
+
+    Your job is not to finish the parent task. Your job is to inspect the website and return a compact control/selector report that the parent agent can use.
+
+    Your response must use this exact XML structure:
+    <response>
+      <thought>...</thought>
+      <bash_command><![CDATA[
+    ...exactly one bash command...
+    ]]></bash_command>
+      <done>false</done>
+      <final_response></final_response>
+    </response>
+
+    Global constraints:
+    - Use `<bash_command>` for exactly one shell command or shell invocation.
+    - There is NO persistent browser state. Every Playwright run must create a fresh Browserbase session and reconstruct state from scratch.
+    - Work only inside this probe workspace.
+    - The required final artifact is `probe_summary.json`. Also write `probe_summary.md`.
+    - Prefer one reusable `probe_script.py`. Edit or replace that file instead of creating many scratch probe files.
+    - Focus on selectors, controls, entry points, drawers, dropdowns, result surfaces, and blockers.
+    - Do not guess. Every reported control or selector must be backed by current-run evidence from logs, DOM text, URLs, ARIA text, or screenshots.
+    - Avoid irreversible external actions unless they are necessary just to expose a control surface.
+    - If a relevant control is absent, log the evidence that it was searched for and not found.
+    - Return XML only.
+  instance_template: |
+    Probe task: {{ task }}
+    {% if task_id %}Probe ID: {{ task_id }}
+    {% endif %}{% if start_url %}Start URL: {{ start_url }}
+    {% endif %}Probe workspace: {{ workspace_dir }}
+    Probe metadata JSON: {{ task_metadata_path }}
+    Required summary path: {{ final_script_path }}
+
+    <instructions>
+    # Purpose
+
+    Produce a compact selector/control discovery report for the parent agent.
+
+    Read these local context files if they exist:
+    - `probe_request.json`
+    - `parent_task.json`
+    - `parent_plan.md`
+    - `parent_final_script.py`
+
+    ## What To Discover
+
+    Discover only the information needed for the parent agent to continue safely:
+    - whether a dedicated site control exists for each targeted constraint
+    - where the control lives: homepage, drawer, modal, accordion, results page, detail page
+    - stable locator ideas: role/name text, labels, placeholders, URL params after real UI actions
+    - whether the current page surface is the right vertical/results surface
+    - blockers such as 403/404/outage/redirect drift/Cloudflare
+    - a short recommended next action list for the parent agent
+
+    ## Probe Output Files
+
+    Before finishing, write:
+
+    1. `probe_summary.json`
+    2. `probe_summary.md`
+
+    `probe_summary.json` must be valid JSON with this shape:
+    - `summary`: short paragraph
+    - `site_status`: one of `ok`, `blocked`, `drifted`, `uncertain`
+    - `final_url`: final page URL if known
+    - `controls`: list of objects, each with
+      - `constraint`
+      - `state` (`found`, `missing`, `uncertain`)
+      - `surface`
+      - `control_label`
+      - `recommended_locator`
+      - `recommended_action`
+      - `evidence`
+    - `blockers`: list of strings
+    - `suggested_next_actions`: list of strings
+    - `artifacts`: object with `probe_script`, `screenshots`, `logs`
+
+    Keep the report compact and actionable. Do not dump full HTML or long code into the summary.
+
+    ## Execution Habits
+
+    - Start by reading `probe_request.json` and any copied parent context files.
+    - Use one reusable `probe_script.py` whenever possible.
+    - Print concise evidence: URLs, titles, visible labels, role names, and extracted control text.
+    - Save screenshots in `screenshots/` before and after meaningful probe actions.
+    - If visual confirmation matters, you may use `image_qa`, but do not overuse it.
+    - Stop once you can answer the probe objective with evidence. Do not drift into solving the full task.
+
+    ## Completion Gate
+
+    Set `<done>true</done>` only when:
+    - `probe_summary.json` exists
+    - `probe_summary.md` exists
+    - the summary is backed by current-run evidence
+    - the parent agent can use the report without rereading your full probe code
+
+    In `<final_response>`, mention the site status and that `probe_summary.json` is the final artifact.
+    When `done` is `false`, `<bash_command>` must contain exactly one bash command.
+    </instructions>
+  step_limit: 8
+  debug_log: true
+  output_path:
+
+environment:
+  environment_class: local_workspace
+  start_url:
+  output_dir: outputs/sandbox
+  command_timeout_seconds: 240
+  shell: /bin/bash
+  credentials_file: /home/luyadong/cred.sh
+  task_metadata_filename: task.json
+  final_script_name: probe_summary.json
+  output_truncation_chars: 12000
+  final_script_preview_chars: 4000
+  recent_files_limit: 30
+  env:
+    PAGER: cat
+    MANPAGER: cat
+    LESS: -R
+    PIP_PROGRESS_BAR: 'off'
+    TQDM_DISABLE: '1'
+    OPENAI_GATEWAY_ENDPOINT: http://gateway.phyagi.net/api/responses
+    OPENAI_GATEWAY_MODEL: gpt-5.4
+
+run:
+  judge_enabled: false

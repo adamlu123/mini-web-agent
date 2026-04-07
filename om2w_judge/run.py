@@ -19,10 +19,14 @@ from om2w_judge.methods.webjudge_general_eval import WebJudge_general_eval
 from om2w_judge.methods.webjudge_online_mind2web import WebJudge_Online_Mind2Web_eval
 from om2w_judge.methods.webjudge_online_mind2web_sandbox import (
     WebJudge_Online_Mind2Web_Sandbox_eval,
+    WebJudge_Online_Mind2Web_Sandbox_WithThoughts_eval,
     WebJudge_Online_Mind2Web_Sandbox_ThoughtsOnly_eval,
 )
 from om2w_judge.methods.webvoyager_eval import WebVoyager_eval
 from om2w_judge.utils import OpenaiEngine, extract_predication
+
+
+FINAL_SCRIPT_ACTION_RE = re.compile(r"^\s*step\s+\d+\s+action:\s*.+\s*$", re.IGNORECASE)
 
 
 def final_execution_sort_key(filename):
@@ -39,6 +43,19 @@ def screenshot_creation_time_sort_key(path):
         birth_time_ns = int(getattr(stat_result, "st_birthtime", 0) * 1_000_000_000) if hasattr(stat_result, "st_birthtime") else None
     created_ns = birth_time_ns if birth_time_ns not in {None, 0} else stat_result.st_ctime_ns
     return (created_ns, os.path.basename(path))
+
+
+def load_final_script_action_history(task_dir: str | Path) -> list[str]:
+    log_path = Path(task_dir) / "final_script_log.txt"
+    if not log_path.exists():
+        return []
+
+    actions: list[str] = []
+    for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        normalized = line.strip()
+        if normalized and FINAL_SCRIPT_ACTION_RE.match(normalized):
+            actions.append(normalized)
+    return actions
 
 
 def auto_eval(args, task_subset, final_predicted_labels, lock, model):
@@ -61,6 +78,7 @@ def auto_eval(args, task_subset, final_predicted_labels, lock, model):
         if task_id in already_ids:
             continue
 
+        task_dir = os.path.join(args.trajectories_dir, task_id)
         trajectory_images_path = os.path.join(args.trajectories_dir, task_id, "trajectory")
         result_path = os.path.join(args.trajectories_dir, task_id, "result.json")
         if not os.path.exists(result_path):
@@ -85,6 +103,12 @@ def auto_eval(args, task_subset, final_predicted_labels, lock, model):
                 final_result_response = result["final_result_response"]
             if "input_image_paths" in result:
                 input_image_paths = result["input_image_paths"]
+
+        final_script_actions = load_final_script_action_history(task_dir)
+        if final_script_actions:
+            action_history = final_script_actions
+            output_results["action_history"] = action_history
+            output_results["action_history_source"] = "final_script_log"
 
         print(f"Start evaluation for {task_description}")
         if args.mode == "Autonomous_eval":
@@ -140,6 +164,29 @@ def auto_eval(args, task_subset, final_predicted_labels, lock, model):
                 )
             messages, text, system_msg, record, key_points = asyncio.run(
                 WebJudge_Online_Mind2Web_Sandbox_eval(
+                    task_description,
+                    thoughts,
+                    action_history,
+                    screenshot_paths,
+                    model,
+                    args.score_threshold,
+                )
+            )
+            output_results["image_judge_record"] = record
+            output_results["key_points"] = key_points
+        elif args.mode == "WebJudge_Online_Mind2Web_Sandbox_WithThoughts_eval":
+            screenshots_dir = os.path.join(args.trajectories_dir, task_id, "screenshots")
+            if os.path.isdir(screenshots_dir):
+                screenshot_paths = sorted(
+                    [
+                        os.path.join(screenshots_dir, name)
+                        for name in os.listdir(screenshots_dir)
+                        if re.fullmatch(r"final_execution_.*\.png", name)
+                    ],
+                    key=screenshot_creation_time_sort_key,
+                )
+            messages, text, system_msg, record, key_points = asyncio.run(
+                WebJudge_Online_Mind2Web_Sandbox_WithThoughts_eval(
                     task_description,
                     thoughts,
                     action_history,

@@ -31,12 +31,15 @@ model:
     Please respond using exactly this XML structure:
     <response>
       <thought>...</thought>
-      <python_code><![CDATA[
+      <bash_command><![CDATA[
     ...exactly one bash command...
-    ]]></python_code>
+    ]]></bash_command>
       <done>false</done>
       <final_response></final_response>
     </response>
+
+    Return XML only. Do not include markdown fences or any prose before or after the `<response>` block.
+    `<python_code>` is still accepted for backward compatibility, but prefer `<bash_command>` for this benchmark.
 
 agent:
   agent_class: default
@@ -46,22 +49,27 @@ agent:
     Your response must use this exact XML structure:
     <response>
       <thought>...</thought>
-      <python_code><![CDATA[
+      <bash_command><![CDATA[
     ...exactly one bash command...
-    ]]></python_code>
+    ]]></bash_command>
       <done>false</done>
       <final_response></final_response>
     </response>
 
     Global constraints:
-    - The field name `python_code` is legacy. Its contents must be exactly ONE bash command or one shell invocation.
+    - Use the XML tag `<bash_command>` for exactly ONE bash command or one shell invocation. The legacy tag `<python_code>` is still accepted, but do not prefer it.
     - This is a stepwise loop: inspect the latest observation, choose one purposeful command, then inspect the next observation.
     - There is NO persistent browser state. Every Playwright run must create a fresh Browserbase session, navigate from scratch, and reconstruct state via code.
     - Screenshots are NOT attached automatically in this benchmark variant. If visual interpretation is needed, you must invoke the image QA tool yourself.
+    - A selector-discovery sub-agent is available through `mini-web-probe`. Prefer it when the main uncertainty is control discovery and a large scratch exploration script would otherwise be needed.
     - Set `<done>true</done>` only when the task goal is complete and `final_script.py` is the final artifact.
     - In `<thought>`, be concise and execution-oriented. Summarize only: the strongest evidence observed, the missing constraint or blocker, and the next command. Do not write long essays.
-    - Bias toward action, but do not guess. Every claimed filter, sort, selection, or completion state must be supported by current-run evidence.
+    - Bias toward action, but do not guess. Every claimed filter, sort, selection, completion state, or final answer must be supported by current-run evidence.
+    - If a relevant site control exists, you must use that control. Query-string filters, keyword-only search text, hard-coded item URLs, backend endpoints, or manual inference do not satisfy that constraint.
+    - Use `plan.md` as a live ledger. Update it whenever a constraint becomes verified, blocked, disproved, or when the requested final datum is extracted.
+    - Prefer applying rare, specific, or irreversible constraints early when possible.
     - Avoid repetition. If the same tactic fails twice, switch to diagnosis and change strategy before trying again.
+    - Return XML only. The first non-whitespace character of your reply must be `<` and the last non-whitespace character must be `>`. Never reply with raw prose.
   instance_template: |
     Task: {{ task }}
     {% if task_id %}Task ID: {{ task_id }}
@@ -87,6 +95,8 @@ agent:
     - Prefer commands that inspect files, write or update `final_script.py`, run `python final_script.py`, or print targeted debug output.
     - You may use one shell invocation with a heredoc to write a Python script and run it in the same command.
     - Always use Browserbase cloud sessions.
+    - Screenshots and verification artifacts must come from the real browser run. Never write placeholder text into `.png` files, never generate synthetic HTML summaries as proof, and never treat backend-only API responses as equivalent to the site UI.
+    - A dedicated selector-discovery command is available: `mini-web-probe --workspace-dir "{{ workspace_dir }}" --objective "..."`.
 
     ## Decision Priorities
 
@@ -95,6 +105,7 @@ agent:
     3. Some controls may be hidden behind drawers, dropdowns, accordions, "more filters", or mobile panels. Inspect those before deciding a control is unavailable.
     4. Prefer targeted evidence over broad dumps: URLs, titles, visible labels, ARIA snapshots, and concise extracted state.
     5. Keep each command purposeful. Avoid unrelated cleanup or broad file dumps.
+    6. Apply rare feature filters and task-critical submit/add-to-cart actions before secondary refinements when possible.
 
     ## Task Success Rules
 
@@ -106,7 +117,8 @@ agent:
     - If the task requires a submission action or results view, the trajectory must include it.
     - If no matching result exists, the task can still succeed if the required actions were correctly performed and the page clearly shows that outcome.
     - When multiple explicit constraints exist, each one must be applied through site controls when those controls exist.
-    - If a relevant control truly does not exist, the trajectory must explicitly verify that constraint from page content or item details before you can mark the task complete.
+    - If a relevant control truly does not exist, you may verify that constraint from page content only after you have logged explicit evidence that the control was searched for and is unavailable.
+    - If a relevant control exists, query-string filters, keyword-only search text, hard-coded item URLs, backend API calls, custom HTML summaries, or manual inference do not satisfy that constraint.
 
     ## Required Constraint Checklist
 
@@ -116,8 +128,13 @@ agent:
     - intended site control
     - evidence to collect
     - verification status
+    - last observed evidence
+
+    Also add one checklist row for the requested final output or datum.
 
     Use this checklist to drive exploration, script writing, and final verification. Do not finish until every item is verified or explicitly marked "no control; verified from content".
+
+    After any command that applies a constraint, computes the answer, or identifies a blocker, update the corresponding `plan.md` item in the same command or the next command.
 
     ## Image QA Tool
 
@@ -136,15 +153,34 @@ agent:
 
     Examples:
     - Good: `... --question "Is the price filter visibly set to $1500-$2500 exactly, and is the sort set to highest-rated?"`
+    - Good: `... --question "Using the action log and all screenshots together, are all required filters visibly applied and are results displayed?"`
     - Bad: `... --question "inspect this"`
-    - Bad: `... --question "is task done?"` when the screenshot set does not mention the exact constraints.
+    - Bad: `... --question "is task done?"` when the screenshot set or action log does not mention the exact constraints.
+
+    ## Probe Website Sub-Agent
+
+    A dedicated selector-discovery sub-agent is available through:
+    `mini-web-probe --workspace-dir "{{ workspace_dir }}" --objective "Inspect the visible site controls for ..."`
+
+    Tool contract:
+    - It runs in `{{ workspace_dir }}/probe_runs/` with its own prompt and step budget.
+    - It writes compact reports to `{{ workspace_dir }}/probe_reports/latest.json` and `{{ workspace_dir }}/probe_reports/latest.md`.
+    - Use it when you need to discover whether a dedicated control exists, where a filter/sort lives, which result surface is canonical, or which Playwright locator is stable.
+    - Prefer it before writing multiple ad hoc exploration scripts in the main workspace.
+    - Do not use it for final task completion, final verification, or repeated retries after the relevant controls are already known.
+    - Keep it bounded. Usually call it at most once per unresolved surface and no more than twice per task unless the site materially changes.
+    - After it finishes, read the printed summary or inspect `probe_reports/latest.md` before changing strategy.
+
+    Example:
+    `mini-web-probe --workspace-dir "{{ workspace_dir }}" --objective "Inspect whether Cars.com exposes dedicated controls for year, make, model, max price, and sort. Return recommended locators and note whether each control is present, hidden behind drawers, or absent."`
 
     ## Execution Loop
 
-    1. Parse the task into exact constraints and create `plan.md`.
+    1. Parse the task into exact constraints and create `plan.md`, including the requested final output row.
     2. Explore before committing to the final script:
        - inspect `task.json`
-       - create a small exploration script if needed
+       - if selector/control discovery is the main blocker, call `mini-web-probe` before writing large scratch exploration scripts
+       - otherwise create a small exploration script if needed
        - print ARIA, URL, title, visible labels, and targeted state
        - save screenshots before and after meaningful interactions
     3. Build and refine `final_script.py`:
@@ -163,6 +199,10 @@ agent:
     - Treat a nonzero return code, missing evidence, or uncertain visual verification as failure that requires repair.
     - Save screenshots into `screenshots/` before major interactions and after applying important interactions or filters.
     - Whenever you write a Python execution script, inspect the resulting screenshots with `image_qa` if visual confirmation is needed for the next decision.
+    - Prefer `mini-web-probe` over creating multiple ad hoc exploration files when the unresolved question is selector/control discovery.
+    - Keep `plan.md` current. When a constraint becomes verified, blocked, disproved, or extracted, update it immediately.
+    - If a relevant control seems absent, log the evidence proving that absence before falling back to page-content verification.
+    - Never use backend endpoints, synthetic HTML, or non-image `.png` placeholders as completion evidence.
     - If the same failure mode appears twice, stop retrying blindly. Diagnose using logs, ARIA, screenshots, and targeted inspection, then change the script.
     - Do not mark the task complete unless `final_script.py` exists and reproduces the successful flow from scratch.
 
@@ -170,9 +210,11 @@ agent:
 
     `final_script.py` must:
     - save critical-point screenshots as `screenshots/final_execution_<step_number>_<action>.png`
+    - ensure those screenshots are real browser-captured image files
+    - print `step <step_number> action: <action_name>` whenever it applies a filter, opens a drawer, changes sort, submits a form, or performs any interaction relevant to task constraints
     - use stable selectors rather than brittle DOM probing or direct JS hacks
 
-    This instrumentation is mandatory because evaluation depends on those screenshots.
+    This instrumentation is mandatory because evaluation depends on those screenshots and action logs.
 
     ## Helpful Command Patterns
 
@@ -185,6 +227,13 @@ agent:
       `python explore.py`
     - Ask a grounded question about a saved screenshot:
       `python -m miniswewebagent.tools.image_qa --workspace-dir "{{ workspace_dir }}" --image screenshots/explore.png --question "Is the BMW filter chip visibly selected?"`
+    - Run the selector-discovery sub-agent:
+      `mini-web-probe --workspace-dir "{{ workspace_dir }}" --objective "Inspect where the year, make, model, and sort controls live and return stable locators for each."`
+    - Review the latest probe report:
+      `sed -n '1,220p' probe_reports/latest.md`
+    - Final multi-image verification with action log:
+      `ACTION_LOG="$(rg '^step [0-9]+ action:' logs/step_*.log | tail -n 80)"`
+      `python -m miniswewebagent.tools.image_qa --workspace-dir "{{ workspace_dir }}" --image screenshots/final_execution_1_apply_constraint.png --image screenshots/final_execution_2_sort.png --image screenshots/final_execution_3_final_state.png --question "Final script critical-point action log:\n${ACTION_LOG}\n\nUsing the action log and all screenshots together, are all required constraints visibly satisfied and are results displayed?"`
 
     ## Completion Gate
 
@@ -193,14 +242,17 @@ agent:
     - the final script was rerun from scratch successfully
     - all checklist items in `plan.md` are verified
     - all critical-point screenshots exist
+    - the printed `step <n> action:` log from the final successful run was collected
+    - all completion evidence comes from the real browser run
     - final verification used all `screenshots/final_execution_<step_number>_<action>.png` images together in one multi-image `image_qa` call
     - the `image_qa` JSON clearly confirms the intended final state
 
-    If `image_qa` is missing, uncertain, or contradicts the intended final state, you must repair the script, rerun it, collect new screenshots, and verify again before submitting.
+    If `image_qa` is missing, uncertain, or contradicts the intended final state, you must repair the script, rerun it, collect new screenshots and action logs, and verify again before submitting.
 
     If you modify `final_script.py` after verification, verify again before submitting.
 
     In `<final_response>`, report the outcome concisely and mention that `final_script.py` is the final artifact.
+    When `done` is `false`, `<bash_command>` must contain exactly one bash command. Do not leave it empty.
     </instructions>
   step_limit: 50
   debug_log: true

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -20,6 +21,8 @@ _MISSING_HISTORY_MARKERS = (
     "need the action history",
     "provided action history is incomplete",
 )
+
+_FINAL_SCRIPT_ACTION_RE = re.compile(r"^\s*step\s+\d+\s+action:\s*.+\s*$", re.IGNORECASE)
 
 
 def _load_debug_steps(output_dir: Path) -> list[dict[str, Any]]:
@@ -68,6 +71,19 @@ def _fallback_actions_and_thoughts(trajectory_path: Path) -> tuple[list[str], li
     return actions, thoughts
 
 
+def _load_final_script_action_history(output_dir: Path) -> list[str]:
+    log_path = output_dir / "final_script_log.txt"
+    if not log_path.exists():
+        return []
+
+    actions: list[str] = []
+    for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        normalized = line.strip()
+        if normalized and _FINAL_SCRIPT_ACTION_RE.match(normalized):
+            actions.append(normalized)
+    return actions
+
+
 def _has_recorded_action_history(row: dict[str, Any]) -> bool:
     action_history = row.get("action_history", [])
     if isinstance(action_history, list):
@@ -102,7 +118,7 @@ def _build_missing_history_failure_response(row: dict[str, Any]) -> str:
 
 
 def _judge_result_file_path(output_dir: Path, judge_model: str) -> Path:
-    return output_dir / f"WebJudge_Online_Mind2Web_eval_{judge_model}_score_threshold_3_auto_eval_results.json"
+    return output_dir / f"WebJudge_Online_Mind2Web_Sandbox_eval_{judge_model}_score_threshold_3_auto_eval_results.json"
 
 
 def _ordered_step_stems(output_dir: Path) -> list[str]:
@@ -235,11 +251,18 @@ def export_online_mind2web_artifacts(
     if not action_history:
         action_history, thoughts = _fallback_actions_and_thoughts(output_dir / "trajectory.json")
 
+    final_script_actions = _load_final_script_action_history(output_dir)
+    if final_script_actions:
+        action_history = final_script_actions
+
+    action_history_source = "final_script_log" if final_script_actions else ("debug_steps" if debug_steps else "trajectory")
+
     result_payload = {
         "task_id": task_id or output_dir.name,
         "task": task,
         "start_url": start_url or "",
         "action_history": action_history,
+        "action_history_source": action_history_source,
         "thoughts": thoughts,
         "final_result_response": str(agent_result.get("final_response") or agent_result.get("submission") or ""),
         "exit_status": str(agent_result.get("exit_status", "")),
@@ -276,7 +299,7 @@ def run_online_mind2web_judge(
         str(judge_python),
         str(judge_script),
         "--mode",
-        "WebJudge_Online_Mind2Web_eval",
+        "WebJudge_Online_Mind2Web_Sandbox_eval",
         "--model",
         judge_model,
         "--trajectories_dir",

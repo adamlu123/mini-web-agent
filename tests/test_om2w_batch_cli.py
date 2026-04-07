@@ -13,6 +13,7 @@ def test_om2w_cli_defaults_run_without_showing_help() -> None:
 
 def test_om2w_cli_runs_selected_tasks(tmp_path, monkeypatch) -> None:
     tasks_file = tmp_path / "om2w.json"
+    output_dir = tmp_path / "batch_output"
     tasks_file.write_text(
         json.dumps(
             [
@@ -52,6 +53,8 @@ def test_om2w_cli_runs_selected_tasks(tmp_path, monkeypatch) -> None:
             "--workers",
             "1",
             "--no-evaluate",
+            "--output-dir",
+            str(output_dir),
         ],
     )
 
@@ -62,6 +65,8 @@ def test_om2w_cli_runs_selected_tasks(tmp_path, monkeypatch) -> None:
     assert calls[0]["start_url"] == "https://example.com/2"
     assert calls[0]["config_spec"] == DEFAULT_OM2W_CONFIGS
     assert calls[0]["resolved_output_dir"].name == "second"
+    assert (output_dir / "config_snapshot" / "config_spec_manifest.json").exists()
+    assert (output_dir / "config_snapshot" / "merged_config.yaml").exists()
 
 
 def test_om2w_cli_respects_limit(tmp_path, monkeypatch) -> None:
