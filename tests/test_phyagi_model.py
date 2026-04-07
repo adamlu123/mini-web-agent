@@ -28,7 +28,29 @@ await page.get_by_role("textbox", name="From").fill("Singapore")
     )
 
     assert parsed["thought"].startswith("Tried:")
+    assert parsed["bash_command"] == ""
     assert 'fill("Singapore")' in parsed["python_code"]
+    assert parsed["done"] is False
+    assert parsed["final_response"] == ""
+
+
+def test_parse_xml_output_accepts_bash_command() -> None:
+    parsed = parse_xml_output(
+        """
+<response>
+  <thought>Inspect the workspace.</thought>
+  <bash_command><![CDATA[
+echo hello
+]]></bash_command>
+  <done>false</done>
+  <final_response></final_response>
+</response>
+        """.strip()
+    )
+
+    assert parsed["thought"] == "Inspect the workspace."
+    assert parsed["bash_command"] == "echo hello"
+    assert parsed["python_code"] == ""
     assert parsed["done"] is False
     assert parsed["final_response"] == ""
 
@@ -171,6 +193,63 @@ await page.title()
     assert message["extra"]["done"] is False
 
 
+def test_phyagi_model_query_parses_xml_mode_with_bash_command(monkeypatch) -> None:
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "output": [
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": """
+<response>
+  <thought>Inspect files</thought>
+  <bash_command><![CDATA[
+pwd
+]]></bash_command>
+  <done>false</done>
+  <final_response></final_response>
+</response>
+                                """.strip(),
+                            }
+                        ],
+                    }
+                ]
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, timeout: int):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url: str, headers: dict, json: dict) -> FakeResponse:
+            return FakeResponse()
+
+    monkeypatch.setattr("miniswewebagent.models.phyagi_model.httpx.AsyncClient", FakeAsyncClient)
+
+    model = PhyagiModel(
+        openai_gateway_api_key="dummy",
+        response_mode="xml",
+        format_error_template="error: {{ error }}",
+    )
+    message = model.query([{"role": "user", "content": "Task"}])
+
+    assert message["content"] == "Inspect files"
+    assert message["extra"]["actions"] == [{"bash_command": "pwd", "command": "pwd"}]
+    assert message["extra"]["done"] is False
+
+
 def test_phyagi_model_query_raises_format_error_for_bad_xml(monkeypatch) -> None:
     class FakeResponse:
         def raise_for_status(self) -> None:
@@ -210,6 +289,65 @@ def test_phyagi_model_query_raises_format_error_for_bad_xml(monkeypatch) -> None
 
     with pytest.raises(FormatError):
         model.query([{"role": "user", "content": "Task"}])
+
+
+def test_phyagi_model_query_repairs_plain_text_with_format_retry(monkeypatch) -> None:
+    attempts = {"count": 0}
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            attempts["count"] += 1
+            if attempts["count"] == 1:
+                text = "Need more evidence before clicking Filters."
+            else:
+                text = """
+<response>
+  <thought>Retry worked</thought>
+  <bash_command><![CDATA[
+ls
+]]></bash_command>
+  <done>false</done>
+  <final_response></final_response>
+</response>
+                """.strip()
+            return {
+                "output": [
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": text}],
+                    }
+                ]
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, timeout: int):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url: str, headers: dict, json: dict) -> FakeResponse:
+            return FakeResponse()
+
+    monkeypatch.setattr("miniswewebagent.models.phyagi_model.httpx.AsyncClient", FakeAsyncClient)
+
+    model = PhyagiModel(
+        openai_gateway_api_key="dummy",
+        response_mode="xml",
+        format_error_template="Repair XML: {{ error }}",
+    )
+    message = model.query([{"role": "user", "content": "Task"}])
+
+    assert attempts["count"] == 2
+    assert message["content"] == "Retry worked"
+    assert message["extra"]["actions"] == [{"bash_command": "ls", "command": "ls"}]
 
 
 def test_phyagi_model_query_retries_transient_gateway_errors(monkeypatch) -> None:

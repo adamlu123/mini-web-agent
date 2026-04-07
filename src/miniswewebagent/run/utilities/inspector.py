@@ -46,7 +46,9 @@ def _render_message(message: dict[str, Any]) -> str:
         if actions:
             parts.append("")
             parts.append("generated code:")
-            parts.append(actions[0].get("python_code", ""))
+            parts.append(
+                actions[0].get("bash_command", "") or actions[0].get("command", "") or actions[0].get("python_code", "")
+            )
         if extra.get("done"):
             parts.append("")
             parts.append(f"done: {extra.get('done')}")

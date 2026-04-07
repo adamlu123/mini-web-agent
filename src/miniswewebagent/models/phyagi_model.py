@@ -38,7 +38,8 @@ DEFAULT_JSON_FORMAT_ERROR_TEMPLATE = """Format error:
 
 Please respond with strict JSON using exactly these fields:
 - thought: short reasoning about the next step
-- python_code: async Python Playwright code for exactly one step
+- bash_command: exactly one shell command for local-workspace tasks
+- python_code: legacy field for browser tasks; still accepted for backward compatibility
 - done: boolean indicating whether the task is complete
 - final_response: final natural-language answer when done, otherwise empty
 """
@@ -49,12 +50,15 @@ DEFAULT_XML_FORMAT_ERROR_TEMPLATE = """Format error:
 Please respond using exactly these XML tags:
 <response>
   <thought>...</thought>
-  <python_code><![CDATA[
-...python code...
-]]></python_code>
+  <bash_command><![CDATA[
+...exactly one shell command...
+]]></bash_command>
   <done>false</done>
   <final_response></final_response>
 </response>
+
+Return XML only. Do not include markdown fences or any prose before or after the `<response>` block.
+`<python_code>` is still accepted for backward compatibility, but prefer `<bash_command>` for local-workspace tasks.
 """
 
 
@@ -143,7 +147,7 @@ def _extract_xml_tag_values(raw: str, tag: str) -> list[str]:
 def _strip_cdata(value: str) -> str:
     stripped = value.strip()
     if stripped.startswith("<![CDATA[") and stripped.endswith("]]>"):
-        return stripped[len("<![CDATA[") : -len("]]>")]
+        return stripped[len("<![CDATA[") : -len("]]>")].strip()
     return stripped
 
 
@@ -158,15 +162,20 @@ def _parse_xml_bool(value: str) -> bool:
 
 def parse_xml_output(raw: str) -> dict[str, Any]:
     thought_values = _extract_xml_tag_values(raw, "thought")
+    bash_command_values = _extract_xml_tag_values(raw, "bash_command")
     python_code_values = _extract_xml_tag_values(raw, "python_code")
     done_values = _extract_xml_tag_values(raw, "done")
     final_response_values = _extract_xml_tag_values(raw, "final_response")
-    if not (thought_values and python_code_values and done_values and final_response_values):
+    if not (thought_values and done_values and final_response_values):
+        raise ValueError("Unable to parse XML output from gateway response.")
+    done = _parse_xml_bool(_strip_cdata(done_values[-1]))
+    if not (bash_command_values or python_code_values or done):
         raise ValueError("Unable to parse XML output from gateway response.")
     return {
         "thought": _strip_cdata(thought_values[-1]),
-        "python_code": _strip_cdata(python_code_values[-1]),
-        "done": _parse_xml_bool(_strip_cdata(done_values[-1])),
+        "bash_command": _strip_cdata(bash_command_values[-1]) if bash_command_values else "",
+        "python_code": _strip_cdata(python_code_values[-1]) if python_code_values else "",
+        "done": done,
         "final_response": _strip_cdata(final_response_values[-1]),
     }
 
@@ -357,11 +366,12 @@ class PhyagiModel:
             "additionalProperties": False,
             "properties": {
                 "thought": {"type": "string"},
+                "bash_command": {"type": "string"},
                 "python_code": {"type": "string"},
                 "done": {"type": "boolean"},
                 "final_response": {"type": "string"},
             },
-            "required": ["thought", "python_code", "done", "final_response"],
+            "required": ["thought", "done", "final_response"],
         }
 
     def _parse_model_output(self, raw_text: str) -> dict[str, Any]:
@@ -384,11 +394,7 @@ class PhyagiModel:
             )
         )
 
-    async def _query_async(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.config.openai_gateway_api_key}",
-        }
+    def _build_payload(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
         payload = {
             "model": self.config.model_name,
             "input": _serialize_response_input(messages),
@@ -404,10 +410,32 @@ class PhyagiModel:
                     "strict": True,
                 }
             }
+        return payload
+
+    def _format_repair_message(self, *, raw_text: str, error: str) -> dict[str, Any]:
+        return self.format_message(
+            role="user",
+            content=Template(self.config.format_error_template, undefined=StrictUndefined).render(
+                error=error,
+                model_response=raw_text,
+            ),
+            extra={
+                "interrupt_type": "FormatErrorRetry",
+                "model_response": raw_text,
+            },
+        )
+
+    async def _query_async(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.config.openai_gateway_api_key}",
+        }
 
         last_error: ValueError | None = None
         raw_text = ""
-        for _ in range(MAX_JSON_PARSE_RETRIES + 1):
+        request_messages = list(messages)
+        for attempt_index in range(MAX_JSON_PARSE_RETRIES + 1):
+            payload = self._build_payload(request_messages)
             response_payload = None
             for rate_limit_attempt in range(MAX_RATE_LIMIT_RETRIES + 1):
                 try:
@@ -457,6 +485,10 @@ class PhyagiModel:
                 break
             except ValueError as exc:
                 last_error = exc
+                if attempt_index < MAX_JSON_PARSE_RETRIES:
+                    request_messages.append(
+                        self._format_repair_message(raw_text=raw_text, error=str(exc))
+                    )
         else:
             raise self._format_error(
                 raw_text=raw_text,
@@ -464,8 +496,11 @@ class PhyagiModel:
             )
 
         actions = []
+        bash_command = parsed.get("bash_command", "").strip()
         python_code = parsed.get("python_code", "").strip()
-        if python_code:
+        if bash_command:
+            actions.append({"bash_command": bash_command, "command": bash_command})
+        elif python_code:
             actions.append({"python_code": python_code})
 
         return self.format_message(

@@ -1,3 +1,4 @@
+browserbase
 httpx
 jinja2
 platformdirs

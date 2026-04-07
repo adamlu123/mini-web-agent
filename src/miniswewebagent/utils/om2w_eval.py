@@ -45,6 +45,10 @@ def _extract_observation(row: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
+def _action_text(action: dict[str, Any]) -> str:
+    return str(action.get("bash_command") or action.get("command") or action.get("python_code") or "").strip()
+
+
 def _fallback_actions_and_thoughts(trajectory_path: Path) -> tuple[list[str], list[str]]:
     if not trajectory_path.exists():
         return [], []
@@ -60,7 +64,7 @@ def _fallback_actions_and_thoughts(trajectory_path: Path) -> tuple[list[str], li
         if not message_actions:
             continue
         thoughts.append(str(message.get("content", "")).strip())
-        actions.append("\n\n".join(str(action.get("python_code", "")).strip() for action in message_actions).strip())
+        actions.append("\n\n".join(_action_text(action) for action in message_actions if _action_text(action)).strip())
     return actions, thoughts
 
 

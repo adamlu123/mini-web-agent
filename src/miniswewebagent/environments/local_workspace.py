@@ -147,7 +147,9 @@ class LocalWorkspaceEnvironment:
 
     def execute(self, action: dict[str, Any], cwd: str = "") -> dict[str, Any]:
         self._step_index += 1
-        command = str(action.get("command") or action.get("python_code") or "").strip()
+        command = str(
+            action.get("command") or action.get("bash_command") or action.get("python_code") or ""
+        ).strip()
         self._persist_step_command(command)
         resolved_cwd = self._resolve_cwd(cwd)
 

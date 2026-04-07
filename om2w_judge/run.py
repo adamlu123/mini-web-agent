@@ -17,8 +17,28 @@ from om2w_judge.methods.agenttrek_eval import AgentTrek_eval
 from om2w_judge.methods.automomous_eval import Autonomous_eval
 from om2w_judge.methods.webjudge_general_eval import WebJudge_general_eval
 from om2w_judge.methods.webjudge_online_mind2web import WebJudge_Online_Mind2Web_eval
+from om2w_judge.methods.webjudge_online_mind2web_sandbox import (
+    WebJudge_Online_Mind2Web_Sandbox_eval,
+    WebJudge_Online_Mind2Web_Sandbox_ThoughtsOnly_eval,
+)
 from om2w_judge.methods.webvoyager_eval import WebVoyager_eval
 from om2w_judge.utils import OpenaiEngine, extract_predication
+
+
+def final_execution_sort_key(filename):
+    match = re.search(r"final_execution_(\d+)", filename)
+    if match:
+        return (0, int(match.group(1)), filename)
+    return (1, filename)
+
+
+def screenshot_creation_time_sort_key(path):
+    stat_result = os.stat(path)
+    birth_time_ns = getattr(stat_result, "st_birthtime_ns", None)
+    if birth_time_ns is None:
+        birth_time_ns = int(getattr(stat_result, "st_birthtime", 0) * 1_000_000_000) if hasattr(stat_result, "st_birthtime") else None
+    created_ns = birth_time_ns if birth_time_ns not in {None, 0} else stat_result.st_ctime_ns
+    return (created_ns, os.path.basename(path))
 
 
 def auto_eval(args, task_subset, final_predicted_labels, lock, model):
@@ -42,6 +62,10 @@ def auto_eval(args, task_subset, final_predicted_labels, lock, model):
             continue
 
         trajectory_images_path = os.path.join(args.trajectories_dir, task_id, "trajectory")
+        result_path = os.path.join(args.trajectories_dir, task_id, "result.json")
+        if not os.path.exists(result_path):
+            print(f"Skip {task_id}: missing result.json")
+            continue
         screenshot_paths = []
         thoughts = None
         action_history = None
@@ -49,7 +73,7 @@ def auto_eval(args, task_subset, final_predicted_labels, lock, model):
         input_image_paths = None
         task_description = None
 
-        with open(os.path.join(args.trajectories_dir, task_id, "result.json"), encoding="utf-8") as handle:
+        with open(result_path, encoding="utf-8") as handle:
             result = json.load(handle)
             output_results = copy.deepcopy(result)
             task_description = result["task"]
@@ -80,6 +104,71 @@ def auto_eval(args, task_subset, final_predicted_labels, lock, model):
                 screenshot_paths.append(os.path.join(trajectory_images_path, image))
             messages, text, system_msg, record, key_points = asyncio.run(
                 WebJudge_Online_Mind2Web_eval(task_description, action_history, screenshot_paths, model, args.score_threshold)
+            )
+            output_results["image_judge_record"] = record
+            output_results["key_points"] = key_points
+        elif args.mode == "WebJudge_Online_Mind2Web_Sandbox_eval":
+            screenshots_dir = os.path.join(args.trajectories_dir, task_id, "screenshots")
+            if os.path.isdir(screenshots_dir):
+                for image in sorted(
+                    [name for name in os.listdir(screenshots_dir) if re.fullmatch(r"final_execution_.*\.png", name)],
+                    key=final_execution_sort_key,
+                ):
+                    screenshot_paths.append(os.path.join(screenshots_dir, image))
+            messages, text, system_msg, record, key_points = asyncio.run(
+                WebJudge_Online_Mind2Web_Sandbox_eval(
+                    task_description,
+                    thoughts,
+                    action_history,
+                    screenshot_paths,
+                    model,
+                    args.score_threshold,
+                )
+                )
+            output_results["image_judge_record"] = record
+            output_results["key_points"] = key_points
+        elif args.mode == "WebJudge_Online_Mind2Web_Sandbox_eval_ctime":
+            screenshots_dir = os.path.join(args.trajectories_dir, task_id, "screenshots")
+            if os.path.isdir(screenshots_dir):
+                screenshot_paths = sorted(
+                    [
+                        os.path.join(screenshots_dir, name)
+                        for name in os.listdir(screenshots_dir)
+                        if re.fullmatch(r"final_execution_.*\.png", name)
+                    ],
+                    key=screenshot_creation_time_sort_key,
+                )
+            messages, text, system_msg, record, key_points = asyncio.run(
+                WebJudge_Online_Mind2Web_Sandbox_eval(
+                    task_description,
+                    thoughts,
+                    action_history,
+                    screenshot_paths,
+                    model,
+                    args.score_threshold,
+                )
+            )
+            output_results["image_judge_record"] = record
+            output_results["key_points"] = key_points
+        elif args.mode == "WebJudge_Online_Mind2Web_Sandbox_ThoughtsOnly_eval":
+            screenshots_dir = os.path.join(args.trajectories_dir, task_id, "screenshots")
+            if os.path.isdir(screenshots_dir):
+                screenshot_paths = sorted(
+                    [
+                        os.path.join(screenshots_dir, name)
+                        for name in os.listdir(screenshots_dir)
+                        if re.fullmatch(r"final_execution_.*\.png", name)
+                    ],
+                    key=screenshot_creation_time_sort_key,
+                )
+            messages, text, system_msg, record, key_points = asyncio.run(
+                WebJudge_Online_Mind2Web_Sandbox_ThoughtsOnly_eval(
+                    task_description,
+                    thoughts,
+                    screenshot_paths,
+                    model,
+                    args.score_threshold,
+                )
             )
             output_results["image_judge_record"] = record
             output_results["key_points"] = key_points

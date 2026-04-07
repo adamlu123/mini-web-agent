@@ -167,6 +167,69 @@ def test_default_agent_resets_step_counter_between_runs() -> None:
     assert second["final_response"] == "run 2"
 
 
+def test_default_agent_does_not_count_format_errors_toward_step_limit() -> None:
+    from miniswewebagent.agents.default import DefaultAgent
+    from miniswewebagent.exceptions import FormatError
+
+    class DummyModel:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def get_template_vars(self, **kwargs):
+            return {}
+
+        def format_message(self, **kwargs):
+            return {
+                "role": kwargs["role"],
+                "content": kwargs.get("content", ""),
+                "extra": kwargs.get("extra", {}),
+            }
+
+        def query(self, messages, **kwargs):
+            self.calls += 1
+            if self.calls <= 3:
+                raise FormatError(
+                    self.format_message(
+                        role="user",
+                        content="bad format",
+                        extra={"interrupt_type": "FormatError", "model_response": "plain text"},
+                    )
+                )
+            return self.format_message(
+                role="assistant",
+                content="done",
+                extra={
+                    "actions": [],
+                    "done": True,
+                    "final_response": "ok",
+                    "raw_response": {},
+                },
+            )
+
+        def format_observation_messages(self, message, outputs, template_vars=None):
+            return []
+
+        def serialize(self):
+            return {}
+
+    class DummyEnv:
+        def get_template_vars(self, **kwargs):
+            return {}
+
+        def execute(self, action, cwd=""):
+            return {}
+
+        def serialize(self):
+            return {}
+
+    agent = DefaultAgent(DummyModel(), DummyEnv(), system_template="x", instance_template="y", step_limit=1)
+    result = agent.run("task")
+
+    assert result["final_response"] == "ok"
+    assert agent.n_calls == 1
+    assert agent.n_format_errors == 3
+
+
 def test_run_one_closes_environment_when_prepare_fails(tmp_path, monkeypatch) -> None:
     events: list[str] = []
 

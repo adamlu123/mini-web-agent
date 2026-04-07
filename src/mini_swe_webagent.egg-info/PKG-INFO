@@ -4,6 +4,7 @@ Version: 0.1.0
 Summary: Minimal local Playwright web agent
 Requires-Python: >=3.10
 Description-Content-Type: text/markdown
+Requires-Dist: browserbase
 Requires-Dist: httpx
 Requires-Dist: jinja2
 Requires-Dist: platformdirs
@@ -80,3 +81,43 @@ mini-web-om2w --tasks-file /Users/lu/Documents/sandbox/Online-Mind2Web/om2w_2602
 ```
 
 The legacy `mini-web-batch` command still works and now points at the same benchmark runner under `src/miniswewebagent/run/benchmarks/`.
+
+## Trace viewer
+
+To inspect runs under `outputs/default` in a browser:
+
+```bash
+mini-web-traces --root outputs/default --port 8009
+```
+
+Or through the shared utility entry point:
+
+```bash
+mini-web-extra trace-viewer --root outputs/default --port 8009
+```
+
+The viewer scans each run folder, lists per-task traces, and shows per-step screenshots, actions, thoughts, console output, and ARIA snapshots.
+
+To relaunch it with a shareable Cloudflare link from the repo root, use:
+
+```bash
+PYTHONPATH=src python -m miniswewebagent.run.utilities.trace_viewer --root outputs/default --host 127.0.0.1 --port 52869
+```
+
+Then, in a second terminal:
+
+```bash
+cloudflared tunnel --url http://127.0.0.1:52869
+```
+
+Share the `https://*.trycloudflare.com` URL printed by `cloudflared`.
+
+To stop the shared viewer and free the local port, kill all matching viewer and tunnel PIDs with:
+
+```bash
+pids=$(ps -eo pid=,command= | awk '/miniswewebagent\.run\.utilities\.trace_viewer --root outputs\/default --host 127\.0\.0\.1 --port 52869/ || /cloudflared tunnel --url http:\/\/127\.0\.0\.1:52869/ {print $1}'); [ -n "$pids" ] && kill $pids
+```
+
+## Docs
+
+- Main execution flow: [docs/execution-flow.md](docs/execution-flow.md)

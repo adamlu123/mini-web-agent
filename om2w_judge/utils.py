@@ -23,7 +23,15 @@ def encode_image(image):
 
 
 def extract_predication(response, mode):
-    if mode in {"Autonomous_eval", "AgentTrek_eval", "WebJudge_Online_Mind2Web_eval", "WebJudge_general_eval"}:
+    if mode in {
+        "Autonomous_eval",
+        "AgentTrek_eval",
+        "WebJudge_Online_Mind2Web_eval",
+        "WebJudge_Online_Mind2Web_Sandbox_eval",
+        "WebJudge_Online_Mind2Web_Sandbox_eval_ctime",
+        "WebJudge_Online_Mind2Web_Sandbox_ThoughtsOnly_eval",
+        "WebJudge_general_eval",
+    }:
         try:
             if "success" in response.lower().split("status:")[1]:
                 return 1

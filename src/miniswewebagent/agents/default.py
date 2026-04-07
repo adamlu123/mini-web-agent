@@ -9,7 +9,7 @@ from jinja2 import StrictUndefined, Template
 from pydantic import BaseModel
 
 from miniswewebagent import Environment, Model, __version__
-from miniswewebagent.exceptions import InterruptAgentFlow, LimitsExceeded
+from miniswewebagent.exceptions import FormatError, InterruptAgentFlow, LimitsExceeded
 from miniswewebagent.utils.serialize import recursive_merge
 
 
@@ -37,6 +37,10 @@ def _observation_for_markdown(observation: dict[str, Any]) -> dict[str, Any]:
     return cloned
 
 
+def _action_text(action: dict[str, Any]) -> str:
+    return str(action.get("bash_command") or action.get("command") or action.get("python_code") or "").strip()
+
+
 class DefaultAgent:
     def __init__(self, model: Model, env: Environment, *, config_class: type = AgentConfig, **kwargs):
         self.config = config_class(**kwargs)
@@ -45,6 +49,7 @@ class DefaultAgent:
         self.env = env
         self.extra_template_vars: dict[str, Any] = {}
         self.n_calls = 0
+        self.n_format_errors = 0
 
     def _debug_dir(self) -> Path | None:
         if self.config.output_path is None:
@@ -68,10 +73,14 @@ class DefaultAgent:
 
         extra = assistant_message.get("extra", {})
         actions = extra.get("actions", [])
+        action_text = "\n\n".join(_action_text(action) for action in actions if _action_text(action))
         payload = {
             "step": step_index,
             "thought": assistant_message.get("content", ""),
-            "python_code": "\n\n".join(action.get("python_code", "") for action in actions),
+            "python_code": action_text,
+            "bash_command": "\n\n".join(
+                str(action.get("bash_command", "")).strip() for action in actions if str(action.get("bash_command", "")).strip()
+            ),
             "raw_response": extra.get("raw_response", {}),
             "done": extra.get("done", False),
             "final_response": extra.get("final_response", ""),
@@ -117,6 +126,7 @@ class DefaultAgent:
         self.extra_template_vars |= {"task": task, **kwargs}
         self.messages = []
         self.n_calls = 0
+        self.n_format_errors = 0
         self.add_messages(
             self.model.format_message(role="system", content=self._render_template(self.config.system_template)),
             self.model.format_message(role="user", content=self._render_template(self.config.instance_template)),
@@ -125,6 +135,8 @@ class DefaultAgent:
             try:
                 self.step()
             except InterruptAgentFlow as exc:
+                if isinstance(exc, FormatError):
+                    self.n_format_errors += 1
                 self.add_messages(*exc.messages)
             finally:
                 self.save(self.config.output_path)
@@ -144,8 +156,8 @@ class DefaultAgent:
                     extra={"exit_status": "LimitsExceeded", "submission": ""},
                 )
             )
-        self.n_calls += 1
         message = self.model.query(self.messages)
+        self.n_calls += 1
         self.add_messages(message)
         return message
 
@@ -182,6 +194,7 @@ class DefaultAgent:
                     "exit_status": last_extra.get("exit_status", ""),
                     "submission": last_extra.get("submission", ""),
                     "api_calls": self.n_calls,
+                    "format_errors": self.n_format_errors,
                 },
                 "messages": [_sanitize_message_for_disk(message) for message in self.messages],
                 "trajectory_format": "mini-swe-webagent-0.1",
