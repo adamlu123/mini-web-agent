@@ -253,6 +253,61 @@ def _extract_response_text(payload: dict[str, Any]) -> str:
     return "\n".join(texts)
 
 
+def _safe_int(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _request_metrics_from_serialized_input(serialized_input: list[dict[str, Any]]) -> dict[str, int]:
+    message_count = len(serialized_input)
+    text_part_count = 0
+    image_part_count = 0
+    text_chars = 0
+
+    for item in serialized_input:
+        for content in item.get("content") or []:
+            if not isinstance(content, dict):
+                continue
+            part_type = content.get("type")
+            if part_type in {"input_text", "output_text"}:
+                text_part_count += 1
+                text_chars += len(str(content.get("text", "") or ""))
+            elif part_type == "input_image":
+                image_part_count += 1
+
+    serialized_chars = len(json.dumps(serialized_input, ensure_ascii=False))
+
+    return {
+        "message_count": message_count,
+        "text_part_count": text_part_count,
+        "image_part_count": image_part_count,
+        "text_chars": text_chars,
+        "serialized_chars": serialized_chars,
+    }
+
+
+def _usage_metrics_from_response_payload(payload: dict[str, Any]) -> dict[str, int]:
+    usage = payload.get("usage")
+    if not isinstance(usage, dict):
+        usage = {}
+    input_details = usage.get("input_tokens_details")
+    if not isinstance(input_details, dict):
+        input_details = {}
+    output_details = usage.get("output_tokens_details")
+    if not isinstance(output_details, dict):
+        output_details = {}
+
+    return {
+        "input_tokens": _safe_int(usage.get("input_tokens")),
+        "output_tokens": _safe_int(usage.get("output_tokens")),
+        "total_tokens": _safe_int(usage.get("total_tokens")),
+        "cached_input_tokens": _safe_int(input_details.get("cached_tokens")),
+        "reasoning_output_tokens": _safe_int(output_details.get("reasoning_tokens")),
+    }
+
+
 class PhyagiModelConfig(BaseModel):
     model_name: str = "gpt-5.4"
     openai_gateway_api_key: str = ""
@@ -286,6 +341,34 @@ class PhyagiModelConfig(BaseModel):
 class PhyagiModel:
     def __init__(self, *, config_class: type = PhyagiModelConfig, **kwargs):
         self.config = config_class(**kwargs)
+        self._last_request_metrics: dict[str, int] = {
+            "message_count": 0,
+            "text_part_count": 0,
+            "image_part_count": 0,
+            "text_chars": 0,
+            "serialized_chars": 0,
+        }
+        self._last_usage_metrics: dict[str, int] = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "cached_input_tokens": 0,
+            "reasoning_output_tokens": 0,
+        }
+        self._cumulative_request_metrics: dict[str, int] = {
+            "message_count": 0,
+            "text_part_count": 0,
+            "image_part_count": 0,
+            "text_chars": 0,
+            "serialized_chars": 0,
+        }
+        self._cumulative_usage_metrics: dict[str, int] = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "cached_input_tokens": 0,
+            "reasoning_output_tokens": 0,
+        }
         default_tier = PhyagiModelConfig.model_fields["openai_gateway_tier"].default
         env_tier = os.environ.get(
             "OPENAI_GATEWAY_TIER",
@@ -303,7 +386,30 @@ class PhyagiModel:
             raise RuntimeError("Missing OPENAI_GATEWAY_API_KEY or PHYAGI_API_KEY.")
 
     def get_template_vars(self, **kwargs) -> dict[str, Any]:
-        return {"model_name": self.config.model_name, **kwargs}
+        return {
+            "model_name": self.config.model_name,
+            "last_request_message_count": self._last_request_metrics["message_count"],
+            "last_request_text_part_count": self._last_request_metrics["text_part_count"],
+            "last_request_image_part_count": self._last_request_metrics["image_part_count"],
+            "last_request_text_chars": self._last_request_metrics["text_chars"],
+            "last_request_serialized_chars": self._last_request_metrics["serialized_chars"],
+            "last_request_input_tokens": self._last_usage_metrics["input_tokens"],
+            "last_request_output_tokens": self._last_usage_metrics["output_tokens"],
+            "last_request_total_tokens": self._last_usage_metrics["total_tokens"],
+            "last_request_cached_input_tokens": self._last_usage_metrics["cached_input_tokens"],
+            "last_request_reasoning_output_tokens": self._last_usage_metrics["reasoning_output_tokens"],
+            "cumulative_request_message_count": self._cumulative_request_metrics["message_count"],
+            "cumulative_request_text_part_count": self._cumulative_request_metrics["text_part_count"],
+            "cumulative_request_image_part_count": self._cumulative_request_metrics["image_part_count"],
+            "cumulative_request_text_chars": self._cumulative_request_metrics["text_chars"],
+            "cumulative_request_serialized_chars": self._cumulative_request_metrics["serialized_chars"],
+            "cumulative_input_tokens": self._cumulative_usage_metrics["input_tokens"],
+            "cumulative_output_tokens": self._cumulative_usage_metrics["output_tokens"],
+            "cumulative_total_tokens": self._cumulative_usage_metrics["total_tokens"],
+            "cumulative_cached_input_tokens": self._cumulative_usage_metrics["cached_input_tokens"],
+            "cumulative_reasoning_output_tokens": self._cumulative_usage_metrics["reasoning_output_tokens"],
+            **kwargs,
+        }
 
     def _log_gateway_error(self, *, event: str, attempt: int, error: BaseException) -> None:
         response = getattr(error, "response", None)
@@ -436,6 +542,11 @@ class PhyagiModel:
         request_messages = list(messages)
         for attempt_index in range(MAX_JSON_PARSE_RETRIES + 1):
             payload = self._build_payload(request_messages)
+            serialized_input = payload.get("input") or []
+            request_metrics = _request_metrics_from_serialized_input(serialized_input)
+            self._last_request_metrics = dict(request_metrics)
+            for key, value in request_metrics.items():
+                self._cumulative_request_metrics[key] += value
             response_payload = None
             for rate_limit_attempt in range(MAX_RATE_LIMIT_RETRIES + 1):
                 try:
@@ -478,6 +589,11 @@ class PhyagiModel:
 
             if response_payload is None:
                 raise RuntimeError("Gateway request returned no payload.")
+
+            usage_metrics = _usage_metrics_from_response_payload(response_payload)
+            self._last_usage_metrics = dict(usage_metrics)
+            for key, value in usage_metrics.items():
+                self._cumulative_usage_metrics[key] += value
 
             raw_text = _extract_response_text(response_payload)
             try:
@@ -523,6 +639,12 @@ class PhyagiModel:
                 "config": {
                     **self.config.model_dump(mode="json"),
                     "openai_gateway_api_key": "<redacted>",
+                },
+                "usage": {
+                    "last_request": self._last_request_metrics,
+                    "last_response": self._last_usage_metrics,
+                    "cumulative_request": self._cumulative_request_metrics,
+                    "cumulative_response": self._cumulative_usage_metrics,
                 },
                 "model_type": f"{self.__class__.__module__}.{self.__class__.__name__}",
             }

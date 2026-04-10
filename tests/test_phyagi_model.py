@@ -413,6 +413,130 @@ def test_phyagi_model_query_retries_transient_gateway_errors(monkeypatch) -> Non
     assert message["extra"]["final_response"] == "ok"
 
 
+def test_phyagi_model_query_exposes_gateway_usage_in_template_vars(monkeypatch) -> None:
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "usage": {
+                    "input_tokens": 123,
+                    "output_tokens": 45,
+                    "total_tokens": 168,
+                    "input_tokens_details": {"cached_tokens": 7},
+                    "output_tokens_details": {"reasoning_tokens": 11},
+                },
+                "output": [
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": """
+<response>
+  <thought>Inspect files</thought>
+  <bash_command><![CDATA[
+pwd
+]]></bash_command>
+  <done>false</done>
+  <final_response></final_response>
+</response>
+                                """.strip(),
+                            }
+                        ],
+                    }
+                ],
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, timeout: int):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url: str, headers: dict, json: dict) -> FakeResponse:
+            return FakeResponse()
+
+    monkeypatch.setattr("miniswewebagent.models.phyagi_model.httpx.AsyncClient", FakeAsyncClient)
+
+    model = PhyagiModel(openai_gateway_api_key="dummy", response_mode="xml")
+    model.query([{"role": "user", "content": "Task"}])
+
+    template_vars = model.get_template_vars()
+
+    assert template_vars["last_request_message_count"] == 1
+    assert template_vars["last_request_text_chars"] == 4
+    assert template_vars["last_request_input_tokens"] == 123
+    assert template_vars["last_request_output_tokens"] == 45
+    assert template_vars["last_request_total_tokens"] == 168
+    assert template_vars["last_request_cached_input_tokens"] == 7
+    assert template_vars["last_request_reasoning_output_tokens"] == 11
+    assert template_vars["cumulative_input_tokens"] == 123
+    assert template_vars["cumulative_output_tokens"] == 45
+
+
+def test_phyagi_model_query_uses_zero_usage_when_gateway_omits_usage(monkeypatch) -> None:
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "output": [
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": """
+<response>
+  <thought>Inspect files</thought>
+  <bash_command><![CDATA[
+pwd
+]]></bash_command>
+  <done>false</done>
+  <final_response></final_response>
+</response>
+                                """.strip(),
+                            }
+                        ],
+                    }
+                ],
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, timeout: int):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url: str, headers: dict, json: dict) -> FakeResponse:
+            return FakeResponse()
+
+    monkeypatch.setattr("miniswewebagent.models.phyagi_model.httpx.AsyncClient", FakeAsyncClient)
+
+    model = PhyagiModel(openai_gateway_api_key="dummy", response_mode="xml")
+    model.query([{"role": "user", "content": "Task"}])
+
+    template_vars = model.get_template_vars()
+
+    assert template_vars["last_request_input_tokens"] == 0
+    assert template_vars["cumulative_input_tokens"] == 0
+    assert template_vars["last_request_text_chars"] == 4
+    assert template_vars["cumulative_request_text_chars"] == 4
+
+
 def test_serialize_response_input_uses_output_text_for_assistant_messages() -> None:
     serialized = _serialize_response_input(
         [
