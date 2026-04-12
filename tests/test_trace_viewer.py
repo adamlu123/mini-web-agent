@@ -90,3 +90,43 @@ def test_trace_catalog_lists_runs_tasks_and_detail(tmp_path) -> None:
     assert detail["judges"][0]["model"] == "o4-mini"
     assert detail["judges"][0]["status"] == "success"
     assert detail["judges"][0]["response"] == "Thoughts: The task was completed.\nStatus: success"
+
+
+def test_trace_catalog_uses_command_text_for_bash_debug_steps(tmp_path) -> None:
+    root = tmp_path / "outputs" / "default"
+    task_dir = root / "run_a" / "task_001"
+    (task_dir / "debug" / "steps").mkdir(parents=True)
+    (task_dir / "screenshots").mkdir(parents=True)
+    (task_dir / "trajectory").mkdir(parents=True)
+
+    (task_dir / "result.json").write_text(
+        json.dumps(
+            {
+                "task_id": "task-001",
+                "task": "Search for a thing.",
+                "start_url": "https://example.com",
+                "final_result_response": "Found it.",
+                "exit_status": "Submitted",
+                "action_history": ["echo hi"],
+                "thoughts": ["Run a shell command."],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (task_dir / "debug" / "steps" / "step_0001.json").write_text(
+        json.dumps(
+            {
+                "step": 1,
+                "thought": "Run a shell command.",
+                "python_code": "",
+                "bash_command": "echo hi",
+                "command_text": "echo hi",
+                "done": False,
+                "outputs": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    detail = TraceCatalog(root).task_detail("run_a", "task_001")
+    assert detail["steps"][0]["action"] == "echo hi"

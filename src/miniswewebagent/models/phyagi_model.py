@@ -411,6 +411,26 @@ class PhyagiModel:
             **kwargs,
         }
 
+    def _usage_snapshot(self) -> dict[str, dict[str, int]]:
+        return {
+            "last_request": {
+                "message_count": self._last_request_metrics["message_count"],
+                "text_part_count": self._last_request_metrics["text_part_count"],
+                "image_part_count": self._last_request_metrics["image_part_count"],
+                "input_tokens": self._last_usage_metrics["input_tokens"],
+                "cached_input_tokens": self._last_usage_metrics["cached_input_tokens"],
+            },
+            "last_response": dict(self._last_usage_metrics),
+            "cumulative_request": {
+                "message_count": self._cumulative_request_metrics["message_count"],
+                "text_part_count": self._cumulative_request_metrics["text_part_count"],
+                "image_part_count": self._cumulative_request_metrics["image_part_count"],
+                "input_tokens": self._cumulative_usage_metrics["input_tokens"],
+                "cached_input_tokens": self._cumulative_usage_metrics["cached_input_tokens"],
+            },
+            "cumulative_response": dict(self._cumulative_usage_metrics),
+        }
+
     def _log_gateway_error(self, *, event: str, attempt: int, error: BaseException) -> None:
         response = getattr(error, "response", None)
         response_text = ""
@@ -627,6 +647,7 @@ class PhyagiModel:
                 "done": bool(parsed.get("done", False)),
                 "final_response": parsed.get("final_response", ""),
                 "raw_response": parsed,
+                "usage": self._usage_snapshot(),
             },
         )
 
@@ -641,10 +662,7 @@ class PhyagiModel:
                     "openai_gateway_api_key": "<redacted>",
                 },
                 "usage": {
-                    "last_request": self._last_request_metrics,
-                    "last_response": self._last_usage_metrics,
-                    "cumulative_request": self._cumulative_request_metrics,
-                    "cumulative_response": self._cumulative_usage_metrics,
+                    **self._usage_snapshot(),
                 },
                 "model_type": f"{self.__class__.__module__}.{self.__class__.__name__}",
             }

@@ -91,6 +91,9 @@ agent:
     - Work only inside `{{ workspace_dir }}`.
     - Keep generated code, screenshots, logs, scratch files, and notes in `{{ workspace_dir }}`.
     - The required final artifact is `{{ final_script_path }}`.
+    - For each final validation attempt, create a fresh folder `final_runs/run_<id>/` with an increasing integer ID.
+    - Store that run's `final_script.py`, `final_script_log.txt`, final verification screenshots, and `image_qa` outputs only inside that run folder.
+    - When determining task completion, only the highest `final_runs/run_<id>/` folder is authoritative. Older run folders are history only and must be ignored.
     - Prefer commands that inspect files, write or update `final_script.py`, run `python final_script.py`, or print targeted debug output.
     - You may use one shell invocation with a heredoc to write a Python script and run it in the same command.
     - Always use Browserbase cloud sessions.
@@ -169,8 +172,8 @@ agent:
        - do not jump directly to an intermediate or final URL state
     4. Validate from scratch:
        - rerun `final_script.py`
-       - inspect logs and screenshots
-       - run final multi-image `image_qa`
+       - inspect `plan.md`, the highest `final_runs/run_<id>/final_script_log.txt`, and the screenshots in the highest `final_runs/run_<id>/screenshots/` folder
+       - run final multi-image `image_qa` on the full set of final execution verification screenshots from the highest `final_runs/run_<id>/screenshots/` folder together with the critical-point action log from the highest `final_runs/run_<id>/final_script_log.txt`
        - finish only after the checklist is fully satisfied
 
     ## Required Habits
@@ -188,9 +191,12 @@ agent:
     ## Final Script Instrumentation
 
     `final_script.py` must:
-    - save critical-point screenshots as `screenshots/final_execution_<step_number>_<action>.png`
+    - be stored in the active `final_runs/run_<id>/final_script.py`
+    - save critical-point screenshots as `final_runs/run_<id>/screenshots/final_execution_<step_number>_<action>.png`
     - ensure those screenshots are real browser-captured image files
-    - print `step <step_number> action: <action_name>` whenever it applies a filter, opens a drawer, changes sort, submits a form, or performs any interaction relevant to task constraints
+    - create or reset `final_runs/run_<id>/final_script_log.txt` at the start of each clean run
+    - write `step <step_number> action: <action_name>` to `final_runs/run_<id>/final_script_log.txt` whenever it applies a filter, opens a drawer, changes sort, submits a form, or performs any interaction relevant to task constraints
+    - ensure `final_runs/run_<id>/final_script_log.txt` comes from that run only, not from earlier exploration or other run folders
     - use stable selectors rather than brittle DOM probing or direct JS hacks
 
     This instrumentation is mandatory because evaluation depends on those screenshots and action logs.
@@ -204,29 +210,33 @@ agent:
       `print('hello')`
       `PY`
       `python explore.py`
+    - Inspect the latest run artifacts:
+      `ls -R final_runs`
+      `sed -n '1,200p' final_runs/run_003/final_script_log.txt`
     - Ask a grounded question about a saved screenshot:
       `python -m miniswewebagent.tools.image_qa --workspace-dir "{{ workspace_dir }}" --image screenshots/explore.png --question "Is the BMW filter chip visibly selected?"`
     - Final multi-image verification with action log:
-      `ACTION_LOG="$(rg '^step [0-9]+ action:' logs/step_*.log | tail -n 80)"`
-      `python -m miniswewebagent.tools.image_qa --workspace-dir "{{ workspace_dir }}" --image screenshots/final_execution_1_apply_constraint.png --image screenshots/final_execution_2_sort.png --image screenshots/final_execution_3_final_state.png --question "Final script critical-point action log:\n${ACTION_LOG}\n\nUsing the action log and all screenshots together, are all required constraints visibly satisfied and are results displayed?"`
+      `RUN_DIR="final_runs/run_003"`
+      `ACTION_LOG="$(tail -n 80 "${RUN_DIR}/final_script_log.txt")"`
+      `python -m miniswewebagent.tools.image_qa --workspace-dir "{{ workspace_dir }}" --image "${RUN_DIR}/screenshots/final_execution_1_apply_constraint.png" --image "${RUN_DIR}/screenshots/final_execution_2_sort.png" --image "${RUN_DIR}/screenshots/final_execution_3_final_state.png" --question "Final script critical-point action log:\n${ACTION_LOG}\n\nUsing the action log and all screenshots together, are all required constraints visibly satisfied and are results displayed?"`
 
     ## Completion Gate
 
     Set `<done>true</done>` only if all of the following are true:
-    - `final_script.py` exists and is the final artifact
+    - the `final_script.py` in the highest `final_runs/run_<id>/` folder exists and is the final artifact
     - the final script was rerun from scratch successfully
     - all checklist items in `plan.md` are verified
     - all critical-point screenshots exist
-    - the printed `step <n> action:` log from the final successful run was collected
+    - the `step <n> action:` log from the highest `final_runs/run_<id>/final_script_log.txt` was collected from the final successful run
     - all completion evidence comes from the real browser run
-    - final verification used all `screenshots/final_execution_<step_number>_<action>.png` images together in one multi-image `image_qa` call
+    - final verification used all `final_runs/run_<id>/screenshots/final_execution_<step_number>_<action>.png` images from the highest run ID folder together in one multi-image `image_qa` call
     - the `image_qa` JSON clearly confirms the intended final state
 
-    If `image_qa` is missing, uncertain, or contradicts the intended final state, you must repair the script, rerun it, collect new screenshots and action logs, and verify again before submitting.
+    If `image_qa` is missing, uncertain, or contradicts the intended final state, you must repair the script, create a new `final_runs/run_<id>/` folder, rerun it, collect new screenshots and action logs in that new run folder, and verify again before submitting.
 
     If you modify `final_script.py` after verification, verify again before submitting.
 
-    In `<final_response>`, report the outcome concisely and mention that `final_script.py` is the final artifact.
+    In `<final_response>`, report the outcome concisely and mention that the `final_script.py` in the highest `final_runs/run_<id>/` folder is the final artifact.
     When `done` is `false`, `<bash_command>` must contain exactly one bash command. Do not leave it empty.
     </instructions>
   step_limit: 50

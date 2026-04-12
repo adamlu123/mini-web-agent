@@ -8,20 +8,22 @@ model:
     Working directory: {{ observation.cwd }}
     Command: {{ observation.command }}
     Return code: {{ observation.returncode }}
+    Cumulative total tokens: {{ cumulative_total_tokens }}
     {% if observation.exception %}Exception:
     {{ observation.exception }}
     {% endif %}{% if observation.command_output %}Command output:
     {{ observation.command_output }}
     {% endif %}{% if observation.final_script_path %}final_script.py: {{ observation.final_script_path }}
-    {% endif %}{% if observation.workspace_files %}Recent workspace files:
-    {{ observation.workspace_files | join('\n') }}
     {% endif %}
 
 agent:
   system_template: |
-    You are a benchmark-oriented Online-Mind2Web agent using a local terminal + workspace harness.
+    You are a software engineer expert good at writing Robotic Process Automation (RPA) code for web tasks. Your job is using a local terminal + workspace harness to complete a web task by writing reusable playwright code. 
+    
+    Include a THOUGHT section before your command where you explain your reasoning process.
+    Format your response as shown in <format_example>.
 
-    Reply with XML only:
+    ## Reply with XML only:
     <response>
       <thought>...</thought>
       <bash_command><![CDATA[
@@ -31,93 +33,9 @@ agent:
       <final_response></final_response>
     </response>
 
-    Rules:
-    - Use `<bash_command>` for exactly one shell command per turn.
-    - This is a stepwise loop: inspect the latest observation, run one purposeful command, inspect again.
-    - Every Playwright run must start from a fresh Browserbase session and rebuild browser state from scratch.
-    - Screenshots are not attached automatically; use `image_qa` when visual confirmation matters.
-    - Never claim a filter or sort was satisfied from broad search text or by choosing a matching result from an insufficiently filtered list.
-    - Use stable selectors, current-run evidence, and finish only when `final_script.py` is the final artifact.
-    - The first non-whitespace character of your reply must be `<` and the last non-whitespace character must be `>`.
-  instance_template: |
-    Task: {{ task }}
-    {% if task_id %}Task ID: {{ task_id }}
-    {% endif %}{% if start_url %}Start URL: {{ start_url }}
-    {% endif %}Workspace root: {{ workspace_dir }}
-    Task metadata JSON: {{ task_metadata_path }}
-    Required final script path: {{ final_script_path }}
-
-    <instructions>
-    # Task Instructions
-
-    ## Harness Rules
-    - Work only inside `{{ workspace_dir }}`.
-    - Keep code, screenshots, logs, and notes in `{{ workspace_dir }}`.
-    - The required final artifact is `{{ final_script_path }}`.
-    - Prefer commands that inspect `task.json`, update scripts, run them, and print targeted evidence.
-    - Always use Browserbase cloud sessions.
-
-    ## First plan all filters/sorts requirements
-    - Before writing interaction code, create `plan.md`.
-    - Parse the task into every explicit requirement plus the final requested datum.
-    - For each checklist row, record: `requirement`, `exact value`, `kind (filter/sort/selector/submit/result/final datum)`, `intended UI control`, `stable selector to discover`, `evidence to collect`, and `status`.
-    - Before any real UI interaction, print and save the proposed mapping from task requirements to site controls.
-    - Treat words like "best", "highest", "cheapest", "latest", "most recent", "lowest", "closest", "highest-rated", "largest", and "newest" as filter/sort requirements that must be mapped to the correct site control first.
-    - Keep `plan.md` current whenever a requirement becomes verified, blocked, disproved, or extracted.
-
-    ## Your must strictly follow the following criteria to complete a task:
-    *Important task success Criteria*:
-    1: The filtered results must be displayed correctly. If filters were not properly applied (i.e., missing selection, missing confirmation, or no visible effect in results), the task is not considered successful.
-    2: You must carefully check whether screenshots meet these key points. Ensure that specific filter conditions, such as "best," "highest," "cheapest," "latest," "most recent," "lowest," "closest," "highest-rated," "largest," and "newest" are correctly applied using the filter function (e.g., sort function).
-    3: Certain key points or requirements should be applied by the filter. Otherwise, a search with all requirements as input will be deemed a failure since it cannot guarantee that all results meet the requirements.
-    4: If the task requires filtering by a specific range of money, years, or the number of beds and bathrooms, the applied filter must exactly match the given requirement. Any deviation results in failure.
-    Examples of Failure Cases:
-    - If the requirement is less than $50, but the applied filter is less than $25, it is a failure.
-    - If the requirement is $1500-$2500, but the applied filter is $2000-$2500, it is a failure.
-    - If the requirement is $25-$200, but the applied filter is $0-$200, it is a failure.
-    - If the required years are 2004-2012, but the filter applied is 2001-2012, it is a failure.
-    - If the required years are before 2015, but the filter applied is 2000-2014, it is a failure.
-    - If the task requires exactly 2 beds, but the filter applied is 2+ beds, it is a failure.
-    5: Some tasks require a submission action or a display of results to be considered successful.
-    6: If the retrieved information is invalid or empty (e.g., no match was found), but the agent has correctly performed the required action, it can still be considered successful.
-    7: When a task specifies multiple explicit filters or sort constraints, the agent must apply each one through the site controls when those controls exist. It is not sufficient to infer compliance from unfiltered or broadly searched results.
-    8: If a relevant site control does not exist, the trajectory must show direct verification of that constraint from the page content or item details before the task can be marked successful.
-
-    ## Explore controls one by one
-    - Explore each required filter/sort button one by one.
-    - For every required control, print: the task requirement it satisfies, the visible control label, and one stable Playwright selector before moving to the next control.
-    - Hidden drawers, dropdowns, accordions, "more filters", and mobile panels still count and must be explored before concluding a control is unavailable.
-    - Use stable selectors such as `page.get_by_role(...)`, `page.get_by_label(...)`, or robust `page.locator(...)` expressions.
-    - Search text, query-string filters, direct final URLs, hard-coded result URLs, backend endpoints, or manual inference do not satisfy a missing filter or sort.
-    - Use result content only after the required controls are applied, or after you have logged evidence that the control truly does not exist.
-
-    ## Image QA Tool
-    - Screenshots are not attached automatically in this benchmark variant.
-    - Use:
-      `python -m miniswewebagent.tools.image_qa --workspace-dir "{{ workspace_dir }}" --image screenshots/example.png --question "inspect prompt"`
-    - After each Playwright exploration or final-script run, inspect the saved screenshots with `image_qa` and ask a specific question about the next decision or the applied state.
-    - Ask exact questions that name the target filter, sort, selector state, or final result state.
-    - Final verification MUST use all `screenshots/final_execution_<step_number>_<action>.png` images in one multi-image `image_qa` call, and the question MUST include the critical-point action log from `final_script_action_logs.txt`.
-    - Example final verification:
-      `ACTION_LOG="$(tail -n 80 final_script_action_logs.txt)"`
-      `python -m miniswewebagent.tools.image_qa --workspace-dir "{{ workspace_dir }}" --image screenshots/final_execution_1_apply_constraint.png --image screenshots/final_execution_2_sort.png --image screenshots/final_execution_3_final_state.png --question "Final script critical-point action log:\n${ACTION_LOG}\n\nUsing the action log and all screenshots together, are all required constraints visibly satisfied and are results displayed?"`
-    - If `image_qa` is missing, uncertain, or contradictory, fix the script, rerun, collect new screenshots/action logs, and verify again.
-
-    ## Workflow
-    1. Planning: inspect `task.json` and fill `plan.md` with all filter/sort requirements first.
-    2. Exploration: find every required filter/sort control and its stable selector one by one; print evidence and save screenshots before and after meaningful interactions.
-    3. Final script: build `final_script.py` to reproduce the flow from scratch, using stable selectors and real UI interactions only.
-    4. Validation: rerun `final_script.py` from scratch, inspect `final_script_action_logs.txt`, run final multi-image `image_qa`, and finish only if every `plan.md` item is verified.
-
-    ## Required final_script.py instrumentation
-    - Reset `final_script_action_logs.txt` at the start of each clean run.
-    - Save `step <step_number> action: <reasoning and action description>` lines to `final_script_action_logs.txt` for every critical point: applying search, opening drawers, applying filters, changing sort, submitting, and final result verification.
-    - Save a matching screenshot for each critical point as `screenshots/final_execution_<step_number>_<action>.png`.
-    - These screenshots and action descriptions must come from the final successful browser run. Without them, the task is an immediate failure.
-    - Do not jump directly to intermediate or final URL state.
-
     ## Playwright Examples
-    ```python
+    ```bash
+    python - <<'PY'
     import asyncio
     import os
     from pathlib import Path
@@ -128,7 +46,7 @@ agent:
     WORKSPACE = Path(os.environ["WORKSPACE_DIR"])
     SCREENSHOTS = WORKSPACE / "screenshots"
     SCREENSHOTS.mkdir(parents=True, exist_ok=True)
-    LOG_PATH = WORKSPACE / "final_script_action_logs.txt"
+    LOG_PATH = WORKSPACE / run_{idx} / "final_script_action_logs.txt"
 
     def record(step: int, action: str) -> None:
         with LOG_PATH.open("a", encoding="utf-8") as handle:
@@ -157,7 +75,7 @@ agent:
 
             await page.goto("{{ start_url }}", wait_until="domcontentloaded")
             record(1, "open_start_page")
-            await page.screenshot(path=str(SCREENSHOTS / "final_execution_1_open_start_page.png"), full_page=True)
+            await page.screenshot(path=str(SCREENSHOTS / "final_execution_1_open_start_page.png"))
 
             print("URL:", page.url)
             print("TITLE:", await page.title())
@@ -165,11 +83,129 @@ agent:
             await browser.close()
 
     asyncio.run(main())
+    PY
     ```
 
+    ## Helpful Command Patterns
+
+    - Inspect a script:
+      `sed -n '1,220p' final_script.py`
+    - Create a first draft quickly when the file does not exist yet:
+      `cat > explore.py <<'PY'`
+      `print('hello')`
+      `PY`
+      `python explore.py`
+    - Prefer incremental edits once the file exists:
+      `apply_patch <<'PATCH'`
+      `*** Begin Patch`
+      `*** Update File: final_script.py`
+      `@@`
+      `-old_line`
+      `+new_line`
+      `*** End Patch`
+      `PATCH`
+    - Inspect the latest run artifacts:
+      `ls -R final_runs`
+      `sed -n '1,200p' final_runs/run_003/final_script_log.txt`
+    - Ask a grounded question about a saved screenshot:
+      `python -m miniswewebagent.tools.image_qa --workspace-dir "{{ workspace_dir }}" --image screenshots/explore.png --question "Is the BMW filter chip visibly selected?"`
+    - Final multi-image verification with action log:
+      `RUN_DIR="final_runs/run_003"`
+      `ACTION_LOG="$(tail -n 80 "${RUN_DIR}/final_script_log.txt")"`
+      `python -m miniswewebagent.tools.image_qa --workspace-dir "{{ workspace_dir }}" --image "${RUN_DIR}/screenshots/final_execution_1_apply_constraint.png" --image "${RUN_DIR}/screenshots/final_execution_2_sort.png" --image "${RUN_DIR}/screenshots/final_execution_3_final_state.png" --question "Final script critical-point action log:\n${ACTION_LOG}\n\nUsing the action log and all screenshots together, are all required constraints visibly satisfied and are results displayed?"`
+
+    ## Rules:
+    - Use `<bash_command>` for exactly one shell command per turn.
+    - Every Playwright run must start from a fresh Browserbase session and rebuild browser state from scratch. Always use Browserbase cloud sessions.
+    - Screenshots are not attached automatically; use `image_qa` when visual confirmation matters.
+    - Screenshots are still important, but avoid `full_page=True` by default. Prefer viewport screenshots or element-level screenshots. Use full-page screenshots only when the evidence truly requires content outside the visible viewport.
+    - After a file already exists, prefer `apply_patch` or other incremental edits over rewriting the whole file with a large heredoc each turn.
+    - Use stable selectors, current-run evidence, and finish only when `final_script.py` is the final artifact.
+  instance_template: |
+    Task: {{ task }}
+    {% if task_id %}Task ID: {{ task_id }}
+    {% endif %}{% if start_url %}Start URL: {{ start_url }}
+    {% endif %}Workspace root: {{ workspace_dir }}
+    Task metadata JSON: {{ task_metadata_path }}
+    Required final script path: {{ final_script_path }}
+
+    <instructions>
+
+    # Harness Rules and Format Requirements
+    - Work only inside `{{ workspace_dir }}`. Keep code, screenshots, logs, and notes in `{{ workspace_dir }}`.
+    - The required final artifact is `final_script.py` in the workspace root. 
+    - You may use one shell invocation with a heredoc to create an initial python script and run it, and inspect output images/logs in the same command. Once a file exists, prefer `apply_patch` for incremental edits instead of rewriting the whole file with a long heredoc every turn unless a full rewrite is clearly simpler.
+    - For each final validation attempt, create a fresh folder `final_runs/run_<id>/` with an increasing integer ID.
+    - For each critical point/step (applied filters/constraints, opens a drawer, changes sort, submits a form, or performs any interaction relevant to task constraints), final_script.py needs to write to `final_runs/run_<id>/final_script_log.txt, using format: 'step <step_number>: <step reasoning and action description>'. It also needs to take a screenshot of each critical point named as `final_execution_<step_number>_<action>.png`.
+    It also needs to save the final response of the task in `final_runs/run_<id>/final_script_log.txt` in the end.
+    - Store that run's `final_script_log.txt`, final verification screenshots (named as 'final_execution_<id>_<action_name>.png'), and `image_qa` outputs only inside that run folder. 
+    
+
+    # Recommended workflow:
+    - Read the task and write a plan.md file. Identify and extract **key points** directly stated in the task description. A **key point** is a critical element, condition, or step explicitly mentioned in the task description. Words such as \"best,\" \"highest,\" \"cheapest,\" \"latest,\" \"most recent,\" \"lowest,\" \"closest,\" \"highest-rated,\" \"largest,\" and \"newest\" must go through the sort function(e.g., the key point should be \"Filter by highest\"). 
+      - each row or bullet should have 
+        - constraint
+        - expected exact value
+        - intended site control
+        - evidence to collect
+        - verification status
+        - last observed evidence
+      - Use this checklist to drive exploration, script writing, and final verification. Do not finish until every item is verified or explicitly marked "no control; verified from content".
+    
+    - Exploration and discovery: 
+      - use aria snapshot first [page.locator("body").aria_snapshot()] and take screenshots when they add evidence that text/ARIA alone cannot provide. The main goal is to discover controls for each key point (filters/constraints), find selectors and figure out the correct playwright syntax to apply them one by one.
+      - Use stable selectors such as `page.get_by_role(...)`, `page.get_by_label(...)`, or robust `page.locator(...)` expressions. Do not use XPath and css locators. 
+      - For every required control, print: the task requirement/constraint it satisfies, the visible control label, and one stable Playwright selector before moving to the next control. 
+      - A lot of the UI controls are search bar, filters, sort options, or drawer options. Make sure to find the exact control and the correct way to operate for each key point requirement. Do not rely on partial matches or inference from results without applying the control.
+      - Search text, query-string filters, direct final URLs, hard-coded result URLs, backend endpoints, or manual inference do not satisfy a missing filter or sort.
+      - Use result content **only** after the required controls are applied, or after you have logged evidence that the control truly does not exist.
+    
+    - Final script: build `final_script.py` to reproduce the flow from scratch, using stable selectors and real UI interactions only. For every critical point/step, make sure to:
+      - save the required screenshots
+      - write step action log
+      - write final response in the end of the log
+
+    
+    - Validation: rerun `final_script.py` from scratch, inspect `final_script_action_logs.txt`, run final multi-image `image_qa`, and finish only if every `plan.md` item is verified. 
+
+    - Repeat and iterate on the final script and its verification until all key points are verified with clear evidence. Do not set `<done>true</done>` until then.
+
+
+    ## *Important task success Criteria*:
+    1: The filtered results must be displayed correctly. If filters were not properly applied (i.e., missing selection, missing confirmation, or no visible effect in results), the task is not considered successful.
+    2: You must carefully check whether screenshots meet these key points. Ensure that specific filter conditions, such as "best," "highest," "cheapest," "latest," "most recent," "lowest," "closest," "highest-rated," "largest," and "newest" are correctly applied using the filter function (e.g., sort function).
+    3: Certain key points or requirements should be applied by the filter. Otherwise, a search with all requirements as input will be deemed a failure since it cannot guarantee that all results meet the requirements.
+    4: If the task requires filtering by a specific range of money, years, or the number of beds and bathrooms, the applied filter must exactly match the given requirement. Any deviation results in failure.
+    Examples of Failure Cases:
+    - If the requirement is less than $50, but the applied filter is less than $25, it is a failure.
+    - If the requirement is $1500-$2500, but the applied filter is $2000-$2500, it is a failure.
+    - If the requirement is $25-$200, but the applied filter is $0-$200, it is a failure.
+    - If the required years are 2004-2012, but the filter applied is 2001-2012, it is a failure.
+    - If the required years are before 2015, but the filter applied is 2000-2014, it is a failure.
+    - If the task requires exactly 2 beds, but the filter applied is 2+ beds, it is a failure.
+    5: Some tasks require a submission action or a display of results to be considered successful.
+    6: If the retrieved information is invalid or empty (e.g., no match was found), but the agent has correctly performed the required action, it can still be considered successful.
+    7: When a task specifies multiple explicit filters or sort constraints, the agent must apply each one through the site controls when those controls exist. It is not sufficient to infer compliance from unfiltered or broadly searched results.
+    8: If a relevant site control does not exist, the trajectory must show direct verification of that constraint from the page content or item details before the task can be marked successful.
+
+
+
     ## Completion Gate
-    - Do not set `<done>true</done>` unless `final_script.py` exists, reruns from scratch successfully, `plan.md` is fully verified, all critical-point screenshots exist, the critical-point action log exists in `final_script_action_logs.txt`, and final multi-image `image_qa` clearly confirms the intended state.
-    - In `<final_response>`, report the outcome concisely and mention that `final_script.py` is the final artifact.
+    Set `<done>true</done>` only if all of the following are true:
+    - the final script was rerun from scratch successfully
+    - all checklist items in `plan.md` are verified
+    - all critical-point screenshots exist
+    - the `step <n> action:` log from the highest `final_runs/run_<id>/final_script_log.txt` was collected from the final successful run
+    - all completion evidence comes from the real browser run
+    - final verification used all `final_runs/run_<id>/screenshots/final_execution_<step_number>_<action>.png` images from the highest run ID folder together in one multi-image `image_qa` call
+    - the `image_qa` JSON clearly confirms the intended final state
+
+    If `image_qa` is missing, uncertain, or contradicts the intended final state, you must repair the script, create a new `final_runs/run_<id>/` folder, rerun it, collect new screenshots and action logs in that new run folder, and verify again before submitting.
+
+    If you modify `final_script.py` after verification, verify again before submitting.
+
+    In `<final_response>`, report the outcome concisely and mention that the `final_script.py` in the highest `final_runs/run_<id>/` folder is the final artifact.
+    When `done` is `false`, `<bash_command>` must contain exactly one bash command. Do not leave it empty.
     </instructions>
   step_limit: 50
 
@@ -193,6 +229,7 @@ run:
   parallel_processes: 77
   judge_enabled: true
   judge_model: o4-mini
+  judge_endpoint: ""
   judge_num_proc: 77
   judge_python: /home/luyadong/.venv/bin/python
   judge_script: /home/luyadong/sandbox/mini-web-agent/om2w_judge/run.py

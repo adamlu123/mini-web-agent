@@ -258,6 +258,7 @@ For each step it:
 - ensures the runtime still exists
 - waits for any Browserbase captcha pause to clear
 - writes the code to `steps/step_XXXX.py`
+
 - appends the same code to `script.py`
 - executes the step as async Python with live browser objects
 - waits for observation readiness

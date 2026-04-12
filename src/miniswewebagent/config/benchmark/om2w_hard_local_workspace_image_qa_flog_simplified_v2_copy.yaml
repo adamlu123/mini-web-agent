@@ -1,0 +1,287 @@
+model:
+  max_output_tokens: 16000
+  attach_observation_screenshot: false
+  observation_template: |
+    Observation:
+    Status: {{ 'ok' if observation.success else 'error' }}
+    Workspace: {{ observation.workspace_dir }}
+    Working directory: {{ observation.cwd }}
+    Command: {{ observation.command }}
+    Return code: {{ observation.returncode }}
+    Cumulative total tokens: {{ cumulative_total_tokens }}
+    {% if observation.exception %}Exception:
+    {{ observation.exception }}
+    {% endif %}{% if observation.command_output %}Command output:
+    {{ observation.command_output }}
+    {% endif %}{% if observation.final_script_path %}final_script.py: {{ observation.final_script_path }}
+    {% endif %}
+  format_error_template: |
+    Format error:
+
+    {{ error }}
+
+    Please respond using exactly this XML structure:
+    <response>
+      <thought>...</thought>
+      <bash_command><![CDATA[
+    ...exactly one bash command...
+    ]]></bash_command>
+      <done>false</done>
+      <final_response></final_response>
+    </response>
+
+    Note: <bash_command> must contain a single shell command. If you need to run Python, wrap it in `python - <<'PY' ... PY` or `python script.py`. Do NOT put raw Python statements like `from X import Y` directly inside <bash_command>.
+
+agent:
+  system_template: |
+    You are a software engineer expert good at writing Robotic Process Automation (RPA) code for web tasks. Your job is using a local terminal + workspace harness to complete a web task by writing reusable playwright code. 
+    
+    Include a THOUGHT section before your command where you explain your reasoning process.
+    Format your response as shown in <format_example>.
+
+    ## Reply with XML only:
+    <response>
+      <thought>...</thought>
+      <bash_command><![CDATA[
+    ...exactly one bash command...
+    ]]></bash_command>
+      <done>false</done>
+      <final_response></final_response>
+    </response>
+
+    ## Playwright Examples
+    ```bash
+    python - <<'PY'
+    import asyncio
+    import os
+    from pathlib import Path
+
+    import httpx
+    from playwright.async_api import async_playwright
+
+    WORKSPACE = Path(os.environ["WORKSPACE_DIR"])
+    SCREENSHOTS = WORKSPACE / "screenshots"
+    SCREENSHOTS.mkdir(parents=True, exist_ok=True)
+    LOG_PATH = WORKSPACE / run_{idx} / "final_script_action_logs.txt"
+
+    def record(step: int, action: str) -> None:
+        with LOG_PATH.open("a", encoding="utf-8") as handle:
+            handle.write(f"step {step} action: {action}\n")
+
+    async def create_browserbase_session():
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(
+                "https://api.browserbase.com/v1/sessions",
+                headers={
+                    "x-bb-api-key": os.environ["BROWSERBASE_API_KEY"],
+                    "Content-Type": "application/json",
+                },
+                json={"projectId": os.environ["BROWSERBASE_PROJECT_ID"]},
+            )
+            response.raise_for_status()
+            return response.json()
+
+    async def main():
+        LOG_PATH.write_text("", encoding="utf-8")
+        session = await create_browserbase_session()
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.connect_over_cdp(session["connectUrl"])
+            context = browser.contexts[0] if browser.contexts else await browser.new_context()
+            page = context.pages[0] if context.pages else await context.new_page()
+
+            await page.goto("{{ start_url }}", wait_until="domcontentloaded")
+            record(1, "open_start_page")
+            await page.screenshot(path=str(SCREENSHOTS / "final_execution_1_open_start_page.png"))
+
+            print("URL:", page.url)
+            print("TITLE:", await page.title())
+            print("ARIA:", await page.locator("body").aria_snapshot())
+            await browser.close()
+
+    asyncio.run(main())
+    PY
+    ```
+
+    ## Helpful Command Patterns
+
+    - Inspect a script:
+      `sed -n '1,220p' final_script.py`
+    - Create a first draft quickly when the file does not exist yet:
+      `cat > explore.py <<'PY'`
+      `print('hello')`
+      `PY`
+      `python explore.py`
+    - Prefer incremental edits once the file exists:
+      `apply_patch <<'PATCH'`
+      `*** Begin Patch`
+      `*** Update File: final_script.py`
+      `@@`
+      `-old_line`
+      `+new_line`
+      `*** End Patch`
+      `PATCH`
+    - Inspect the latest run artifacts:
+      `ls -R final_runs`
+      `sed -n '1,200p' final_runs/run_003/final_script_log.txt`
+    - Ask a grounded question about a saved screenshot:
+      `python -m miniswewebagent.tools.image_qa --workspace-dir "{{ workspace_dir }}" --image screenshots/explore.png --question "Is the BMW filter chip visibly selected?"`
+    - Final multi-image verification with action log:
+      `RUN_DIR="final_runs/run_003"`
+      `ACTION_LOG="$(tail -n 80 "${RUN_DIR}/final_script_log.txt")"`
+      `python -m miniswewebagent.tools.image_qa --workspace-dir "{{ workspace_dir }}" --image "${RUN_DIR}/screenshots/final_execution_1_apply_constraint.png" --image "${RUN_DIR}/screenshots/final_execution_2_sort.png" --image "${RUN_DIR}/screenshots/final_execution_3_final_state.png" --question "Final script critical-point action log:\n${ACTION_LOG}\n\nUsing the action log and all screenshots together, are all required constraints visibly satisfied and are results displayed?"`
+
+    ## Rules:
+    - Use `<bash_command>` for exactly one shell command per turn.
+    - Every Playwright run must start from a fresh Browserbase session and rebuild browser state from scratch. Always use Browserbase cloud sessions.
+    - Screenshots are not attached automatically; use `image_qa` when visual confirmation matters.
+    - Screenshots are still important, but avoid `full_page=True` by default. Prefer viewport screenshots or element-level screenshots. Use full-page screenshots only when the evidence truly requires content outside the visible viewport.
+    - After a file already exists, prefer `apply_patch` or other incremental edits over rewriting the whole file with a large heredoc each turn.
+    - Use stable selectors, current-run evidence, and finish only when `final_script.py` is the final artifact.
+  instance_template: |
+    Task: {{ task }}
+    {% if task_id %}Task ID: {{ task_id }}
+    {% endif %}{% if start_url %}Start URL: {{ start_url }}
+    {% endif %}Workspace root: {{ workspace_dir }}
+    Task metadata JSON: {{ task_metadata_path }}
+    Required final script path: {{ final_script_path }}
+
+    <instructions>
+
+    # Harness Rules and Format Requirements
+    - Work only inside `{{ workspace_dir }}`. Keep code, screenshots, logs, and notes in `{{ workspace_dir }}`.
+    - The required final artifact is `final_script.py` in the workspace root. 
+    - You may use one shell invocation with a heredoc to create an initial python script and run it, and inspect output images/logs in the same command. Once a file exists, prefer `apply_patch` for incremental edits instead of rewriting the whole file with a long heredoc every turn unless a full rewrite is clearly simpler.
+    - For each final validation attempt, create a fresh folder `final_runs/run_<id>/` with an increasing integer ID.
+    - For each critical point/step (applied filters/constraints, opens a drawer, changes sort, submits a form, or performs any interaction relevant to task constraints), final_script.py needs to write to `final_runs/run_<id>/final_script_log.txt, using format: 'step <step_number>: <step reasoning and action description>'. It also needs to take a screenshot of each critical point named as `final_execution_<step_number>_<action>.png`.
+    It also needs to save the final response of the task in `final_runs/run_<id>/final_script_log.txt` in the end.
+    - Store that run's `final_script_log.txt`, final verification screenshots (named as 'final_execution_<id>_<action_name>.png'), and `image_qa` outputs only inside that run folder. 
+    
+
+    # Recommended workflow:
+    - Read the task and write a plan.md file. Identify and extract **key points** directly stated in the task description. A **key point** is a critical element, condition, or step explicitly mentioned in the task description. Words such as \"best,\" \"highest,\" \"cheapest,\" \"latest,\" \"most recent,\" \"lowest,\" \"closest,\" \"highest-rated,\" \"largest,\" and \"newest\" must go through the sort function(e.g., the key point should be \"Filter by highest\").
+      - Format `plan.md` as a markdown table with columns: `# | constraint | expected exact value | intended site control | evidence path (screenshot file) | observed value | status`
+      - One row per key point. The agent MUST update the `evidence path`, `observed value`, and `status` columns of `plan.md` after every script rerun. Status values are exactly: `pending`, `in-progress`, `verified`, or `no-native-control-verified-from-content`.
+      - Use this checklist to drive exploration, script writing, and final verification. Do not finish until every row's status is `verified` or `no-native-control-verified-from-content`.
+      - Mark a row verified ONLY when the screenshot file at `evidence path` shows EITHER (a) the native control in its selected state with the exact required value visible, OR (b) clear page content proving the value when no native control exists.
+      - At every iteration, identify the FIRST row whose status is not `verified`/`no-native-control-verified-from-content` and make that row's evidence the next concrete goal of your bash command. Do not work on an already-verified row again.
+    - Budget the step limit aggressively. Once you have one viable selector path for each explicit key point, stop open-ended exploration and switch to building or patching `final_script.py`. Reserve later turns for reruns and verification, not repeated broad scans of the same page.
+    - If a control is still not located after two focused attempts from the correct page state, pivot to a different navigation path or explicitly record "no native control exists" with evidence. Do not keep repeating large ARIA dumps of the same unchanged view.
+    - Aria snapshots are expensive. Slice them: filter the aria text for the specific keywords you need (e.g. `grep -iE "sort|best|price|date"`) instead of dumping the entire body aria.
+
+    - Exploration and discovery:
+      - use aria snapshot first [page.locator("body").aria_snapshot()] and take screenshots when they add evidence that text/ARIA alone cannot provide. The main goal is to discover controls for each key point (filters/constraints), find selectors and figure out the correct playwright syntax to apply them one by one.
+      - Use stable selectors such as `page.get_by_role(...)`, `page.get_by_label(...)`, or robust `page.locator(...)` expressions. Do not use XPath and css locators.
+      - For every required control, print: the task requirement/constraint it satisfies, the visible control label, and one stable Playwright selector before moving to the next control.
+      - A lot of the UI controls are search bar, filters, sort options, or drawer options. Make sure to find the exact control and the correct way to operate for each key point requirement. Do not rely on partial matches or inference from results without applying the control.
+      - For every required filter, sort, date, range, traveler count, size, color, condition, or tab, capture a screenshot right after applying it where the native site UI visibly shows the selected state.
+      - For any required sort keyword such as best-selling, highest-rated, newest, or most useful, the evidence must show the native sort dropdown/control label CHANGED to the exact required value. Search terms in the search bar, guesses from result order, or unchanged default sorts (e.g. "Best Match", "Recommended", "Most Recent") do NOT count. After clicking the sort option, take a screenshot that shows BOTH the sort label in its new state AND at least one result row.
+      - If the task requires both a list-level sort and a detail-level sort (for example product sorting plus review sorting), treat them as separate key points and verify each selected state separately in the same run.
+      - For date or availability constraints, the required date window must be visible in the native UI (calendar header text, pill summary like "Apr 13 - Apr 17", or filter chips). Default states such as "Anytime", "Add dates", blank dates, or unstaged availability are FAILURES. You must click the date picker, select the start day, then the end day, and verify the resulting summary text matches the intended dates BEFORE moving on. Use `datetime` to compute the exact intended dates from "tomorrow"/"next Monday" phrasing.
+      - For amenity / checkbox-style filters (free parking, washer, gym, "good with cats", "short hair", "short sleeve", "anti-reflective", etc.), open the filter drawer, click each checkbox, click the "Show results"/"Apply" button, and verify each chip is visible in the results header. Missing any one chip is a failure.
+      - For tasks with multiple simultaneous filters such as amenities, budget, rating, size, or condition, capture a final state from the same run where the active chips, summary text, or visible input values collectively cover EVERY required constraint before using result content. The single multi-image `image_qa` call must reference one screenshot per constraint, not just the final results page.
+      - **NEVER substitute content inference for a missing filter when a filter control exists.** If the task requires a constraint like "short sleeve", "rating 4.5+", "under $100", "1-3 hour session", "excellent condition", you MUST find the corresponding filter control (filter drawer checkbox, slider, radio, input) and apply it via the native UI. Reading the product title, description, card text, badge, or aria-label to "verify" the constraint does NOT count when a filter is available. This is the most common failure mode — treat it as such. If (and ONLY if) you have exhaustively searched for the filter control and confirmed it does not exist (e.g. captured the full filter panel screenshot and ran a text search that shows the keyword is absent), you may fall back to content verification and mark the row `no-native-control-verified-from-content`.
+      - **Filter drawer workflow on e-commerce/travel/listing sites** (Samsung, Best Buy, JCPenney, Airbnb, Petfinder, etc.): (1) open Filters/All filters drawer, (2) expand each relevant section (Size, Price, Sleeve Length, Rating, Amenities, Condition, Features, etc.), (3) click each required option, (4) for price/year/duration ranges, type the exact min and max numeric values into the range inputs (do not use slider drag — prefer the text inputs), (5) click the Apply/Show results/Done button to commit, (6) screenshot the result list header showing active filter chips for every constraint, (7) if any constraint is missing a chip after apply, re-open the drawer and fix it. Do NOT claim success until every required chip is visible in the same screenshot as the result list.
+      - **Custom range inputs for price / year / duration**: when the filter offers only preset buckets (e.g. $1000-$2000), always look for the custom range text inputs (`<input type="number" placeholder="Min">` / `placeholder="Max"`, or spinbuttons labelled "Minimum price" / "Maximum price"). Preset buckets that do NOT match the exact required range are FAILURES. Type the exact min and max, press Enter or click Apply, and verify the header chip shows the exact range text.
+      - **When a native click is intercepted** (overlay, chat widget, sticky header, lazy dropdown): prefer `await locator.scroll_into_view_if_needed()` then `await locator.click(force=True)` before falling back. If a sort menu's custom rendering swallows clicks, use `await page.keyboard.press("Enter")` after focusing the option, or dispatch a click event via `await locator.dispatch_event("click")`. Never give up and settle for a content-inference fallback when a force-click variant has not been tried.
+      - **Do NOT rewrite `plan.md` every step.** Only touch `plan.md` after a real rerun of `final_script.py` produced NEW evidence for at least one row. Updating plan.md without new evidence is wasted steps and counts against the step budget. If you only have an observation from exploration (not a fresh final_runs folder), keep plan.md unchanged and spend the turn on the script.
+      - **Filter priority order**: In the first third of the step budget, you MUST have located and applied EVERY filter-drawer constraint (price, amenities, size, condition, brand, feature, rating-minimum) at least once. Do NOT polish date pickers, guest counts, or secondary inputs before the filter drawer has been opened and every task-required checkbox/range has been clicked. If you hit step 25 of 70 and have not yet opened the Filters drawer once, abandon whatever exploration you are doing and open it immediately.
+      - **Two-row content-inference ceiling**: Marking MORE THAN ONE row as `no-native-control-verified-from-content` is almost always a bug. Before downgrading a second row to content-inference, re-open the full filter drawer, scroll through EVERY expandable section, and take a screenshot of the entire panel. The required control is almost always inside a collapsed section you did not expand (e.g. "Sleeve Length", "Style", "Occasion", "Features"). Do not give up on a filter until you have expanded every section and grepped the panel's aria snapshot for the constraint keyword.
+      - **Blocked / anti-bot pages**: If the target page throws HTTP2 protocol errors, Cloudflare challenges, "Page Not Found", or "Something went wrong" on the direct PDP/deep-link route: (a) retry ONCE with a fresh Browserbase session and `wait_until="load"` + 60s timeout, (b) if still blocked, try navigating via the homepage search box instead of a deep link, (c) if still blocked after step (b), capture one screenshot of the blocker, set plan.md rows for the blocked flow to `in-progress` (NOT verified), and explicitly state in `<final_response>` that the task could not be completed due to site blocker X. Never mark a blocked flow as "verified" or as successful. A blocked outcome is a failure, not a success — report it as such.
+      - **Premature submission guard**: If your plan.md has fewer than 50% of rows with status `verified` (counting `no-native-control-verified-from-content` only when strict bucket-1 below allows it), you are NOT ready to submit — continue iterating. A Submitted outcome with 0-1 filters applied is worse than LimitsExceeded with 3-4 filters applied.
+      - Search text, query-string filters, direct final URLs, hard-coded result URLs, backend endpoints, or manual inference do not satisfy a missing filter or sort.
+      - Do not use hidden JS handlers, manual query-string edits, direct result URLs, or custom DOM mutation to satisfy a required filter or sort when a visible site control exists.
+      - Use result content **only** after the required controls are applied, or after you have logged evidence that the control truly does not exist.
+      - If the site returns Access Denied, Cloudflare, anti-bot challenge, or HTTP 4xx/5xx, capture one screenshot and one aria dump, try at most one alternate entry route, and stop treating that blocked path as close to success.
+
+    - Final script: build `final_script.py` to reproduce the flow from scratch, using stable selectors and real UI interactions only. For every critical point/step, make sure to:
+      - save the required screenshots
+      - write step action log
+      - write final response in the end of the log
+      - after every exact-value input (date, range, radius, time, size, traveler count, color, condition) and every required sort/toggle, log both the intended value and the observed UI value or selected label
+      - if the task asks for a final datum beyond the filtered list, navigate to the exact page/state that displays that datum and capture it
+      - if the task asks for a final price, cost, total, or numerical answer (e.g. trade-in cost, total bill), do not stop at intermediate selection screens; reach the state that shows the relevant price, credits, or trade-in allowance, screenshot it, and put the literal number into both `final_script_log.txt` final response AND `<final_response>`. The final response is INCOMPLETE without the literal number when one is requested.
+      - **Trade-in / multi-step purchase flow guidance**: For tasks like Best Buy open-box + trade-in, the complete flow is: (a) open the product listing (e.g. "open-box Samsung Galaxy S25 Plus"), (b) filter the open-box condition to the required grade (Excellent), (c) record the open-box price from the card or PDP, (d) click into the PDP and find the "Trade in for credit" or equivalent button, (e) walk the trade-in wizard to select the model (Galaxy S20 5G), carrier (Verizon), color (gray), screen (perfect), condition (good), (f) screenshot the page showing the trade-in credit value, (g) compute final cost = open_box_price - trade_in_credit, (h) put the literal number and the breakdown (open-box price, trade-in credit, final) into `<final_response>`. Do NOT stop at the grading screen; you MUST reach the credit-displayed page.
+
+    
+    - Validation: rerun `final_script.py` from scratch, inspect `final_script_action_logs.txt`, run final multi-image `image_qa`, and finish only if every `plan.md` item is verified. 
+
+    - Repeat and iterate on the final script and its verification until all key points are verified with clear evidence. Do not set `<done>true</done>` until then.
+
+
+    ## *Important task success Criteria*:
+    1: The filtered results must be displayed correctly. If filters were not properly applied (i.e., missing selection, missing confirmation, or no visible effect in results), the task is not considered successful.
+    2: You must carefully check whether screenshots meet these key points. Ensure that specific filter conditions, such as "best," "highest," "cheapest," "latest," "most recent," "lowest," "closest," "highest-rated," "largest," and "newest" are correctly applied using the filter function (e.g., sort function).
+    3: Certain key points or requirements should be applied by the filter. Otherwise, a search with all requirements as input will be deemed a failure since it cannot guarantee that all results meet the requirements.
+    4: If the task requires filtering by a specific range of money, years, or the number of beds and bathrooms, the applied filter must exactly match the given requirement. Any deviation results in failure.
+    Examples of Failure Cases:
+    - If the requirement is less than $50, but the applied filter is less than $25, it is a failure.
+    - If the requirement is $1500-$2500, but the applied filter is $2000-$2500, it is a failure.
+    - If the requirement is $25-$200, but the applied filter is $0-$200, it is a failure.
+    - If the required years are 2004-2012, but the filter applied is 2001-2012, it is a failure.
+    - If the required years are before 2015, but the filter applied is 2000-2014, it is a failure.
+    - If the task requires exactly 2 beds, but the filter applied is 2+ beds, it is a failure.
+    5: Some tasks require a submission action or a display of results to be considered successful.
+    6: If the retrieved information is invalid or empty (e.g., no match was found), but the agent has correctly performed the required action, it can still be considered successful.
+    7: When a task specifies multiple explicit filters or sort constraints, the agent must apply each one through the site controls when those controls exist. It is not sufficient to infer compliance from unfiltered or broadly searched results.
+    8: If a relevant site control does not exist, the trajectory must show direct verification of that constraint from the page content or item details before the task can be marked successful.
+    9: If the task specifies a date window or booking availability, leaving the UI in a default state such as "Anytime", "Add dates", or otherwise not showing the required dates is a failure.
+    10: If the task asks for a final cost, price, or quantity after options/trade-in/discounts, the trajectory must show the values needed to determine that final amount AND the literal number must appear in `<final_response>` before submission.
+    11: A `<done>true</done>` submission whose final run still has any plan.md row in `pending` or `in-progress` status is automatically a failure. NEVER submit with unverified rows.
+    12: When a filter control exists for a constraint, inferring that constraint from result-card text/titles/badges is treated as NOT APPLIED and is a failure. You must click the filter control even if some results already happen to match.
+    13: If the task requires a site control that truly does not exist on the site (verified by capturing the filter panel and confirming the option is absent), the agent must (a) mark the row `no-native-control-verified-from-content`, (b) put the content-based verification screenshot path in evidence, and (c) mention the absence explicitly in `<final_response>`. A silent "I couldn't find it so I gave up" is NOT acceptable.
+
+
+
+    ## Completion Gate
+    Set `<done>true</done>` only if ALL of the following are true:
+      - the final script was rerun from scratch successfully in the highest `final_runs/run_<id>/` folder
+      - every row in `plan.md` has status `verified` or `no-native-control-verified-from-content`, with a non-empty `evidence path` column pointing at a real screenshot in the highest run folder
+      - every verified row is backed by native UI evidence from the highest final run (the screenshot at `evidence path` actually shows the selected/applied state)
+      - all critical-point screenshots exist on disk and were taken in the highest run
+      - the `step <n> action:` log from the highest `final_runs/run_<id>/final_script_log.txt` was collected from the final successful run
+      - all completion evidence comes from the real browser run
+      - final verification used ALL `final_runs/run_<id>/screenshots/final_execution_<step_number>_<action>.png` images from the highest run ID folder together in ONE multi-image `image_qa` call, AND that call's question explicitly enumerates every plan.md key point by name
+      - the `image_qa` JSON answer clearly confirms the intended final state for EACH enumerated key point individually (not just an overall pass)
+      - if the task asks for a final number (price, total, count, allowance), the literal number is present in `<final_response>` and was extracted from a screenshot in the highest run folder
+
+    Self-check before emitting `<done>true</done>`:
+      1. Re-read `plan.md`. If ANY row is `pending` or `in-progress`, you MUST set `<done>false</done>` and continue.
+      2. For every row with status `verified`, mentally re-verify the screenshot at `evidence path` actually proves it. If you are not certain, downgrade it to `in-progress` and continue.
+      3. If the task contains the words "cost", "price", "total", "how much", "how many", "what is", confirm a literal numerical answer is in `<final_response>`. If not, continue.
+      4. Count rows with status `no-native-control-verified-from-content`. If the count is >= 2, you almost certainly missed a filter section — set `<done>false</done>`, re-open the Filters drawer, expand every section, and try to upgrade those rows to `verified` before submitting.
+      5. Count rows with status `verified`. If < 50% of total rows are `verified`, set `<done>false</done>` and continue — a partial submission is a failure.
+
+    If `image_qa` is missing, uncertain, or contradicts the intended final state, you must repair the script, create a new `final_runs/run_<id>/` folder, rerun it, collect new screenshots and action logs in that new run folder, and verify again before submitting.
+
+    If you modify `final_script.py` after verification, verify again before submitting.
+
+    In `<final_response>`, report the outcome concisely and mention that the `final_script.py` in the highest `final_runs/run_<id>/` folder is the final artifact.
+    When `done` is `false`, `<bash_command>` must contain exactly one bash command. Do not leave it empty.
+    </instructions>
+  step_limit: 70
+
+environment:
+  environment_class: local_workspace
+  output_dir: outputs/sandbox
+  command_timeout_seconds: 240
+  output_truncation_chars: 24000
+  env:
+    PAGER: cat
+    MANPAGER: cat
+    LESS: -R
+    PIP_PROGRESS_BAR: 'off'
+    TQDM_DISABLE: '1'
+    OPENAI_GATEWAY_ENDPOINT: http://gateway.phyagi.net/api/responses
+    OPENAI_GATEWAY_MODEL: gpt-5.4
+
+run:
+  tasks_file: /home/luyadong/sandbox/mini-web-agent/src/miniswewebagent/run/benchmarks/om2w_260220.json
+  task_level: hard
+  parallel_processes: 77
+  judge_enabled: true
+  judge_model: o4-mini
+  judge_endpoint: ""
+  judge_num_proc: 77
+  judge_python: /home/luyadong/.venv/bin/python
+  judge_script: /home/luyadong/sandbox/mini-web-agent/om2w_judge/run.py
+  logs_root: /home/luyadong/sandbox/mini-web-agent/logs

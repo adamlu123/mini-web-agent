@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 
 from typer.testing import CliRunner
 
@@ -168,3 +169,61 @@ def test_om2w_cli_filters_by_level(tmp_path, monkeypatch) -> None:
     assert len(calls) == 1
     assert calls[0]["task_id"] == "hard"
     assert calls[0]["resolved_output_dir"].name == "hard"
+
+
+def test_om2w_cli_uses_gateway_judge_endpoint_from_config(tmp_path, monkeypatch) -> None:
+    tasks_file = tmp_path / "om2w.json"
+    output_dir = tmp_path / "batch_output"
+    log_root = tmp_path / "logs"
+    tasks_file.write_text(
+        json.dumps(
+            [
+                {
+                    "task_id": "first",
+                    "confirmed_task": "Open the first page.",
+                    "website": "https://example.com/1",
+                    "level": "hard",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_run_one(**kwargs):
+        return {"final_response": "ok"}
+
+    captured = {}
+
+    def fake_run_online_mind2web_judge(**kwargs):
+        captured.update(kwargs)
+        return subprocess.CompletedProcess([], 0, stdout="", stderr="")
+
+    monkeypatch.setattr("miniswewebagent.run.benchmarks.om2w.run_one", fake_run_one)
+    monkeypatch.setattr(
+        "miniswewebagent.run.benchmarks.om2w.run_online_mind2web_judge",
+        fake_run_online_mind2web_judge,
+    )
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_GATEWAY_API_KEY", "gateway-key")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "--tasks-file",
+            str(tasks_file),
+            "--workers",
+            "1",
+            "--evaluate",
+            "--output-dir",
+            str(output_dir),
+            "--log-root",
+            str(log_root),
+            "-c",
+            "run.judge_endpoint=http://gateway.example/api/responses",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["endpoint_target_uri"] == "http://gateway.example/api/responses"
+    assert captured["api_key"] == "gateway-key"

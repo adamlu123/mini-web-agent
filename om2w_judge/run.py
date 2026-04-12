@@ -17,7 +17,7 @@ from om2w_judge.methods.agenttrek_eval import AgentTrek_eval
 from om2w_judge.methods.automomous_eval import Autonomous_eval
 from om2w_judge.methods.webjudge_general_eval import WebJudge_general_eval
 from om2w_judge.methods.webjudge_online_mind2web import WebJudge_Online_Mind2Web_eval
-from om2w_judge.methods.webjudge_online_mind2web_sandbox import (
+from om2w_judge.methods.webjudge_online_mind2web_sandbox_latest_run import (
     WebJudge_Online_Mind2Web_Sandbox_eval,
     WebJudge_Online_Mind2Web_Sandbox_WithThoughts_eval,
     WebJudge_Online_Mind2Web_Sandbox_ThoughtsOnly_eval,
@@ -26,7 +26,8 @@ from om2w_judge.methods.webvoyager_eval import WebVoyager_eval
 from om2w_judge.utils import OpenaiEngine, extract_predication
 
 
-FINAL_SCRIPT_ACTION_RE = re.compile(r"^\s*step\s+\d+\s+action:\s*.+\s*$", re.IGNORECASE)
+FINAL_SCRIPT_ACTION_RE = re.compile(r"^\s*step\s+\d+(?:\s+action)?\s*:\s*.+\s*$", re.IGNORECASE)
+FINAL_RUN_DIR_RE = re.compile(r"^run_(\d+)$", re.IGNORECASE)
 
 
 def final_execution_sort_key(filename):
@@ -45,8 +46,70 @@ def screenshot_creation_time_sort_key(path):
     return (created_ns, os.path.basename(path))
 
 
+def resolve_latest_final_run_dir(task_dir: str | Path) -> Path | None:
+    final_runs_dir = Path(task_dir) / "final_runs"
+    if not final_runs_dir.is_dir():
+        return None
+
+    candidates: list[tuple[int, str, Path]] = []
+    for path in final_runs_dir.iterdir():
+        if not path.is_dir():
+            continue
+        match = FINAL_RUN_DIR_RE.fullmatch(path.name)
+        if not match:
+            continue
+        log_path = path / "final_script_log.txt"
+        screenshots_dir = path / "screenshots"
+        if not log_path.exists() and not screenshots_dir.is_dir():
+            continue
+        candidates.append((int(match.group(1)), path.name, path))
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda item: (item[0], item[1]))
+    return candidates[-1][2]
+
+
+def resolve_sandbox_artifact_dir(task_dir: str | Path) -> Path:
+    return resolve_latest_final_run_dir(task_dir) or Path(task_dir)
+
+
+def _sandbox_log_path(task_dir: str | Path) -> Path:
+    return resolve_sandbox_artifact_dir(task_dir) / "final_script_log.txt"
+
+
+def _sandbox_screenshots_dir(task_dir: str | Path) -> Path:
+    return resolve_sandbox_artifact_dir(task_dir) / "screenshots"
+
+
+def _load_sandbox_screenshot_paths(task_dir: str | Path, *, sort_by_creation: bool = False) -> list[str]:
+    screenshots_dir = _sandbox_screenshots_dir(task_dir)
+    if not screenshots_dir.is_dir():
+        return []
+
+    if sort_by_creation:
+        paths = sorted(
+            [
+                screenshots_dir / name
+                for name in os.listdir(screenshots_dir)
+                if re.fullmatch(r"final_execution_.*\.png", name)
+            ],
+            key=screenshot_creation_time_sort_key,
+        )
+    else:
+        paths = [
+            screenshots_dir / name
+            for name in sorted(
+                [name for name in os.listdir(screenshots_dir) if re.fullmatch(r"final_execution_.*\.png", name)],
+                key=final_execution_sort_key,
+            )
+        ]
+    return [str(path) for path in paths]
+
+
 def load_final_script_action_history(task_dir: str | Path) -> list[str]:
-    log_path = Path(task_dir) / "final_script_log.txt"
+    log_path = _sandbox_log_path(task_dir)
     if not log_path.exists():
         return []
 
@@ -104,6 +167,9 @@ def auto_eval(args, task_subset, final_predicted_labels, lock, model):
             if "input_image_paths" in result:
                 input_image_paths = result["input_image_paths"]
 
+        artifact_dir = resolve_sandbox_artifact_dir(task_dir)
+        output_results["final_artifact_dir"] = str(artifact_dir)
+
         final_script_actions = load_final_script_action_history(task_dir)
         if final_script_actions:
             action_history = final_script_actions
@@ -132,13 +198,7 @@ def auto_eval(args, task_subset, final_predicted_labels, lock, model):
             output_results["image_judge_record"] = record
             output_results["key_points"] = key_points
         elif args.mode == "WebJudge_Online_Mind2Web_Sandbox_eval":
-            screenshots_dir = os.path.join(args.trajectories_dir, task_id, "screenshots")
-            if os.path.isdir(screenshots_dir):
-                for image in sorted(
-                    [name for name in os.listdir(screenshots_dir) if re.fullmatch(r"final_execution_.*\.png", name)],
-                    key=final_execution_sort_key,
-                ):
-                    screenshot_paths.append(os.path.join(screenshots_dir, image))
+            screenshot_paths = _load_sandbox_screenshot_paths(task_dir)
             messages, text, system_msg, record, key_points = asyncio.run(
                 WebJudge_Online_Mind2Web_Sandbox_eval(
                     task_description,
@@ -148,20 +208,11 @@ def auto_eval(args, task_subset, final_predicted_labels, lock, model):
                     model,
                     args.score_threshold,
                 )
-                )
+            )
             output_results["image_judge_record"] = record
             output_results["key_points"] = key_points
         elif args.mode == "WebJudge_Online_Mind2Web_Sandbox_eval_ctime":
-            screenshots_dir = os.path.join(args.trajectories_dir, task_id, "screenshots")
-            if os.path.isdir(screenshots_dir):
-                screenshot_paths = sorted(
-                    [
-                        os.path.join(screenshots_dir, name)
-                        for name in os.listdir(screenshots_dir)
-                        if re.fullmatch(r"final_execution_.*\.png", name)
-                    ],
-                    key=screenshot_creation_time_sort_key,
-                )
+            screenshot_paths = _load_sandbox_screenshot_paths(task_dir, sort_by_creation=True)
             messages, text, system_msg, record, key_points = asyncio.run(
                 WebJudge_Online_Mind2Web_Sandbox_eval(
                     task_description,
@@ -175,16 +226,7 @@ def auto_eval(args, task_subset, final_predicted_labels, lock, model):
             output_results["image_judge_record"] = record
             output_results["key_points"] = key_points
         elif args.mode == "WebJudge_Online_Mind2Web_Sandbox_WithThoughts_eval":
-            screenshots_dir = os.path.join(args.trajectories_dir, task_id, "screenshots")
-            if os.path.isdir(screenshots_dir):
-                screenshot_paths = sorted(
-                    [
-                        os.path.join(screenshots_dir, name)
-                        for name in os.listdir(screenshots_dir)
-                        if re.fullmatch(r"final_execution_.*\.png", name)
-                    ],
-                    key=screenshot_creation_time_sort_key,
-                )
+            screenshot_paths = _load_sandbox_screenshot_paths(task_dir, sort_by_creation=True)
             messages, text, system_msg, record, key_points = asyncio.run(
                 WebJudge_Online_Mind2Web_Sandbox_WithThoughts_eval(
                     task_description,
@@ -198,16 +240,7 @@ def auto_eval(args, task_subset, final_predicted_labels, lock, model):
             output_results["image_judge_record"] = record
             output_results["key_points"] = key_points
         elif args.mode == "WebJudge_Online_Mind2Web_Sandbox_ThoughtsOnly_eval":
-            screenshots_dir = os.path.join(args.trajectories_dir, task_id, "screenshots")
-            if os.path.isdir(screenshots_dir):
-                screenshot_paths = sorted(
-                    [
-                        os.path.join(screenshots_dir, name)
-                        for name in os.listdir(screenshots_dir)
-                        if re.fullmatch(r"final_execution_.*\.png", name)
-                    ],
-                    key=screenshot_creation_time_sort_key,
-                )
+            screenshot_paths = _load_sandbox_screenshot_paths(task_dir, sort_by_creation=True)
             messages, text, system_msg, record, key_points = asyncio.run(
                 WebJudge_Online_Mind2Web_Sandbox_ThoughtsOnly_eval(
                     task_description,
@@ -260,7 +293,11 @@ def auto_eval(args, task_subset, final_predicted_labels, lock, model):
 
 
 def process_subset(task_subset, args, final_predicted_labels, lock):
-    model = OpenaiEngine(model=args.model, api_key=args.api_key)
+    model = OpenaiEngine(
+        model=args.model,
+        api_key=args.api_key,
+        endpoint_target_uri=args.endpoint_target_uri,
+    )
     auto_eval(args, task_subset, final_predicted_labels, lock, model)
 
 
@@ -279,7 +316,11 @@ def parallel_eval(args, num_workers=60):
     task_subsets = [task_dirs[i::num_workers] for i in range(num_workers)]
     task_subsets = [subset for subset in task_subsets if subset]
 
-    model = OpenaiEngine(model=args.model, api_key=args.api_key)
+    model = OpenaiEngine(
+        model=args.model,
+        api_key=args.api_key,
+        endpoint_target_uri=args.endpoint_target_uri,
+    )
 
     if num_workers <= 1:
         lock = threading.Lock()
@@ -314,6 +355,14 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, default="gpt-4o")
     parser.add_argument("--trajectories_dir", type=str, required=True, help="Path to trajectories directory")
     parser.add_argument("--api_key", type=str, required=True, help="The api key")
+    parser.add_argument(
+        "--endpoint_target_uri",
+        "--endpoint-target-uri",
+        dest="endpoint_target_uri",
+        type=str,
+        default="",
+        help="Optional gateway responses API endpoint.",
+    )
     parser.add_argument("--output_path", type=str, required=True, help="The output path")
     parser.add_argument("--score_threshold", type=int, default=3)
     parser.add_argument("--num_worker", type=int, default=60)

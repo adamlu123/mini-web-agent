@@ -31,14 +31,28 @@ def _sanitize_message_for_disk(message: dict[str, Any]) -> dict[str, Any]:
     return cloned
 
 
-def _observation_for_markdown(observation: dict[str, Any]) -> dict[str, Any]:
+def _observation_for_markdown(observation: dict[str, Any], *, model_usage: dict[str, Any] | None = None) -> dict[str, Any]:
     cloned = copy.deepcopy(observation)
     cloned.pop("aria_snapshot", None)
+    if model_usage:
+        cloned["model_usage"] = copy.deepcopy(model_usage)
     return cloned
 
 
 def _action_text(action: dict[str, Any]) -> str:
     return str(action.get("bash_command") or action.get("command") or action.get("python_code") or "").strip()
+
+
+def _python_action_text(action: dict[str, Any]) -> str:
+    return str(action.get("python_code") or "").strip()
+
+
+def _markdown_code_fence_language(*, bash_command_text: str, python_code_text: str) -> str:
+    if bash_command_text:
+        return "bash"
+    if python_code_text:
+        return "python"
+    return ""
 
 
 class DefaultAgent:
@@ -74,13 +88,24 @@ class DefaultAgent:
         extra = assistant_message.get("extra", {})
         actions = extra.get("actions", [])
         action_text = "\n\n".join(_action_text(action) for action in actions if _action_text(action))
+        python_code_text = "\n\n".join(
+            _python_action_text(action) for action in actions if _python_action_text(action)
+        )
+        bash_command_text = "\n\n".join(
+            str(action.get("bash_command", "")).strip()
+            for action in actions
+            if str(action.get("bash_command", "")).strip()
+        )
+        code_fence_language = _markdown_code_fence_language(
+            bash_command_text=bash_command_text,
+            python_code_text=python_code_text,
+        )
         payload = {
             "step": step_index,
             "thought": assistant_message.get("content", ""),
-            "python_code": action_text,
-            "bash_command": "\n\n".join(
-                str(action.get("bash_command", "")).strip() for action in actions if str(action.get("bash_command", "")).strip()
-            ),
+            "python_code": python_code_text,
+            "bash_command": bash_command_text,
+            "command_text": action_text,
             "raw_response": extra.get("raw_response", {}),
             "done": extra.get("done", False),
             "final_response": extra.get("final_response", ""),
@@ -94,12 +119,15 @@ class DefaultAgent:
             handle.write("### Thought\n\n")
             handle.write(f"{payload['thought']}\n\n")
             handle.write("### Generated Code\n\n")
-            handle.write("```python\n")
-            handle.write(f"{payload['python_code']}\n")
+            handle.write(f"```{code_fence_language}\n")
+            handle.write(f"{payload['command_text']}\n")
             handle.write("```\n\n")
             if outputs:
                 observation = outputs[0].get("observation", {})
-                markdown_observation = _observation_for_markdown(observation)
+                markdown_observation = _observation_for_markdown(
+                    observation,
+                    model_usage=extra.get("usage"),
+                )
                 handle.write("### Observation\n\n")
                 handle.write("```json\n")
                 handle.write(f"{json.dumps(markdown_observation, indent=2)}\n")

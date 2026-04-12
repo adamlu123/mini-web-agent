@@ -248,6 +248,7 @@ pwd
     assert message["content"] == "Inspect files"
     assert message["extra"]["actions"] == [{"bash_command": "pwd", "command": "pwd"}]
     assert message["extra"]["done"] is False
+    assert message["extra"]["usage"]["last_response"]["input_tokens"] == 0
 
 
 def test_phyagi_model_query_raises_format_error_for_bad_xml(monkeypatch) -> None:
@@ -479,6 +480,12 @@ pwd
     assert template_vars["last_request_reasoning_output_tokens"] == 11
     assert template_vars["cumulative_input_tokens"] == 123
     assert template_vars["cumulative_output_tokens"] == 45
+    usage_snapshot = model._usage_snapshot()
+    assert usage_snapshot["last_request"]["input_tokens"] == 123
+    assert usage_snapshot["last_request"]["cached_input_tokens"] == 7
+    assert "text_chars" not in usage_snapshot["last_request"]
+    assert usage_snapshot["cumulative_request"]["input_tokens"] == 123
+    assert usage_snapshot["last_response"]["input_tokens"] == 123
 
 
 def test_phyagi_model_query_uses_zero_usage_when_gateway_omits_usage(monkeypatch) -> None:
@@ -535,6 +542,10 @@ pwd
     assert template_vars["cumulative_input_tokens"] == 0
     assert template_vars["last_request_text_chars"] == 4
     assert template_vars["cumulative_request_text_chars"] == 4
+    usage_snapshot = model._usage_snapshot()
+    assert usage_snapshot["last_request"]["input_tokens"] == 0
+    assert usage_snapshot["cumulative_request"]["input_tokens"] == 0
+    assert "text_chars" not in usage_snapshot["last_request"]
 
 
 def test_serialize_response_input_uses_output_text_for_assistant_messages() -> None:

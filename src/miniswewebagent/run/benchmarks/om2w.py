@@ -72,6 +72,16 @@ def _read_eval_rows(result_file: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def _resolve_judge_api_key(*, endpoint_target_uri: str) -> str:
+    if endpoint_target_uri:
+        return (
+            os.environ.get("OPENAI_GATEWAY_API_KEY", "")
+            or os.environ.get("PHYAGI_API_KEY", "")
+            or os.environ.get("OPENAI_API_KEY", "")
+        )
+    return os.environ.get("OPENAI_API_KEY", "")
+
+
 def _run_task_worker(
     *,
     task: dict[str, object],
@@ -135,6 +145,11 @@ def main(
     judge_num_proc: int = typer.Option(0, "--judge-num-proc", help="Judge worker processes. Defaults from config."),
     judge_python: Path | None = typer.Option(None, "--judge-python", help="Python executable for Online-Mind2Web judge."),
     judge_script: Path | None = typer.Option(None, "--judge-script", help="Path to Online-Mind2Web src/run.py."),
+    judge_endpoint: str | None = typer.Option(
+        None,
+        "--judge-endpoint",
+        help="Judge responses API endpoint. Defaults to official OpenAI when unset.",
+    ),
     log_root: Path | None = typer.Option(None, "--log-root", help="Directory for batch logs."),
     config_spec: list[str] = typer.Option(DEFAULT_OM2W_CONFIGS, "-c", "--config"),
     output_dir: Path | None = typer.Option(None, "-o", "--output-dir", help="Batch output root directory."),
@@ -157,6 +172,7 @@ def main(
     resolved_judge_num_proc = max(1, int(judge_num_proc or run_config.get("judge_num_proc") or resolved_workers))
     resolved_judge_python = Path(judge_python or run_config.get("judge_python") or DEFAULT_JUDGE_PYTHON)
     resolved_judge_script = Path(judge_script or run_config.get("judge_script") or DEFAULT_JUDGE_SCRIPT)
+    resolved_judge_endpoint = str(judge_endpoint or run_config.get("judge_endpoint") or "")
     resolved_log_root = Path(log_root or run_config.get("logs_root") or DEFAULT_LOG_ROOT).expanduser()
 
     tasks = _select_tasks(
@@ -191,6 +207,7 @@ def main(
     _write_batch_log_line(batch_log_path, f"tasks_file={resolved_tasks_file}")
     _write_batch_log_line(batch_log_path, f"task_level={resolved_task_level or '<all>'}")
     _write_batch_log_line(batch_log_path, f"workers={resolved_workers}")
+    _write_batch_log_line(batch_log_path, f"judge_endpoint={resolved_judge_endpoint or '<openai>'}")
     _write_batch_log_line(batch_log_path, f"output_dir={batch_output_dir}")
     _write_batch_log_line(batch_log_path, f"config_snapshot_dir={config_snapshot_dir}")
 
@@ -248,11 +265,16 @@ def main(
         "judge_enabled": resolved_evaluate,
         "judge_model": resolved_judge_model,
         "judge_num_proc": resolved_judge_num_proc,
+        "judge_endpoint": resolved_judge_endpoint,
     }
 
     if resolved_evaluate:
-        api_key = os.environ.get("OPENAI_API_KEY", "")
+        api_key = _resolve_judge_api_key(endpoint_target_uri=resolved_judge_endpoint)
         if not api_key:
+            if resolved_judge_endpoint:
+                raise RuntimeError(
+                    "OPENAI_GATEWAY_API_KEY, PHYAGI_API_KEY, or OPENAI_API_KEY is required to run the Online-Mind2Web judge with a gateway endpoint."
+                )
             raise RuntimeError("OPENAI_API_KEY is required to run the Online-Mind2Web judge.")
         eval_output_dir = batch_output_dir.parent / f"{batch_output_dir.name}_eval"
         completed = run_online_mind2web_judge(
@@ -263,6 +285,7 @@ def main(
             judge_model=resolved_judge_model,
             num_proc=resolved_judge_num_proc,
             api_key=api_key,
+            endpoint_target_uri=resolved_judge_endpoint,
             log_path=judge_log_path,
         )
         result_file = eval_output_dir / (

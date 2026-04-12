@@ -57,6 +57,13 @@ await page.wait_for_load_state('domcontentloaded')
             """.strip()
 
         response = {
+            "usage": {
+                "input_tokens": 17,
+                "input_tokens_details": {"cached_tokens": 0},
+                "output_tokens": 9,
+                "output_tokens_details": {"reasoning_tokens": 0},
+                "total_tokens": 26,
+            },
             "output": [
                 {
                     "type": "message",
@@ -110,6 +117,10 @@ def test_run_one_completes_live_page_task_with_fake_gateway(tmp_path) -> None:
     steps_md_text = steps_md.read_text(encoding="utf-8")
     assert '"console_output"' in steps_md_text
     assert '"recent_console"' in steps_md_text
+    assert '"model_usage"' in steps_md_text
+    assert '"input_tokens": 17' in steps_md_text
+    assert '"text_chars"' not in steps_md_text
+    assert '"serialized_chars"' not in steps_md_text
     assert '"aria_snapshot"' not in steps_md_text
     assert (run_dir / "config_snapshot" / "config_spec_manifest.json").exists()
     assert (run_dir / "config_snapshot" / "merged_config.yaml").exists()
@@ -231,6 +242,67 @@ def test_default_agent_does_not_count_format_errors_toward_step_limit() -> None:
     assert result["final_response"] == "ok"
     assert agent.n_calls == 1
     assert agent.n_format_errors == 3
+
+
+def test_debug_steps_markdown_uses_bash_fence_for_bash_actions(tmp_path) -> None:
+    from miniswewebagent.agents.default import DefaultAgent
+
+    class DummyModel:
+        def get_template_vars(self, **kwargs):
+            return {}
+
+        def format_message(self, **kwargs):
+            return {
+                "role": kwargs["role"],
+                "content": kwargs.get("content", ""),
+                "extra": kwargs.get("extra", {}),
+            }
+
+        def query(self, messages, **kwargs):
+            raise AssertionError("query should not be called in this test")
+
+        def format_observation_messages(self, message, outputs, template_vars=None):
+            return []
+
+        def serialize(self):
+            return {}
+
+    class DummyEnv:
+        def get_template_vars(self, **kwargs):
+            return {}
+
+        def execute(self, action, cwd=""):
+            return {}
+
+        def serialize(self):
+            return {}
+
+    output_path = tmp_path / "run" / "result.json"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    agent = DefaultAgent(
+        DummyModel(),
+        DummyEnv(),
+        system_template="x",
+        instance_template="y",
+        output_path=output_path,
+    )
+
+    assistant_message = {
+        "role": "assistant",
+        "content": "inspect files",
+        "extra": {
+            "actions": [{"bash_command": "ls -la", "command": "ls -la"}],
+            "done": False,
+            "final_response": "",
+            "raw_response": {},
+        },
+    }
+
+    agent._write_debug_step_artifact(step_index=1, assistant_message=assistant_message, outputs=[])
+
+    steps_md = output_path.parent / "debug" / "steps.md"
+    steps_md_text = steps_md.read_text(encoding="utf-8")
+    assert "```bash\nls -la\n```" in steps_md_text
 
 
 def test_run_one_closes_environment_when_prepare_fails(tmp_path, monkeypatch) -> None:

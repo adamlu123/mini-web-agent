@@ -71,11 +71,12 @@ async function fetchJson(url) {
   const response = await fetch(url);
   if (!response.ok) {
     let message = response.statusText;
+    const bodyText = await response.text();
     try {
-      const payload = await response.json();
+      const payload = JSON.parse(bodyText);
       message = payload.error || message;
     } catch {
-      message = await response.text();
+      message = bodyText || message;
     }
     throw new Error(message);
   }

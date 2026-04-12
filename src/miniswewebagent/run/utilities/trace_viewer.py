@@ -124,7 +124,12 @@ def _build_step_detail(task_dir: Path, step_index: int, step_payload: dict[str, 
         "index": step_index,
         "step": int(step_payload.get("step") or step_index + 1),
         "thought": str(step_payload.get("thought") or "").strip(),
-        "action": str(step_payload.get("python_code") or "").strip(),
+        "action": str(
+            step_payload.get("command_text")
+            or step_payload.get("bash_command")
+            or step_payload.get("python_code")
+            or ""
+        ).strip(),
         "done": bool(step_payload.get("done")),
         "finalResponse": str(step_payload.get("final_response") or "").strip(),
         "url": str(observation.get("url") or ""),
