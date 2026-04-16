@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import inspect
 import json
 import os
@@ -8,6 +9,7 @@ import re
 import textwrap
 import time
 import traceback
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Any
 
@@ -54,6 +56,8 @@ class LocalBrowserEnvironment:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._console_history: list[str] = []
         self._step_console: list[str] = []
+        self._step_python_code = ""
+        self._step_python_output = ""
         self._step_index = 0
         self._prepared_task: dict[str, Any] = {}
         self._browserbase_session: dict[str, Any] | None = None
@@ -542,7 +546,9 @@ class LocalBrowserEnvironment:
         await self.wait_for_captcha_resolution()
         self._step_index += 1
         self._step_console = []
+        self._step_python_output = ""
         python_code = action.get("python_code", "")
+        self._step_python_code = python_code
         self._persist_step_code(python_code)
 
         success = True
@@ -588,6 +594,7 @@ class LocalBrowserEnvironment:
             handle.write("\n")
 
     async def _run_python_code(self, python_code: str) -> None:
+        buf = io.StringIO()
         globals_dict: dict[str, Any] = {
             "asyncio": asyncio,
             "json": json,
@@ -596,16 +603,20 @@ class LocalBrowserEnvironment:
         locals_dict: dict[str, Any] = {}
         wrapped = "async def __agent_step__(page, context, browser, playwright, task):\n"
         wrapped += textwrap.indent(python_code, "    ")
-        exec(wrapped, globals_dict, locals_dict)
-        result = locals_dict["__agent_step__"](
-            self._page,
-            self._context,
-            self._browser,
-            self._playwright,
-            self._prepared_task,
-        )
-        if inspect.isawaitable(result):
-            await result
+        try:
+            with redirect_stdout(buf), redirect_stderr(buf):
+                exec(wrapped, globals_dict, locals_dict)
+                result = locals_dict["__agent_step__"](
+                    self._page,
+                    self._context,
+                    self._browser,
+                    self._playwright,
+                    self._prepared_task,
+                )
+                if inspect.isawaitable(result):
+                    await result
+        finally:
+            self._step_python_output = buf.getvalue().strip()
 
     async def _capture_observation(self, *, success: bool, exception_text: str) -> dict[str, Any]:
         screenshot_path: Path | None = self.config.output_dir / "screenshots" / f"step_{self._step_index:04d}.png"
@@ -663,6 +674,8 @@ class LocalBrowserEnvironment:
             "title": title,
             "screenshot_path": str(screenshot_path) if screenshot_path is not None else "",
             "aria_snapshot": aria_snapshot,
+            "python_code": self._step_python_code,
+            "python_output": self._step_python_output,
             "console_output": "\n".join(self._step_console[-20:]),
             "recent_console": "\n".join(self._console_history[-50:]),
         }

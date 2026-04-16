@@ -8,29 +8,13 @@ model:
     Working directory: {{ observation.cwd }}
     Command: {{ observation.command }}
     Return code: {{ observation.returncode }}
+    Cumulative total tokens: {{ cumulative_total_tokens }}
     {% if observation.exception %}Exception:
     {{ observation.exception }}
     {% endif %}{% if observation.command_output %}Command output:
     {{ observation.command_output }}
     {% endif %}{% if observation.final_script_path %}final_script.py: {{ observation.final_script_path }}
     {% endif %}
-  format_error_template: |
-    Format error:
-
-    {{ error }}
-
-    Please respond using exactly this XML structure:
-    <response>
-      <thought>...</thought>
-      <bash_command><![CDATA[
-    ...exactly one bash command...
-    ]]></bash_command>
-      <done>false</done>
-      <final_response></final_response>
-    </response>
-
-    Return XML only. Do not include markdown fences or any prose before or after the `<response>` block.
-
 
 agent:
   attach_instance_template_after_observation: False
@@ -129,7 +113,7 @@ agent:
 
           await page.goto("{{ start_url }}", wait_until="domcontentloaded")
           record(1, "open_start_page")
-          await page.screenshot(path=str(SCREENSHOTS / "final_execution_1_open_start_page.png"), full_page=True)
+          await page.screenshot(path=str(SCREENSHOTS / "final_execution_1_open_start_page.png"))
 
           print("URL:", page.url)
           print("TITLE:", await page.title())
@@ -144,7 +128,7 @@ agent:
           await page.get_by_role("checkbox", name="yyy (name from the aria tree)").check()
           await asyncio.sleep(1)
           record(2, "apply_yyy_filter")
-          await page.screenshot(path=str(SCREENSHOTS / "final_execution_2_apply_yyy_filter.png"), full_page=True)
+          await page.screenshot(path=str(SCREENSHOTS / "final_execution_2_apply_yyy_filter.png"))
 
           print("ARIA:", await page.locator("body").aria_snapshot())
           await browser.close()
@@ -243,7 +227,7 @@ agent:
     - Never emit raw Python, raw shell, or partial code outside the required XML wrapper. If you want to inspect or patch with Python, wrap it inside one bash command.
     - The shell is stateless, which means each command runs independently. Always use Browserbase cloud sessions.
     - Screenshots are not attached automatically; use `image_qa` when visual confirmation matters.
-    - Screenshots are still important, use `full_page=True` by default. 
+    - Screenshots are still important, but avoid `full_page=True` by default. Prefer viewport screenshots or element-level screenshots. Use full-page screenshots only when the evidence truly requires content outside the visible viewport.
     - After a file already exists, prefer incremental edits over rewriting the whole file with a large heredoc each turn.
     - Use stable selectors, current-run evidence, and finish only when `final_script.py` is the final artifact.
     
@@ -285,7 +269,7 @@ agent:
 
     ## Final script format requirements:
     - you should put all your work in Workspace root. For each final validation attempt, create a fresh folder `final_runs/run_<id>/` with an increasing integer ID.
-    - For each critical point/step (applied filters/constraints, opens a drawer, changes sort, submits a form, or performs any interaction relevant to task constraints), final_script.py needs to write to `final_runs/run_<id>/final_script_log.txt, using format: 'step <step_number>: <step reasoning and action description>'. It also needs to take a screenshot of each critical point named as `final_execution_<step_number>_<action>.png`. Use full image screenshot with complete view port for the final run critical points.
+    - For each critical point/step (applied filters/constraints, opens a drawer, changes sort, submits a form, or performs any interaction relevant to task constraints), final_script.py needs to write to `final_runs/run_<id>/final_script_log.txt, using format: 'step <step_number>: <step reasoning and action description>'. It also needs to take a screenshot of each critical point named as `final_execution_<step_number>_<action>.png`. 
     - Make sure to save as more critical points as possible, especially those that show the application of required filters or constraints, and the final result display. The more evidence you save, the higher chance the judge will verify the successful completion of the task.
     It also needs to save the final response of the task in `final_runs/run_<id>/final_script_log.txt` in the end.
 
@@ -308,16 +292,11 @@ agent:
     - final delivery goal should be final_script.py, be as minimal as possible.
 
     ## Completion Gate
-    Submit by: 
-    <response>
-      <done>true</done>
-      <final_response>....</final_response>
-    </response>
-    **only** if all of the following are true:
+    Set `<done>true</done>` **only** if all of the following are true:
       - the final script was rerun from scratch successfully
       - all checklist items in `plan.md` are verified
       - every verified checklist item is backed by native UI evidence from the highest final run
-      - all critical-point screenshots and log exist in `final_runs/run_<id>/` for the highest run ID.
+      - all critical-point screenshots exist
     - final verification used all `final_runs/run_<id>/screenshots/final_execution_<step_number>_<action>.png` images from the highest run ID folder together in one multi-image `image_qa` call
     - the `image_qa` JSON clearly confirms the intended final state
 

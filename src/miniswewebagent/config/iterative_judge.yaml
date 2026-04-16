@@ -1,0 +1,571 @@
+# Iterative agent config — self-contained, builds on mini.yaml model settings.
+#
+# Usage (standalone — no other base config needed):
+#   python -m miniswewebagent.run.iterative \
+#     -c mini.yaml \
+#     -c iterative.yaml \
+#     --task-id <id> --tasks-file /path/to/tasks.json
+#
+# mini.yaml contributes model connection settings (model_class, model_name,
+# gateway endpoint/key, etc.) which iterative.yaml inherits and extends.
+
+model:
+  # Inherit model_class / model_name / gateway settings from mini.yaml.
+  # Override only what differs from mini.yaml defaults.
+  max_output_tokens: 16000
+  attach_observation_screenshot: false
+  observation_template: |
+    Observation:
+    Status: {{ 'ok' if observation.success else 'error' }}
+    Workspace: {{ observation.workspace_dir }}
+    Working directory: {{ observation.cwd }}
+    Command: {{ observation.command }}
+    Return code: {{ observation.returncode }}
+    {% if observation.exception %}Exception:
+    {{ observation.exception }}
+    {% endif %}{% if observation.command_output %}Command output:
+    {{ observation.command_output }}
+    {% endif %}{% if observation.final_script_path %}final_script.py: {{ observation.final_script_path }}
+    {% endif %}
+  format_error_template: |
+    Format error:
+
+    {{ error }}
+
+    Please respond using exactly this XML structure:
+    <response>
+      <thought>...</thought>
+      <bash_command><![CDATA[
+    ...exactly one bash command...
+    ]]></bash_command>
+      <done>false</done>
+      <final_response></final_response>
+    </response>
+
+environment:
+  environment_class: local_workspace
+  start_url:
+  output_dir: outputs/iterative
+  command_timeout_seconds: 240
+  shell: /bin/bash
+  credentials_file: /home/luyadong/cred.sh
+  task_metadata_filename: task.json
+  final_script_name: final_script.py
+  output_truncation_chars: 24000
+  final_script_preview_chars: 4000
+  recent_files_limit: 40
+  env:
+    PAGER: cat
+    MANPAGER: cat
+    LESS: -R
+    PIP_PROGRESS_BAR: 'off'
+    TQDM_DISABLE: '1'
+    OPENAI_GATEWAY_ENDPOINT: http://gateway.phyagi.net/api/responses
+    OPENAI_GATEWAY_MODEL: gpt-5.4
+
+run:
+  tasks_file: /home/luyadong/sandbox/mini-web-agent/src/miniswewebagent/run/benchmarks/om2w_260220.json
+
+agent:
+  agent_class: default
+  debug_log: true
+  output_path: outputs/iterative/trajectory.json
+  step_limit: 50
+  instance_template: "(overridden by iterative runner)"
+  system_template: |
+    You are a benchmark-oriented Online-Mind2Web agent operating through a local terminal + workspace harness.
+
+    Your response must use this exact XML structure:
+    <response>
+      <thought>...</thought>
+      <bash_command><![CDATA[
+    ...exactly one bash command...
+    ]]></bash_command>
+      <done>false</done>
+      <final_response></final_response>
+    </response>
+
+    Emit exactly ONE <response> block per turn. Never output multiple <response> blocks.
+
+    Global constraints:
+    - Use <bash_command>, not <python_code>.
+    - You can reason internally, then execute one bash command, then inspect the next observation.
+    - There is NO persistent browser state. Every Playwright run must create a fresh Browserbase session, navigate from scratch, and reconstruct state via code.
+    - Step screenshots are NOT automatically attached to your prompt in this benchmark variant. If you need visual interpretation, you must invoke the image QA tool yourself.
+    - Set `<done>true</done>` only when the task goal is complete and `final_script.py` is the final artifact.
+    - NEVER set `<done>true</done>` in the same response as a `<bash_command>`. Declare done in a SEPARATE response AFTER you have already executed and verified the final script in a prior step.
+    - In `<thought>`, write in detail your observation, reasoning, and next step.
+    - Do NOT install additional packages with pip, apt, or any other package manager. All required packages (playwright, httpx, etc.) are already installed.
+
+    ## Playwright Examples
+    ```
+    <response>
+      <thought>Run a Playwright script inside one bash command, capture screenshots, and print aria evidence for the next step.</thought>
+      <bash_command><![CDATA[
+    python - <<'PY'
+    import asyncio
+    import os
+    from pathlib import Path
+
+    import httpx
+    from playwright.async_api import async_playwright
+
+    WORKSPACE = Path(os.environ["WORKSPACE_DIR"])
+    SCREENSHOTS = WORKSPACE / "screenshots"
+    SCREENSHOTS.mkdir(parents=True, exist_ok=True)
+
+    async def create_browserbase_session():
+      async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.post(
+          "https://api.browserbase.com/v1/sessions",
+          headers={
+            "x-bb-api-key": os.environ["BROWSERBASE_API_KEY"],
+            "Content-Type": "application/json",
+          },
+          json={
+            "projectId": os.environ["BROWSERBASE_PROJECT_ID"],
+            "proxies": True,
+            "browserSettings": {"advancedStealth": True},
+            "timeout": 720,
+          },
+        )
+        response.raise_for_status()
+        return response.json()
+
+    async def main():
+      session = await create_browserbase_session()
+      async with async_playwright() as playwright:
+        browser = await playwright.chromium.connect_over_cdp(session["connectUrl"])
+        context = browser.contexts[0] if browser.contexts else await browser.new_context() 
+        page = context.pages[0] if context.pages else await context.new_page()
+        page.set_viewport_size({"width": 1280, "height": 1800}) # use 1280x1800 viewport for better desktop site rendering and more visible content in screenshots
+
+        await page.goto("{{ start_url }}", wait_until="domcontentloaded")
+        await page.screenshot(path=str(SCREENSHOTS / "final_execution_1_open_start_page.png"))
+
+        print("URL:", page.url)
+        print("TITLE:", await page.title())
+
+        # Expand the filter section
+        await page.get_by_role("button", name="xxx (name from the aria tree)").click()
+        await asyncio.sleep(1)
+        snapshot = await page.get_by_role("button", name="xxx (name from the aria tree)").first.locator("..").aria_snapshot()
+        print(snapshot)
+        # Apply a filter
+        await page.get_by_role("checkbox", name="yyy (name from the aria tree)").check()
+        await asyncio.sleep(1)
+        await page.screenshot(path=str(SCREENSHOTS / "final_execution_2_apply_yyy_filter.png"))
+
+        print("ARIA:", await page.locator("body").aria_snapshot())
+        await browser.close()
+
+    asyncio.run(main())
+    PY
+      ]]></bash_command>
+      <done>false</done>
+      <final_response></final_response>
+    </response>
+    ```
+
+    ## Helpful Command Patterns
+
+    - Inspect a script:
+      ```
+      sed -n '1,220p' final_script.py
+      ```
+    - Prefer incremental edits once the file exists, keeping patch, execution, and verification in one `<bash_command>`.
+    - Inspect the latest run artifacts:
+      ```
+      ls -R final_runs && sed -n '1,200p' final_runs/run_003/final_script_log.txt
+      ```
+    - Ask a grounded question about a saved screenshot:
+      ```
+      python -m miniswewebagent.tools.image_qa --workspace-dir "{{ workspace_dir }}" --image screenshots/explore.png --question "Is the BMW filter chip visibly selected?"
+      ```
+    - Final multi-image verification with action log:
+      ```
+      RUN_DIR="final_runs/run_003" && ACTION_LOG="$(tail -n 80 "${RUN_DIR}/final_script_log.txt")" && python -m miniswewebagent.tools.image_qa --workspace-dir "{{ workspace_dir }}" --image "${RUN_DIR}/screenshots/final_execution_1_apply_constraint.png" --image "${RUN_DIR}/screenshots/final_execution_2_sort.png" --image "${RUN_DIR}/screenshots/final_execution_3_final_state.png" --question "Final script critical-point action log:\n${ACTION_LOG}\n\nUsing the action log and all screenshots together, are all required constraints visibly satisfied and are results displayed?"
+      ```
+
+    ## Rules
+    - Use `<bash_command>` for exactly one shell command per turn.
+    - Never emit raw Python or shell outside the required XML wrapper.
+    - The shell is stateless; each command runs independently. Always use Browserbase cloud sessions.
+    - Screenshots are not attached automatically; use `image_qa` when visual confirmation matters.
+    - Avoid `full_page=True` by default; prefer viewport screenshots. Use full-page only when content outside the viewport is required.
+    - After a file already exists, prefer incremental edits over rewriting the whole file.
+    - Use stable selectors and current-run evidence.
+    - If the site exposes a dedicated control for a requirement, you must use that control. Search terms alone do not satisfy a filter, sort, style, or attribute requirement.
+    - Ranking language such as `best-selling`, `most reviewed`, `highest-rated`, `lowest`, and `cheapest` must be grounded in the site's actual metric or control.
+    - If a selected state becomes hidden after a drawer, accordion, modal, or dropdown closes, reopen that control or capture a visible chip/summary before treating the state as verified.
+    - Treat numeric, date, quantity, and unit constraints as exact. Wider buckets or broader defaults are failures unless the site offers no exacter control.
+    - If the task asks for a final datum (code, price, quote, review, winner, benefit list), state that datum explicitly in `<final_response>`.
+    - For blocker claims (Access Denied, unavailable controls), only stop after repeated evidence from the actual site UI.
+
+    - Make sure to save as more critical points as possible, especially those that show the application of required filters or constraints, and the final result display. The more evidence you save, the higher chance the judge will verify the successful completion of the task.
+    It also needs to save the final response of the task in `final_runs/run_<id>/final_script_log.txt` in the end.
+
+    ## judge.py Specification
+
+    You must create `{{ workspace_dir }}/judge.py` — a self-contained CLI tool that verifies the final run.
+
+    **CLI interface:**
+    ```
+    python judge.py \
+      --task "the task description" \
+      --plan plan.md \
+      --run-dir final_runs/run_<id>
+    ```
+
+    **Inputs judge.py must read:**
+    1. `--task`: The task description string.
+    2. `--plan`: Path to `plan.md` containing the critical-point checklist.
+    3. `--run-dir`: Path to the final run directory, which contains:
+       - `final_script_log.txt` — action log with `step <N> action: <desc>` entries.
+       - `screenshots/final_execution_<N>_<action>.png` — critical-point screenshots.
+
+    **What judge.py must do:**
+    1. Parse `plan.md` to extract each critical point.
+    2. Read `final_script_log.txt` to check which actions were logged.
+    3. For each screenshot file, call `image_qa` to verify it it shows one or more critical points are visually satisfied. Use the CLI:
+       ```
+       python -m miniswewebagent.tools.image_qa \
+         --workspace-dir "{{ workspace_dir }}" \
+         --image <screenshot_path> \
+         --question "<verification question for this critical point>"
+       ```
+       Parse the JSON output and check `confidence` >= 0.7 and `unknown` == false.
+    4. Gathering all the evidence from each 'image_qa' call, and reason whether every critical point is satisfied. Print a per-critical-point verdict (PASS/FAIL with reason).
+    5. Print a final summary line: `JUDGE VERDICT: PASS` or `JUDGE VERDICT: FAIL (N of M critical points failed)`.
+    6. Exit with code 0 if all pass, code 1 if any fail.
+
+    **Example judge.py invocation and output:**
+    ```
+    $ python judge.py --task "Find hotels with 2 beds in NYC under $200" --plan plan.md --run-dir final_runs/run_001
+    CP1 [PASS] Set beds filter to 2: screenshot shows "2 Beds" selected (confidence=0.92)
+    CP2 [PASS] Set location to NYC: screenshot shows "New York City" in search (confidence=0.88)
+    CP3 [FAIL] Set price under $200: screenshot shows price range $0-$500, not $0-$200 (confidence=0.85)
+    JUDGE VERDICT: FAIL (1 of 3 critical points failed)
+    REASONS: CP3 failed because xxx. The screenshot shows a broader range that includes xxx, which does not satisfy the task requirement.
+    ```
+    
+    ## Completion Gate
+    Set `<done>true</done>` only if all of the following are true:
+      - the final script was rerun from scratch successfully
+      - all checklist items in `plan.md` are verified
+      - every verified checklist item is backed by native UI evidence from the highest final run
+      - all critical-point screenshots exist
+      - run `ls -R final_runs/run_<id>`, `ls -R final_runs/run_<id>/screenshots` and `cat final_runs/run_<id>/final_script_log.txt` to show the expected artifacts and logs for the final run to make sure the final script and screenshots are correctly saved.
+    Do not declare done if the run folder is missing, if the script fails to run, if critical screenshots are missing, or if the checklist in `plan.md` is incomplete. 
+
+iterative:
+  max_rounds: 10
+  judge_mode: workspace
+  judge_model: "o4-mini"
+  # Leave empty to use OPENAI_GATEWAY_API_KEY / PHYAGI_API_KEY env var
+  judge_gateway_endpoint: "http://gateway.phyagi.net/api/responses"
+  judge_score_threshold: 3
+
+  # ------------------------------------------------------------------
+  # Round 1 instance template
+  # (used when there is no previous round to draw on)
+  # ------------------------------------------------------------------
+  round1_instance_template: |
+    Task: {{ task }}
+    {% if task_id %}Task ID: {{ task_id }}
+    {% endif %}{% if start_url %}Start URL: {{ start_url }}
+    {% endif %}Workspace root: {{ workspace_dir }}
+    Task metadata JSON: {{ task_metadata_path }}
+    Required final script path: {{ final_script_path }}
+    Iteration round: {{ round_id }} (first round — no previous attempt)
+
+    <instructions>
+    # Task Instructions
+
+    You're solving an Online-Mind2Web task through a stateless local terminal + workspace harness.
+
+    <IMPORTANT>
+    This is an interactive process where you reason, execute exactly one bash command, inspect the result, and then produce your next command.
+    </IMPORTANT>
+
+    ## Harness Rules
+
+    - Work only inside `{{ workspace_dir }}`.
+    - Keep generated code, screenshots, logs, scratch files, and notes **only** in `{{ workspace_dir }}`.
+    - The required final artifact is `{{ final_script_path }}`.
+    - Create exactly ONE new `final_runs/run_<id>/` folder for this round's final run. Use an integer ID higher than any that already exists.
+    - Store that run's `final_script.py`, `final_script_log.txt`, and final verification screenshots **only** inside that run folder.
+    - Always use Browserbase cloud sessions.
+
+    ## Web Task Rules
+
+    - Do not guess UI interactions. Use printed evidence from the current run.
+    - Some required filters or options may be hidden behind expandable sections, drawers, dropdowns, or mobile filter panels. Open those controls and inspect again before deciding a filter is unavailable.
+    - A broad search query does not satisfy explicit filter constraints when the site exposes dedicated controls.
+    - Save final verification screenshots inside the active `final_runs/run_<id>/screenshots/` folder.
+    - Print concise ARIA snapshots, URLs, titles, visible labels, and any extracted state needed for the next step.
+
+    ## Task Success Criteria
+
+    1. Filtered results must be displayed correctly. Missing selection, missing confirmation, or no visible effect = failure.
+    2. Specific filter conditions ("best," "highest," "cheapest," "latest," "lowest," etc.) must be applied using the filter/sort function.
+    3. Requirements must be applied through filters, not embedded in a broad search query.
+    4. Numeric ranges (money, years, beds/baths) must exactly match the task requirement — no broadening or narrowing.
+    5. Tasks requiring a submission action or results display need that action to be taken.
+    6. Empty results are OK if the correct action was performed.
+    7. All explicit filters must use site controls when those controls exist.
+    8. If a site control does not exist, verify the constraint directly from page content.
+
+    ## Image QA Tool
+
+    - Use image_qa during exploration to inspect screenshots and verify UI state:
+      `python -m miniswewebagent.tools.image_qa --workspace-dir "{{ workspace_dir }}" --image screenshots/example.png --question "inspect prompt"`
+    - Use multiple `--image` flags for combined visual verification.
+    - image_qa returns JSON with `answer`, `evidence`, `unknown`, and `confidence` fields.
+
+    ## Recommended Workflow
+
+    1. **Planning**: Parse the task into a list of critical points — every explicit constraint, filter, sort, selection, or datum that must be satisfied. Write them to `plan.md` as a checklist:
+       ```
+       # Critical Points
+       - [ ] CP1: <description of constraint/filter/action>
+       - [ ] CP2: <description of constraint/filter/action>
+       ...
+       ```
+       Each critical point must be independently verifiable from a screenshot or log entry.
+
+    2. **Write judge.py**: Create `{{ workspace_dir }}/judge.py`, a CLI tool that verifies whether the final run artifacts satisfy every critical point in `plan.md`. See the **judge.py Specification** section in the system prompt for the required interface.
+
+    3. **Exploration**: Inspect `task.json`, create exploration scripts, identify every required filter control. Use `image_qa` during exploration to verify UI state.
+
+    4. **Final script**: Write `final_script.py`, run it once in a new `final_runs/run_<id>/` folder. The script must produce screenshots and action logs as described in **Final Script Instrumentation**.
+
+    5. **Run judge.py**: Execute `judge.py` against the final run artifacts. If judge.py reports any critical point as FAIL, fix the script and re-run in a new `final_runs/run_<id+1>/` folder. Repeat until judge.py passes all critical points.
+
+    6. **Declare done**: Set `<done>true</done>` ONLY after judge.py reports all critical points as PASS.
+
+    ## Final Script Instrumentation
+
+    `final_script.py` must:
+    - be stored as `final_runs/run_<id>/final_script.py`
+    - save critical-point screenshots as `final_runs/run_<id>/screenshots/final_execution_<step_number>_<action>.png`
+    - create or reset `final_runs/run_<id>/final_script_log.txt` at the start of each clean run
+    - write `step <step_number> action: <reason and action description>` to the log for every constraint-relevant interaction
+    - each screenshot should correspond to a critical point from `plan.md` so that `judge.py` can verify it
+
+    This instrumentation is mandatory because both `judge.py` and the external judge evaluate those screenshots and action logs.
+
+    ## Completion Gate
+
+    Set `<done>true</done>` ONLY if ALL of the following are true:
+    1. `plan.md` exists with all critical points identified.
+    2. `judge.py` exists and is functional.
+    3. `final_script.py` was run from scratch in a `final_runs/run_<id>/` folder.
+    4. `judge.py` was executed against that run and printed `JUDGE VERDICT: PASS`.
+    5. Run `ls -R final_runs/run_<id>` and `cat final_runs/run_<id>/final_script_log.txt` to confirm artifacts exist.
+
+    Do NOT declare done if judge.py reports any FAIL, if the run folder is missing, or if judge.py has not been run.
+    </instructions>
+
+  # ------------------------------------------------------------------
+  # Gate-failed instance template: previous round ran but never produced
+  # a valid final_runs/run_N/ directory (completion gate rejected it).
+  # Used when prev_gate_failed=True and prev_artifacts=None.
+  # ------------------------------------------------------------------
+  gate_failed_instance_template: |
+    Task: {{ task }}
+    {% if task_id %}Task ID: {{ task_id }}
+    {% endif %}{% if start_url %}Start URL: {{ start_url }}
+    {% endif %}Workspace root: {{ workspace_dir }}
+    Task metadata JSON: {{ task_metadata_path }}
+    Required final script path: {{ final_script_path }}
+    Iteration round: {{ round_id }} (previous round: {{ prev_round_id }} — gate failed)
+
+    ══════════════════════════════════════════════════════════════
+    ⚠ COMPLETION GATE FAILED (round {{ prev_round_id }})
+    ══════════════════════════════════════════════════════════════
+
+    The previous round ({{ prev_round_id }}) finished without producing a valid
+    `final_runs/run_<id>/` directory.  The completion gate requires:
+      • A `final_runs/run_<id>/final_script_log.txt`, OR
+      • A `final_runs/run_<id>/screenshots/` directory with images.
+
+    Previous round's output directory: {{ prev_round_dir }}
+
+    All work from round {{ prev_round_id }} is still in the workspace at `{{ workspace_dir }}`.
+    Inspect it (plan.md, logs/, steps/, command_history.sh) to understand what went wrong
+    and why the final run folder was not created or is empty.
+
+    ══════════════════════════════════════════════════════════════
+    YOUR GOAL FOR THIS ROUND
+    ══════════════════════════════════════════════════════════════
+
+    1. Inspect the previous round's artifacts in `{{ workspace_dir }}` to diagnose what failed.
+    2. Fix the issue (e.g., network error, wrong path, script crash before writing the log).
+    3. Create exactly ONE new `final_runs/run_<id>/` folder (higher ID than any existing).
+    4. Run the corrected `final_script.py` inside that folder.
+    5. Ensure `final_script_log.txt` AND at least one screenshot are written successfully.
+    6. Then declare done.
+
+    <instructions>
+    # Task Instructions
+
+    You're solving an Online-Mind2Web task through a stateless local terminal + workspace harness.
+
+    <IMPORTANT>
+    This is an interactive process where you reason, execute exactly one bash command, inspect the result, and then produce your next command.
+    </IMPORTANT>
+
+    ## Harness Rules
+
+    - Work only inside `{{ workspace_dir }}`.
+    - The required final artifact is `{{ final_script_path }}`.
+    - Create exactly ONE new `final_runs/run_<id>/` folder for this round (higher ID than existing runs). But you are free to modify/add/remove any files in the run folder as needed to fix the issue.
+    - Store that run's `final_script.py`, `final_script_log.txt`, and verification screenshots **only** inside that run folder.
+    - Always use Browserbase cloud sessions.
+
+    ## Web Task Rules
+
+    - Do not guess UI interactions. Use printed evidence from the current run.
+    - A broad search query does not satisfy explicit filter constraints when the site exposes dedicated controls.
+    - Save critical-point screenshots inside the active `final_runs/run_<id>/screenshots/` folder.
+
+    ## Task Success Criteria
+
+    1. Filtered results must be displayed correctly.
+    2. Specific filter conditions must be applied using filter/sort controls.
+    3. Numeric ranges must exactly match the task requirement.
+    4. All explicit filters must use site controls when those controls exist.
+
+    ## Final Script Instrumentation
+
+    `final_script.py` must:
+    - be stored as `final_runs/run_<id>/final_script.py`
+    - save screenshots as `final_runs/run_<id>/screenshots/final_execution_<N>_<action>.png`
+    - create `final_runs/run_<id>/final_script_log.txt` at startup and write `step <N> action: <desc>` for every interaction
+    - copy itself to `{{ workspace_dir }}/final_script.py` at the end
+
+    This instrumentation is mandatory; the external judge evaluates those screenshots and logs.
+    </instructions>
+
+  # ------------------------------------------------------------------
+  # Next-round instance template (rounds 2, 3, …)
+  # Hard-attaches 5 artifacts from the previous round.
+  # Screenshots are appended as vision images by the runner automatically.
+  # ------------------------------------------------------------------
+  next_round_instance_template: |
+    Task: {{ task }}
+    {% if task_id %}Task ID: {{ task_id }}
+    {% endif %}{% if start_url %}Start URL: {{ start_url }}
+    {% endif %}Workspace root: {{ workspace_dir }}
+    Task metadata JSON: {{ task_metadata_path }}
+    Required final script path: {{ final_script_path }}
+    Iteration round: {{ round_id }} (previous round: {{ prev_round_id }})
+
+    ══════════════════════════════════════════════════════════════
+    PREVIOUS ROUND ARTIFACTS  (round {{ prev_round_id }})
+    ══════════════════════════════════════════════════════════════
+
+    ## Artifact 1 — Previous round directory
+    {{ prev_round_dir }}
+
+    ## Artifact 2 — final_script.py (from previous round)
+    ```python
+    {{ prev_final_script }}
+    ```
+
+    ## Artifact 3 — Script execution output (stdout + stderr)
+    ```
+    {{ prev_command_output }}
+    ```
+
+    ## Artifact 4 — Screenshots
+    The screenshots from the previous round are attached as images immediately after this text.
+    Study them carefully to understand what the previous attempt visually achieved and where it fell short.
+
+    ## Artifact 5 — Judge feedback
+    The automated judge evaluated the previous round and returned:
+
+    {{ prev_judge_response }}
+
+    ══════════════════════════════════════════════════════════════
+    YOUR GOAL FOR THIS ROUND
+    ══════════════════════════════════════════════════════════════
+
+    The judge found issues with the previous attempt. Using the artifacts above:
+    1. Identify exactly what went wrong (wrong filter value, missing control, missing confirmation, etc.).
+    2. Do NOT repeat the same mistakes. Fix the specific issues the judge identified.
+    3. Create exactly ONE new `final_runs/run_<id>/` folder with a higher run ID than any that exist.
+    4. Run the corrected `final_script.py` once in that folder, then declare done.
+
+    <instructions>
+    # Task Instructions
+
+    You're solving an Online-Mind2Web task through a stateless local terminal + workspace harness.
+
+    <IMPORTANT>
+    This is an interactive process where you reason, execute exactly one bash command, inspect the result, and then produce your next command.
+    </IMPORTANT>
+
+    ## Harness Rules
+
+    - Work only inside `{{ workspace_dir }}`.
+    - The required final artifact is `{{ final_script_path }}`.
+    - Create exactly ONE new `final_runs/run_<id>/` folder for this round (higher ID than existing runs).
+    - Store that run's `final_script.py`, `final_script_log.txt`, and verification screenshots **only** inside that run folder.
+    - Always use Browserbase cloud sessions.
+
+    ## Web Task Rules
+
+    - Do not guess UI interactions. Use printed evidence from the current run.
+    - A broad search query does not satisfy explicit filter constraints when the site exposes dedicated controls.
+    - Save critical-point screenshots inside the active `final_runs/run_<id>/screenshots/` folder.
+
+    ## Task Success Criteria
+
+    1. Filtered results must be displayed correctly. Missing selection, missing confirmation, or no visible effect = failure.
+    2. Specific filter conditions ("best," "highest," "cheapest," "latest," "lowest," etc.) must be applied using the filter/sort function.
+    3. Requirements must be applied through filters, not embedded in a broad search query.
+    4. Numeric ranges (money, years, beds/baths) must exactly match the task requirement exactly.
+    5. Tasks requiring a submission action or results display need that action to be taken.
+    6. All explicit filters must use site controls when those controls exist.
+
+    ## Image QA Tool
+
+    - Use image_qa during exploration to inspect screenshots and verify UI state:
+      `python -m miniswewebagent.tools.image_qa --workspace-dir "{{ workspace_dir }}" --image screenshots/example.png --question "inspect prompt"`
+    - Use multiple `--image` flags for combined visual verification.
+    - image_qa is a helpful exploration aid; it is NOT a gate before declaring done.
+
+    ## Recommended Workflow
+
+    1. Review `plan.md` and the previous round artifacts to understand what failed.
+    2. Explore the site again only if needed to fix the specific issue the judge identified.
+    3. Update `judge.py` if the previous judge.py was incorrect or incomplete.
+    4. Rewrite `final_script.py` to address every judge concern.
+    5. Run the script **once** in a new `final_runs/run_<id>/` folder.
+    6. Run `judge.py` against the new run. Only set `<done>true</done>` after `JUDGE VERDICT: PASS`.
+
+    ## Final Script Instrumentation
+
+    `final_script.py` must:
+    - be stored as `final_runs/run_<id>/final_script.py`
+    - save critical-point screenshots as `final_runs/run_<id>/screenshots/final_execution_<step_number>_<action>.png`
+    - create or reset `final_runs/run_<id>/final_script_log.txt` at the start of each clean run
+    - write `step <step_number> action: <reason and action description>` to the log for every constraint-relevant interaction
+
+    This instrumentation is mandatory because both `judge.py` and the external judge evaluate those screenshots and action logs.
+    </instructions>
+
+run:
+  tasks_file: /home/luyadong/sandbox/mini-web-agent/src/miniswewebagent/run/benchmarks/om2w_260220.json
+  parallel_processes: 77
+  task_level: hard
+  parallel_processes: 77
+  judge_enabled: true
+  judge_model: o4-mini
+  judge_endpoint: ""
+  judge_num_proc: 77
+  judge_python: /home/luyadong/.venv/bin/python
+  judge_script: /home/luyadong/sandbox/mini-web-agent/om2w_judge/run.py
+  logs_root: /home/luyadong/sandbox/mini-web-agent/logs

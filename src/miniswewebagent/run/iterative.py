@@ -1,3 +1,16 @@
+"""Iterative agent CLI entry point.
+
+Usage:
+    python -m miniswewebagent.run.iterative \\
+        -c benchmark/om2w_hard_local_workspace_image_qa_flog_run_folders.yaml \\
+        -c iterative.yaml \\
+        --task-id <id> \\
+        --tasks-file /path/to/tasks.json
+
+The -c flags are merged left-to-right (same as mini.py).  The last config should
+be (or include) iterative.yaml, which contributes the ``iterative`` section.
+"""
+
 from __future__ import annotations
 
 import json
@@ -8,7 +21,7 @@ from typing import Any
 import typer
 from rich.console import Console
 
-from miniswewebagent.agents import get_agent
+from miniswewebagent.agents.iterative import IterativeRunner
 from miniswewebagent.config import get_config_from_spec, snapshot_config_specs
 from miniswewebagent.environments import get_environment
 from miniswewebagent.models import get_model
@@ -16,37 +29,7 @@ from miniswewebagent.tasks.om2w import load_om2w_task
 from miniswewebagent.utils.om2w_eval import export_online_mind2web_artifacts
 from miniswewebagent.utils.serialize import UNSET, recursive_merge
 
-
-def _load_final_script(scripts_dir: Path, task_id: str) -> str:
-    """Load final_script.py from a previous run for a task."""
-    script_path = scripts_dir / task_id / "final_script.py"
-    if not script_path.exists():
-        return ""
-    return script_path.read_text(encoding="utf-8")
-
-
-def _load_explore_history(explore_dir: Path, task_id: str) -> str:
-    """Load previous explore trajectory messages (text only) for a task."""
-    traj_path = explore_dir / task_id / "trajectory.json"
-    if not traj_path.exists():
-        return ""
-    traj = json.loads(traj_path.read_text(encoding="utf-8"))
-    parts = []
-    for msg in traj.get("messages", []):
-        role = msg.get("role", "unknown")
-        if role == "system":
-            continue
-        content = msg.get("content", "")
-        if isinstance(content, list):
-            content = "\n".join(
-                p.get("text", "") for p in content if p.get("type") in ("text", "input_text")
-            )
-        if not content:
-            continue
-        parts.append(f"[{role}]\n{content}")
-    return "\n\n---\n\n".join(parts)
-
-DEFAULT_CONFIG = "mini.yaml"
+DEFAULT_CONFIG = "iterative.yaml"
 
 app = typer.Typer(no_args_is_help=True)
 console = Console(highlight=False)
@@ -82,8 +65,7 @@ def run_one(
     resolved_start_url = start_url or run_config.get("start_url")
 
     task_record = None
-    should_load_task_record = bool(resolved_task_id) and (not resolved_task or not resolved_start_url)
-    if should_load_task_record:
+    if resolved_task_id and (not resolved_task or not resolved_start_url):
         if not resolved_tasks_file:
             raise ValueError("--task-id requires --tasks-file unless --task and --start-url are both set.")
         task_record = load_om2w_task(resolved_tasks_file, resolved_task_id)
@@ -121,20 +103,30 @@ def run_one(
             "model": {
                 "error_log_path": str(resolved_output_dir / "runtime_errors.jsonl"),
             },
-            "agent": {
-                "output_path": str(resolved_output_dir / "trajectory.json"),
-            },
         },
     )
 
     model = get_model(config.get("model", {}))
     env = get_environment(config.get("environment", {}))
-    agent = get_agent(model, env, config.get("agent", {}), default_type="default")
 
-    console.print(f"Running task in [bold green]{resolved_output_dir}[/bold green]")
+    # Split agent config from iterative config
+    agent_config = dict(config.get("agent", {}))
+    agent_config.pop("agent_class", None)  # IterativeRunner creates agents directly
+    iterative_config = dict(config.get("iterative", {}))
+
+    runner = IterativeRunner(
+        model,
+        env,
+        agent_config=agent_config,
+        iterative_config=iterative_config,
+    )
+
+    console.print(f"Running iterative task in [bold green]{resolved_output_dir}[/bold green]")
+
     run_exception: Exception | None = None
     close_exception: Exception | None = None
     result: dict[str, Any] = {}
+
     try:
         env.prepare(
             task=resolved_task,
@@ -142,21 +134,14 @@ def run_one(
             start_url=resolved_start_url,
             task_record=task_record,
         )
-        result = agent.run(
+        result = runner.run(
             resolved_task,
             task_id=resolved_task_id or "",
             start_url=resolved_start_url or "",
-            explore_history=_load_explore_history(
-                Path(run_config["explore_history_dir"]), resolved_task_id
-            ) if run_config.get("explore_history_dir") and resolved_task_id else "",
-            final_script=_load_final_script(
-                Path(run_config["final_script_dir"]), resolved_task_id
-            ) if run_config.get("final_script_dir") and resolved_task_id else "",
+            base_output_dir=resolved_output_dir,
         )
     except Exception as exc:
         run_exception = exc
-        if getattr(agent, "messages", None):
-            result = dict(agent.messages[-1].get("extra", {}))
         result.setdefault("exit_status", type(exc).__name__)
         result.setdefault("submission", "")
         result.setdefault("final_response", "")
@@ -173,6 +158,8 @@ def run_one(
             result["close_exception"] = str(exc)
             if run_exception is None:
                 run_exception = exc
+
+    # Export judge artifacts (uses the last round's output by default)
     judge_artifacts = export_online_mind2web_artifacts(
         output_dir=resolved_output_dir,
         task=resolved_task,
@@ -182,9 +169,28 @@ def run_one(
     )
     result["_output_dir"] = str(resolved_output_dir)
     result["_judge_artifacts"] = judge_artifacts
+
+    # Persist top-level iterative summary
+    summary = {
+        "task_id": resolved_task_id or "",
+        "task": resolved_task,
+        "iterative_success": result.get("_iterative_success", False),
+        "iterative_rounds": result.get("_iterative_rounds", 0),
+        "final_round_dir": result.get("_final_round_dir", ""),
+    }
+    (resolved_output_dir / "iterative_summary.json").write_text(
+        json.dumps(summary, indent=2), encoding="utf-8"
+    )
+
     if close_exception is not None:
         result["_close_exception"] = str(close_exception)
-    console.print(result.get("final_response") or result.get("submission") or "Task finished.")
+
+    success_marker = "✓ SUCCESS" if result.get("_iterative_success") else "✗ FAILURE"
+    console.print(
+        f"{success_marker} after {result.get('_iterative_rounds', '?')} round(s). "
+        f"Output: [bold green]{resolved_output_dir}[/bold green]"
+    )
+
     if run_exception is not None:
         raise run_exception
     return result
@@ -198,7 +204,7 @@ def main(
     start_url: str | None = typer.Option(None, "--start-url"),
     config_spec: list[str] = typer.Option([DEFAULT_CONFIG], "-c", "--config"),
     output_dir: Path | None = typer.Option(None, "-o", "--output-dir"),
-    debug: bool = typer.Option(False, "--debug", help="Launch headed local Playwright with devtools and keep it open for inspection at the end."),
+    debug: bool = typer.Option(False, "--debug"),
 ) -> Any:
     return run_one(
         task=task,

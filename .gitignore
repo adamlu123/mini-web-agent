@@ -3,3 +3,4 @@ __pycache__/
 *.pyc
 logs/
 om2w_judge/output_*
+om2w_judge/archive/

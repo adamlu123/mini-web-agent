@@ -1,0 +1,7 @@
+Assumption: savings/investments selected as None because the task did not specify this and the checker required an answer.
+Pension Credit
+Housing Benefit
+Winter Fuel Payment
+Council Tax Reduction
+NHS Help with health costs
+Apply for an older person's bus pass

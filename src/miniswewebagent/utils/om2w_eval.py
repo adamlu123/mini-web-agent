@@ -22,9 +22,9 @@ _MISSING_HISTORY_MARKERS = (
     "provided action history is incomplete",
 )
 
-_FINAL_SCRIPT_ACTION_RE = re.compile(r"^\s*step\s+\d+(?:\s+action)?\s*:\s*.+\s*$", re.IGNORECASE)
+_FINAL_SCRIPT_ACTION_RE = re.compile(r"^\s*step\s+\d+\s+action:\s*.+\s*$", re.IGNORECASE)
 _FINAL_RUN_DIR_RE = re.compile(r"^run_(\d+)$", re.IGNORECASE)
-_ARTIFACT_STEP_HINT_RE = re.compile(r"(?:step|final_execution)_(\d+)_", re.IGNORECASE)
+_FINAL_EXECUTION_SCREENSHOT_RE = re.compile(r"final_execution_(\d+)_", re.IGNORECASE)
 
 
 def _load_debug_steps(output_dir: Path) -> list[dict[str, Any]]:
@@ -54,12 +54,6 @@ def _action_text(action: dict[str, Any]) -> str:
     return str(action.get("bash_command") or action.get("command") or action.get("python_code") or "").strip()
 
 
-def _debug_step_action_text(row: dict[str, Any]) -> str:
-    return str(
-        row.get("command_text") or row.get("bash_command") or row.get("command") or row.get("python_code") or ""
-    ).strip()
-
-
 def _fallback_actions_and_thoughts(trajectory_path: Path) -> tuple[list[str], list[str]]:
     if not trajectory_path.exists():
         return [], []
@@ -80,7 +74,7 @@ def _fallback_actions_and_thoughts(trajectory_path: Path) -> tuple[list[str], li
 
 
 def _load_final_script_action_history(output_dir: Path) -> list[str]:
-    log_path = _resolve_sandbox_artifact_dir(output_dir) / "final_script_log.txt"
+    log_path = output_dir / "final_script_log.txt"
     if not log_path.exists():
         return []
 
@@ -119,6 +113,28 @@ def _resolve_latest_final_run_dir(output_dir: Path) -> Path | None:
 
 def _resolve_sandbox_artifact_dir(output_dir: Path) -> Path:
     return _resolve_latest_final_run_dir(output_dir) or output_dir
+
+
+def _all_final_execution_screenshots(output_dir: Path) -> tuple[list[Path], str]:
+    latest_final_run_dir = _resolve_latest_final_run_dir(output_dir)
+    if latest_final_run_dir is not None:
+        screenshots_dir = latest_final_run_dir / "screenshots"
+        source = "latest_final_run_all_final_execution"
+    else:
+        screenshots_dir = output_dir / "screenshots"
+        source = "root_all_final_execution"
+
+    if not screenshots_dir.is_dir():
+        return [], source
+
+    screenshots = [path for path in screenshots_dir.glob("final_execution_*.png") if path.is_file()]
+    screenshots.sort(key=lambda path: (_final_execution_screenshot_num(path), path.name))
+    return screenshots, source
+
+
+def _final_execution_screenshot_num(path: Path) -> int:
+    match = _FINAL_EXECUTION_SCREENSHOT_RE.search(path.name)
+    return int(match.group(1)) if match else 10**9
 
 
 def _has_recorded_action_history(row: dict[str, Any]) -> bool:
@@ -178,9 +194,6 @@ def _resolve_step_screenshot_path(output_dir: Path, row: dict[str, Any], step_st
     observation = _extract_observation(row)
 
     candidates: list[str] = []
-    for artifact_path in _artifact_screenshot_candidates(output_dir, row):
-        candidates.append(str(artifact_path))
-
     screenshot_path = observation.get("screenshot_path")
     if screenshot_path:
         candidates.append(str(screenshot_path))
@@ -204,71 +217,6 @@ def _resolve_step_screenshot_path(output_dir: Path, row: dict[str, Any], step_st
             return path
 
     return None
-
-
-def _artifact_screenshot_candidates(output_dir: Path, row: dict[str, Any]) -> list[Path]:
-    artifact_dir = _resolve_sandbox_artifact_dir(output_dir)
-    screenshots_dir = artifact_dir / "screenshots"
-    if not screenshots_dir.is_dir():
-        return []
-
-    screenshots = [path for path in screenshots_dir.glob("*.png") if path.is_file()]
-    if not screenshots:
-        return []
-
-    observation = _extract_observation(row)
-    command_text = " ".join(
-        str(part)
-        for part in (
-            row.get("command_text"),
-            row.get("bash_command"),
-            row.get("python_code"),
-            row.get("command"),
-            observation.get("command"),
-            observation.get("command_output"),
-        )
-        if part
-    )
-
-    candidates: list[Path] = []
-    seen: set[Path] = set()
-    stale_observation = _observation_screenshot_looks_stale(observation)
-
-    if stale_observation:
-        for match in _ARTIFACT_STEP_HINT_RE.finditer(command_text):
-            step_num = int(match.group(1))
-            prefix = f"final_execution_{step_num}_"
-            for path in screenshots:
-                if prefix in path.name and path not in seen:
-                    candidates.append(path)
-                    seen.add(path)
-
-    if row.get("done") and artifact_dir != output_dir:
-        for path in sorted(screenshots, key=lambda item: (item.stat().st_mtime, item.name), reverse=True):
-            if path not in seen:
-                candidates.append(path)
-                seen.add(path)
-
-    return candidates
-
-
-def _observation_screenshot_looks_stale(observation: dict[str, Any]) -> bool:
-    names: list[str] = []
-    screenshot_path = observation.get("screenshot_path")
-    if screenshot_path:
-        names.append(Path(str(screenshot_path)).name)
-    for candidate in observation.get("recent_screenshots") or []:
-        names.append(Path(str(candidate)).name)
-
-    if not names:
-        return True
-
-    stale_prefixes = ("state_", "explore_")
-    if names[0].startswith(stale_prefixes):
-        return True
-
-    return all(name.startswith(stale_prefixes) for name in names[:4])
-
 
 def _write_placeholder_screenshot(path: Path) -> None:
     path.write_bytes(_PLACEHOLDER_PNG_BYTES)
@@ -346,10 +294,10 @@ def export_online_mind2web_artifacts(
     action_history: list[str] = []
     thoughts: list[str] = []
     for row in debug_steps:
-        action_text = _debug_step_action_text(row)
-        if not action_text:
+        python_code = str(row.get("python_code", "")).strip()
+        if not python_code:
             continue
-        action_history.append(action_text)
+        action_history.append(python_code)
         thoughts.append(str(row.get("thought", "")).strip())
 
     if not action_history:
@@ -360,7 +308,6 @@ def export_online_mind2web_artifacts(
         action_history = final_script_actions
 
     action_history_source = "final_script_log" if final_script_actions else ("debug_steps" if debug_steps else "trajectory")
-    final_artifact_dir = _resolve_sandbox_artifact_dir(output_dir)
 
     result_payload = {
         "task_id": task_id or output_dir.name,
@@ -375,7 +322,73 @@ def export_online_mind2web_artifacts(
         "trajectory_source": "mini-swe-webagent",
         "trajectory_file": str(output_dir / "trajectory.json"),
         "debug_steps_dir": str(output_dir / "debug" / "steps"),
-        "final_artifact_dir": str(final_artifact_dir),
+        "screenshot_paths": copied_screenshots,
+    }
+    if agent_result.get("run_exception"):
+        result_payload["run_exception"] = str(agent_result["run_exception"])
+
+    result_path = output_dir / "result.json"
+    result_path.write_text(json.dumps(result_payload, indent=2), encoding="utf-8")
+    return {
+        "result_json": str(result_path),
+        "trajectory_dir": str(trajectory_dir),
+    }
+
+
+def export_online_mind2web_artifacts_all_final_execution(
+    *,
+    output_dir: Path,
+    task: str,
+    task_id: str | None,
+    start_url: str | None,
+    agent_result: dict[str, Any],
+) -> dict[str, Any]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    trajectory_dir = output_dir / "trajectory"
+    trajectory_dir.mkdir(parents=True, exist_ok=True)
+    for stale_path in trajectory_dir.glob("*_full_screenshot.*"):
+        stale_path.unlink()
+
+    screenshots, _ = _all_final_execution_screenshots(output_dir)
+    copied_screenshots: list[str] = []
+    for index, src in enumerate(screenshots):
+        dst = trajectory_dir / f"{index}_full_screenshot.png"
+        if src.resolve() != dst.resolve():
+            shutil.copy2(src, dst)
+        copied_screenshots.append(str(dst))
+
+    debug_steps = _load_debug_steps(output_dir)
+    action_history: list[str] = []
+    thoughts: list[str] = []
+    for row in debug_steps:
+        python_code = str(row.get("python_code", "")).strip()
+        if not python_code:
+            continue
+        action_history.append(python_code)
+        thoughts.append(str(row.get("thought", "")).strip())
+
+    if not action_history:
+        action_history, thoughts = _fallback_actions_and_thoughts(output_dir / "trajectory.json")
+
+    final_script_actions = _load_final_script_action_history(output_dir)
+    if final_script_actions:
+        action_history = final_script_actions
+
+    action_history_source = "final_script_log" if final_script_actions else ("debug_steps" if debug_steps else "trajectory")
+
+    result_payload = {
+        "task_id": task_id or output_dir.name,
+        "task": task,
+        "start_url": start_url or "",
+        "action_history": action_history,
+        "action_history_source": action_history_source,
+        "thoughts": thoughts,
+        "final_result_response": str(agent_result.get("final_response") or agent_result.get("submission") or ""),
+        "exit_status": str(agent_result.get("exit_status", "")),
+        "submission": str(agent_result.get("submission", "")),
+        "trajectory_source": "mini-swe-webagent",
+        "trajectory_file": str(output_dir / "trajectory.json"),
+        "debug_steps_dir": str(output_dir / "debug" / "steps"),
         "screenshot_paths": copied_screenshots,
     }
     if agent_result.get("run_exception"):

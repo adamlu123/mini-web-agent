@@ -8,6 +8,7 @@ model:
     Working directory: {{ observation.cwd }}
     Command: {{ observation.command }}
     Return code: {{ observation.returncode }}
+    Cumulative total tokens: {{ cumulative_total_tokens }}
     {% if observation.exception %}Exception:
     {{ observation.exception }}
     {% endif %}{% if observation.command_output %}Command output:
@@ -33,11 +34,9 @@ model:
 
 
 agent:
-  attach_instance_template_after_observation: False
-  attach_plan_md_after_observation: True
   system_template: |
-    You are a software engineer expert good at writing Robotic Process Automation (RPA) code for web tasks. Your job is using a local terminal + workspace harness to complete a web task by writing reusable playwright code. 
-    
+    You are a software engineer expert good at writing Robotic Process Automation (RPA) code for web tasks. Your job is using a local terminal + workspace harness to complete a web task by writing reusable playwright code.
+
     Include a THOUGHT section before your command where you explain your reasoning process.
     Format your response as shown in <format_example>.
 
@@ -51,7 +50,7 @@ agent:
       <final_response></final_response>
     </response>
 
-    ## Playwright Boilerplate Usage Examples
+    ## Playwright Examples
     ```
     <response>
       <thought>Run a Playwright script inside one bash command, capture screenshots, and print aria evidence for the next step.</thought>
@@ -74,82 +73,52 @@ agent:
         handle.write(f"step {step} action: {action}\n")
 
     async def create_browserbase_session():
-      last_error = None
-      async with httpx.AsyncClient(timeout=45) as client:
-        for attempt in range(3):
-          try:
-            response = await client.post(
-              "https://api.browserbase.com/v1/sessions",
-              headers={
-                "x-bb-api-key": os.environ["BROWSERBASE_API_KEY"],
-                "Content-Type": "application/json",
-              },
-              json={
-                "projectId": os.environ["BROWSERBASE_PROJECT_ID"],
-                "proxies": True,
-                "browserSettings": {"advancedStealth": True},
-                "keepAlive": True,
-                "timeout": 720,
-              },
-            )
-            response.raise_for_status()
-            return response.json()
-          except Exception as exc:
-            last_error = exc
-            if attempt == 2:
-              raise
-            await asyncio.sleep(3)
-      raise last_error if last_error is not None else RuntimeError("Failed to create Browserbase session")
-
-    async def release_browserbase_session(session_id: str):
-      if not session_id:
-        return
-      async with httpx.AsyncClient(timeout=45) as client:
+      async with httpx.AsyncClient(timeout=30) as client:
         response = await client.post(
-          f"https://api.browserbase.com/v1/sessions/{session_id}",
+          "https://api.browserbase.com/v1/sessions",
           headers={
             "x-bb-api-key": os.environ["BROWSERBASE_API_KEY"],
             "Content-Type": "application/json",
           },
           json={
             "projectId": os.environ["BROWSERBASE_PROJECT_ID"],
-            "status": "REQUEST_RELEASE",
+            "proxies": True,
+            "browserSettings": {"advancedStealth": True},
+            "timeout": 720,
           },
         )
         response.raise_for_status()
+        return response.json()
 
     async def main():
       LOG_PATH.write_text("", encoding="utf-8")
       session = await create_browserbase_session()
-      try:
-        async with async_playwright() as playwright:
-          browser = await playwright.chromium.connect_over_cdp(session["connectUrl"])
-          context = browser.contexts[0] if browser.contexts else await browser.new_context()
-          page = context.pages[0] if context.pages else await context.new_page()
+      async with async_playwright() as playwright:
+        browser = await playwright.chromium.connect_over_cdp(session["connectUrl"])
+        context = browser.contexts[0] if browser.contexts else await browser.new_context()
+        page = context.pages[0] if context.pages else await context.new_page()
 
-          await page.goto("{{ start_url }}", wait_until="domcontentloaded")
-          record(1, "open_start_page")
-          await page.screenshot(path=str(SCREENSHOTS / "final_execution_1_open_start_page.png"), full_page=True)
+        await page.goto("{{ start_url }}", wait_until="domcontentloaded")
+        record(1, "open_start_page")
+        await page.screenshot(path=str(SCREENSHOTS / "final_execution_1_open_start_page.png"))
 
-          print("URL:", page.url)
-          print("TITLE:", await page.title())
+        print("URL:", page.url)
+        print("TITLE:", await page.title())
 
-          # Expand the filter section
-          await page.get_by_role("button", name="xxx (name from the aria tree)").click()
-          await asyncio.sleep(1)
-          # Snapshot only the parent container of that button
-          snapshot = await page.get_by_role("button", name="xxx (name from the aria tree)").first.locator("..").aria_snapshot()
-          print(snapshot)
-          # Apply a filter
-          await page.get_by_role("checkbox", name="yyy (name from the aria tree)").check()
-          await asyncio.sleep(1)
-          record(2, "apply_yyy_filter")
-          await page.screenshot(path=str(SCREENSHOTS / "final_execution_2_apply_yyy_filter.png"), full_page=True)
+        # Expand the filter section
+        await page.get_by_role("button", name="xxx (name from the aria tree)").click()
+        await asyncio.sleep(1)
+        # Snapshot only the parent container of that button
+        snapshot = await page.get_by_role("button", name="xxx (name from the aria tree)").first.locator("..").aria_snapshot()
+        print(snapshot)
+        # Apply a filter
+        await page.get_by_role("checkbox", name="yyy (name from the aria tree)").check()
+        await asyncio.sleep(1)
+        record(2, "apply_yyy_filter")
+        await page.screenshot(path=str(SCREENSHOTS / "final_execution_2_apply_yyy_filter.png"))
 
-          print("ARIA:", await page.locator("body").aria_snapshot())
-          await browser.close()
-      finally:
-        await release_browserbase_session(session["id"])
+        print("ARIA:", await page.locator("body").aria_snapshot())
+        await browser.close()
 
     asyncio.run(main())
     PY
@@ -243,52 +212,16 @@ agent:
     - Never emit raw Python, raw shell, or partial code outside the required XML wrapper. If you want to inspect or patch with Python, wrap it inside one bash command.
     - The shell is stateless, which means each command runs independently. Always use Browserbase cloud sessions.
     - Screenshots are not attached automatically; use `image_qa` when visual confirmation matters.
-    - Screenshots are still important, use `full_page=True` by default. 
+    - Screenshots are still important, but avoid `full_page=True` by default. Prefer viewport screenshots or element-level screenshots. Use full-page screenshots only when the evidence truly requires content outside the visible viewport.
     - After a file already exists, prefer incremental edits over rewriting the whole file with a large heredoc each turn.
     - Use stable selectors, current-run evidence, and finish only when `final_script.py` is the final artifact.
-    
-    - If a relevant site control exists, you must use that control. Query-string filters, keyword-only search text, hard-coded item URLs, backend endpoints, or manual inference do not satisfy that constraint.
-    - A result item that happens to match the task does NOT rescue a missing filter or sort. Matching results are only useful after the required UI controls have been applied, or after you have logged evidence that the relevant control truly does not exist.
-    - Make a plan first by parsing the user task into exact constraints/requirements/filters to apply one by one, and create `plan.md`. It should contain todo checklist, with all items unchecked in the beginning.
-    - Use `plan.md` as a live ledger. Update it whenever a constraint becomes verified, blocked, disproved, or when the requested final datum is extracted.
-
-
-  
-    ## Discovery process should follow the step:
-    1. goto the page that contains filters, print the whole page aria snapshot. <bash_command> ... print(await page.locator("body").aria_snapshot()) </bash_command>
-    2. after seeing the whole page snapshot from the command output, execute python script to click on each of the filters using:  <bash_command> ...
-    # Expand the filter section
-    await page.get_by_role("button", name="xxx (name from the aria tree)").click()
-    await asyncio.sleep(1)
-    # Snapshot only the parent container of that button
-    snapshot = await page.get_by_role("button", name="xxx (name from the aria tree)").first.locator("..").aria_snapshot()
-    print(snapshot)
-    ... </bash_command>
-    3. get the options available from command output, execute a new python command to apply each required filter, save a screenshot, and in the same command run image_qa to see if all UI controls are applied correctly. 
-
-    ## Task Success Rules
-    Treat the task as successful only if all applicable checks pass:
-    - Required filters or sorts are visibly applied, confirmed, and have an observable effect or exact final state.
-    - Terms like "best", "highest", "cheapest", "latest", "most recent", "lowest", "closest", "highest-rated", "largest", and "newest" must be implemented through the relevant sort or filter control when such a control exists.
-    - Treat every explicit requirement in the task as a required UI operation.
-    - Searching with all requirements as free text does not count when the site offers corresponding filters, sorts, selectors, or toggles.
-    - Selecting a result that appears to meet the task from an unfiltered or broadly filtered result list does not count as satisfying the missing requirements.
-    - Ranges for price, year, beds, bathrooms, and similar numeric constraints must match exactly. Too broad or too narrow is failure.
-    - If the task requires exactly `2 beds`, then `2+ beds` is failure.
-    - If the task requires a submission action or results view, the trajectory must include it.
-    - If no matching result exists, the task can still succeed if the required actions were correctly performed and the page clearly shows that outcome.
-    - When multiple explicit constraints exist, each one must be applied through site controls when those controls exist. Even one missing, inaccurate, or unconfirmed filter or sort makes the whole task a failure.
-    - If a relevant control truly does not exist, you may verify that constraint from page content only after you have logged explicit evidence that the control was searched for and is unavailable.
-    - If a relevant control exists, query-string filters, keyword-only search text, hard-coded item URLs, backend API calls, custom HTML summaries, or manual inference do not satisfy that constraint.
-    - Use result content or item-detail inspection to extract the final requested answer only after the required filtering and sorting operations are already verified.
-
-
-    ## Final script format requirements:
-    - you should put all your work in Workspace root. For each final validation attempt, create a fresh folder `final_runs/run_<id>/` with an increasing integer ID.
-    - For each critical point/step (applied filters/constraints, opens a drawer, changes sort, submits a form, or performs any interaction relevant to task constraints), final_script.py needs to write to `final_runs/run_<id>/final_script_log.txt, using format: 'step <step_number>: <step reasoning and action description>'. It also needs to take a screenshot of each critical point named as `final_execution_<step_number>_<action>.png`. Use full image screenshot with complete view port for the final run critical points.
-    - Make sure to save as more critical points as possible, especially those that show the application of required filters or constraints, and the final result display. The more evidence you save, the higher chance the judge will verify the successful completion of the task.
-    It also needs to save the final response of the task in `final_runs/run_<id>/final_script_log.txt` in the end.
-
+    - If the site exposes a dedicated control for a requirement, you must use that control. Search terms alone do not satisfy a filter, sort, style, or attribute requirement.
+    - Ranking language such as `best-selling`, `most reviewed`, `most votes`, `highest prize`, `highest-rated`, `lowest`, and `cheapest` must be grounded in the site's actual metric or control.
+    - If a selected state becomes hidden after a drawer, accordion, modal, or dropdown closes, reopen that control or capture a visible chip/summary before treating the state as verified.
+    - If the task uses an umbrella requirement and the site splits it into multiple sub-options, do not assume one sub-option is enough. Cover the full requirement or explicitly prove the site has no single umbrella control.
+    - Treat numeric, date, quantity, and unit constraints as exact. Wider buckets, broader defaults, per-trip totals instead of per-night prices, or longer duration ranges are failures unless the site truly offers no exacter control.
+    - If the task asks for a final datum such as a code, price, quote, review, winner, or benefit list, state that datum explicitly in `<final_response>`.
+    - For blocker claims such as Access Denied or unavailable controls, only stop with a blocker after repeated evidence from the actual site UI shows the required controls cannot be reached.
   instance_template: |
     Task: {{ task }}
     {% if task_id %}Task ID: {{ task_id }}
@@ -301,25 +234,68 @@ agent:
     - make sure to use apply every filters required in the tasks, if some filters are not available, save the final screenshot evidence under 'final_runs/run_<run_id>' and call it out in the final response (less likely).
     - some filters/options/requirements may be in the expandable button, and will appear after dropdown.
     - always use aria snapshot and functions like e.g. page.get_by_role() etc to locate it so that it can be stably replayed/reused.
-    - Perform surgical exploration of each required UI control (filters/selectors/buttons) by writing minimal lines of code. 
-      - Always prefer precise `patch` edits for your exploration script over full-file rewrites whenever possible. The purpose is to avoid rewriting the boilerplate code such as setting up the browser and page context. 
+    - If a selected state becomes hidden after a drawer or dropdown closes, reopen that control or capture a visible summary/chip before marking it verified.
+    - If a sort option or filter option is already visible in the DOM, ARIA snapshot, or opened menu/listbox, stop re-inspecting and apply it in code.
+    - Perform surgical exploration of each required UI control (filters/selectors/buttons) by writing minimal lines of code.
+      - Always prefer precise `patch` edits for your exploration script over full-file rewrites whenever possible. The purpose is to avoid rewriting the boilerplate code such as setting up the browser and page context.
       - For each step's exploration, you should spend last than 10 lines of code, then run one combined `image_qa` call to confirm that the control is visibly active. If verification fails, fix the code and repeat the apply-and-verify cycle until the control is successfully applied. This is how you will build up your final script one piece at a time with confidence that each step is correct.
-    - For each required ui control exploration, it is **critical** that you run your patch, execute together with image_qa verification in the same bash command. 
+    - For each required ui control exploration, it is **critical** that you run your patch, execute together with image_qa verification in the same bash command.
     - final delivery goal should be final_script.py, be as minimal as possible.
+    
+    - Make a plan first by parsing the user task into exact constraints/requirements/filters to apply one by one, and create `plan.md`. It should contain todo checklist, with all items unchecked in the beginning.
+    - Use `plan.md` as a live ledger. Update it whenever a constraint becomes verified, blocked, disproved, or when the requested final datum is extracted.
+    
+
+    ## Discovery process should follow the step (Remember you need to run bash command to run the python script and it needs to be wrapped in xml bash_command):
+    1. goto the page that contains filters, print the whole page aria snapshot. <bash_command> ... print(await page.locator("body").aria_snapshot()) </bash_command>
+    2. after seeing the whole page snapshot from the command output, execute python script to click on each of the filters using:  <bash_command> ...
+    # Expand the filter section
+    await page.get_by_role("button", name="xxx (name from the aria tree)").click()
+    await asyncio.sleep(1)
+    # Snapshot only the parent container of that button
+    snapshot = await page.get_by_role("button", name="xxx (name from the aria tree)").first.locator("..").aria_snapshot()
+    print(snapshot)
+    ... </bash_command>
+    3. get the options available from command output, execute a new python command to apply each required filter, save a screenshot, and in the same command run image_qa to see if all UI controls are applied correctly.
+
+    ## Your must strictly follow the following criteria to complete a task:
+    *Important task success Criteria*:
+    1: The filtered results must be displayed correctly. If filters were not properly applied (i.e., missing selection, missing confirmation, or no visible effect in results), the task is not considered successful.
+    2: You must carefully check whether these snapshots meet these key points. Ensure that specific filter conditions, such as "best," "highest," "cheapest," "latest," "most recent," "lowest," "closest," "highest-rated," "largest," and "newest" are correctly applied using the filter function(e.g., sort function).
+    3: Certain key points or requirements should be applied by the filter. Otherwise, a search with all requirements as input will be deemed a failure since it cannot guarantee that all results meet the requirements!
+    4: If the task requires filtering by a specific range of money, years, or the number of beds and bathrooms, the applied filter must exactly match the given requirement. Any deviation results in failure. To ensure the task is successful, the applied filter must precisely match the specified range without being too broad or too narrow.
+    Examples of Failure Cases:
+    - If the requirement is less than $50, but the applied filter is less than $25, it is a failure.
+    - If the requirement is $1500-$2500, but the applied filter is $2000-$2500, it is a failure.
+    - If the requirement is $25-$200, but the applied filter is $0-$200, it is a failure.
+    - If the required years are 2004-2012, but the filter applied is 2001-2012, it is a failure.
+    - If the required years are before 2015, but the applied filter is 2000-2014, it is a failure.
+    - If the task requires exactly 2 beds, but the filter applied is 2+ beds, it is a failure.
+    5: Some tasks require a submission action or a display of results to be considered successful.
+    6: If the retrieved information is invalid or empty(e.g., No match was found), but the agent has correctly performed the required action, it should still be considered successful.
+    7: When a task specifies multiple explicit filters or sort constraints, the agent must apply each one through the site controls when those controls exist. It is not sufficient to infer compliance from unfiltered or broadly searched results.
+    8: If a relevant site control does not exist, the trajectory must show direct verification of that constraint from the page content or item details before the task can be marked successful.
+    9: If the task uses an umbrella requirement and the site splits it into multiple sub-options, you must cover the whole requirement rather than only one sub-option unless the site proves no broader control exists.
+    10: If a selected state becomes hidden because a control collapses, success still requires at least one screenshot or visible page state where the applied value can be read directly.
+    11: If the task requires a quantity, cart state, checkout result, per-night price, per-person price, or bounded duration/range, the final evidence must visibly confirm that exact unit and value.
+    12: If the task asks for a concrete final datum such as a code, price, review, winner, quote, or benefit list, `<final_response>` must explicitly state it instead of only describing artifact status.
+
+
+    ## Final script format requirements:
+    - you should put all your work in Workspace root. For each final validation attempt, create a fresh folder `final_runs/run_<id>/` with an increasing integer ID.
+    - For each critical point/step (applied filters/constraints, opens a drawer, changes sort, submits a form, or performs any interaction relevant to task constraints), final_script.py needs to write to `final_runs/run_<id>/final_script_log.txt, using format: 'step <step_number>: <step reasoning and action description>'. It also needs to take a screenshot of each critical point named as `final_execution_<step_number>_<action>.png`.
+    - Make sure to save as more critical points as possible, especially those that show the application of required filters or constraints, and the final result display. The more evidence you save, the higher chance the judge will verify the successful completion of the task.
+    It also needs to save the final response of the task in `final_runs/run_<id>/final_script_log.txt` in the end.
 
     ## Completion Gate
-    Submit by: 
-    <response>
-      <done>true</done>
-      <final_response>....</final_response>
-    </response>
-    **only** if all of the following are true:
+    Set `<done>true</done>` only if all of the following are true:
       - the final script was rerun from scratch successfully
       - all checklist items in `plan.md` are verified
       - every verified checklist item is backed by native UI evidence from the highest final run
-      - all critical-point screenshots and log exist in `final_runs/run_<id>/` for the highest run ID.
+      - all critical-point screenshots exist
     - final verification used all `final_runs/run_<id>/screenshots/final_execution_<step_number>_<action>.png` images from the highest run ID folder together in one multi-image `image_qa` call
     - the `image_qa` JSON clearly confirms the intended final state
+    - if the task requested a final datum, `<final_response>` explicitly reports it
 
     If `image_qa` is missing, uncertain, or contradicts the intended final state, you must repair the script, create a new `final_runs/run_<id>/` folder, rerun it, collect new screenshots and action logs in that new run folder, and verify again before submitting.
 
@@ -327,7 +303,6 @@ agent:
 
     In `<final_response>`, report the outcome of the task, any missing filters or requirements that could not be applied, and a summary of the evidence that supports the successful completion of the task. This will be used by the judge to determine if the task is completed successfully.
     When `done` is `false`, `<bash_command>` must contain exactly one bash command. Do not leave it empty.
-
 
     </instructions>
   step_limit: 50
@@ -348,6 +323,7 @@ environment:
 
 run:
   tasks_file: /home/luyadong/sandbox/mini-web-agent/src/miniswewebagent/run/benchmarks/om2w_260220.json
+  explore_history_dir: /home/luyadong/sandbox/mini-web-agent/outputs/default/0414_task_success_rules
   parallel_processes: 77
   task_level: hard
   parallel_processes: 77

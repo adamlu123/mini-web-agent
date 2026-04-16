@@ -161,18 +161,21 @@ def auto_eval(args, task_subset, final_predicted_labels, lock, model):
             if "action_history" in result:
                 action_history = result["action_history"]
             if "thoughts" in result:
-                thoughts = result["thoughts"]
+                action_history = result["thoughts"]
             if "final_result_response" in result:
                 final_result_response = result["final_result_response"]
             if "input_image_paths" in result:
                 input_image_paths = result["input_image_paths"]
-
+        
         artifact_dir = resolve_sandbox_artifact_dir(task_dir)
         output_results["final_artifact_dir"] = str(artifact_dir)
 
         final_script_actions = load_final_script_action_history(task_dir)
         if final_script_actions:
             action_history = final_script_actions
+            if "final_result_response" in result:
+                action_history.append(f"Final response: {final_result_response}")
+                print(f"Loaded action history with {len(action_history)} entries for task {task_id}!!!")
             output_results["action_history"] = action_history
             output_results["action_history_source"] = "final_script_log"
 
@@ -211,6 +214,7 @@ def auto_eval(args, task_subset, final_predicted_labels, lock, model):
             )
             output_results["image_judge_record"] = record
             output_results["key_points"] = key_points
+            output_results["sandbox_screenshot_paths"] = screenshot_paths
         elif args.mode == "WebJudge_Online_Mind2Web_Sandbox_eval_ctime":
             screenshot_paths = _load_sandbox_screenshot_paths(task_dir, sort_by_creation=True)
             messages, text, system_msg, record, key_points = asyncio.run(

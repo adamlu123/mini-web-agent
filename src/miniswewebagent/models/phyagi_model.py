@@ -6,6 +6,7 @@ import json
 import mimetypes
 import os
 import re
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -158,6 +159,32 @@ def _parse_xml_bool(value: str) -> bool:
     if normalized in {"false", "0", "no"}:
         return False
     raise ValueError(f"Unable to parse boolean value from {value!r}.")
+
+
+def _repair_done_with_command(parsed: dict[str, Any]) -> dict[str, Any]:
+    bash_command = str(parsed.get("bash_command", "") or "").strip()
+    python_code = str(parsed.get("python_code", "") or "").strip()
+    if (bash_command or python_code) and bool(parsed.get("done", False)):
+        repaired = dict(parsed)
+        repaired["done"] = False
+        return repaired
+    return parsed
+
+
+def _validate_bash_command(command: str) -> None:
+    result = subprocess.run(
+        ["/bin/bash", "-n"],
+        input=command,
+        text=True,
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    if result.returncode == 0:
+        return
+    error = (result.stderr or result.stdout or "bash syntax check failed").strip()
+    raise ValueError(f"Invalid bash_command syntax: {error}")
 
 
 def parse_xml_output(raw: str) -> dict[str, Any]:
@@ -455,6 +482,11 @@ class PhyagiModel:
             response_text=response_text,
         )
 
+    def _raw_response_log_path(self) -> Path | None:
+        if self.config.error_log_path is None:
+            return None
+        return self.config.error_log_path.parent / "raw_responses.jsonl"
+
     def format_message(self, **kwargs) -> dict[str, Any]:
         role = kwargs["role"]
         content = kwargs.get("content", "")
@@ -503,7 +535,10 @@ class PhyagiModel:
     def _parse_model_output(self, raw_text: str) -> dict[str, Any]:
         if self.config.response_mode == "xml":
             return parse_xml_output(raw_text)
-        return parse_json_output(raw_text)
+        parsed = parse_json_output(raw_text)
+        if not isinstance(parsed, dict):
+            raise ValueError("Unable to parse JSON object from gateway response.")
+        return _repair_done_with_command(parsed)
 
     def _format_error(self, *, raw_text: str, error: str) -> FormatError:
         return FormatError(
@@ -616,6 +651,13 @@ class PhyagiModel:
                 self._cumulative_usage_metrics[key] += value
 
             raw_text = _extract_response_text(response_payload)
+            append_runtime_log(
+                self._raw_response_log_path(),
+                source="model",
+                event="raw_text",
+                attempt=attempt_index + 1,
+                raw_text=raw_text,
+            )
             try:
                 parsed = self._parse_model_output(raw_text)
                 break
@@ -635,6 +677,10 @@ class PhyagiModel:
         bash_command = parsed.get("bash_command", "").strip()
         python_code = parsed.get("python_code", "").strip()
         if bash_command:
+            try:
+                _validate_bash_command(bash_command)
+            except ValueError as exc:
+                raise self._format_error(raw_text=raw_text, error=str(exc))
             actions.append({"bash_command": bash_command, "command": bash_command})
         elif python_code:
             actions.append({"python_code": python_code})

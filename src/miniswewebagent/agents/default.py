@@ -18,6 +18,8 @@ class AgentConfig(BaseModel):
     instance_template: str
     step_limit: int = 15
     debug_log: bool = True
+    attach_instance_template_after_observation: bool = False
+    attach_plan_md_after_observation: bool = False
     output_path: Path | None = None
 
 
@@ -116,6 +118,22 @@ class DefaultAgent:
         summary_path = debug_dir / "steps.md"
         with summary_path.open("a", encoding="utf-8") as handle:
             handle.write(f"## Step {step_index}\n\n")
+            # Attach the model input only for the first step
+            if step_index == 1:
+                user_input_text = ""
+                for msg in reversed(self.messages):
+                    if msg.get("role") == "user":
+                        content = msg.get("content", "")
+                        if isinstance(content, list):
+                            # Multi-part message: join text parts
+                            parts = [p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") in ("text", "input_text")]
+                            user_input_text = "\n".join(p for p in parts if p)
+                        else:
+                            user_input_text = str(content)
+                        break
+                if user_input_text:
+                    handle.write("### Model Input\n\n")
+                    handle.write(f"{user_input_text}\n\n")
             handle.write("### Thought\n\n")
             handle.write(f"{payload['thought']}\n\n")
             handle.write("### Generated Code\n\n")
@@ -146,6 +164,18 @@ class DefaultAgent:
     def _render_template(self, template: str) -> str:
         return Template(template, undefined=StrictUndefined).render(**self.get_template_vars())
 
+    def _plan_md_message(self) -> dict[str, Any] | None:
+        workspace_dir = self.get_template_vars().get("workspace_dir")
+        if not workspace_dir:
+            return None
+        plan_path = Path(workspace_dir) / "plan.md"
+        if not plan_path.exists() or not plan_path.is_file():
+            return None
+        plan_text = plan_path.read_text(encoding="utf-8").strip()
+        if not plan_text:
+            return None
+        return self.model.format_message(role="user", content=f"Current plan.md:\n\n{plan_text}")
+
     def add_messages(self, *messages: dict[str, Any]) -> list[dict[str, Any]]:
         self.messages.extend(messages)
         return list(messages)
@@ -159,6 +189,19 @@ class DefaultAgent:
             self.model.format_message(role="system", content=self._render_template(self.config.system_template)),
             self.model.format_message(role="user", content=self._render_template(self.config.instance_template)),
         )
+        if self.extra_template_vars.get("explore_history"):
+            self.add_messages(
+                self.model.format_message(
+                    role="user",
+                    content="## Previous Explore History\n"
+                    "Below is the message log from a prior live-browser exploration of this exact task.\n"
+                    "Use it to understand the site layout, available controls, aria snapshots, and pitfalls.\n"
+                    "Do NOT repeat failed approaches. Build on what was learned.\n\n"
+                    + self.extra_template_vars["explore_history"]
+                    + "\n\n## End of Explore History",
+                ),
+            )
+
         while True:
             try:
                 self.step()
@@ -206,7 +249,16 @@ class DefaultAgent:
             )
         outputs = [self.env.execute(action) for action in extra.get("actions", [])]
         self._write_debug_step_artifact(step_index=self.n_calls, assistant_message=message, outputs=outputs)
-        return self.add_messages(*self.model.format_observation_messages(message, outputs, self.get_template_vars()))
+        observation_messages = self.model.format_observation_messages(message, outputs, self.get_template_vars())
+        if self.config.attach_instance_template_after_observation:
+            observation_messages.append(
+                self.model.format_message(role="user", content=self._render_template(self.config.instance_template))
+            )
+        if self.config.attach_plan_md_after_observation:
+            plan_message = self._plan_md_message()
+            if plan_message is not None:
+                observation_messages.append(plan_message)
+        return self.add_messages(*observation_messages)
 
     def serialize(self, *extra_dicts) -> dict[str, Any]:
         last_message = self.messages[-1] if self.messages else {}

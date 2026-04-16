@@ -1,0 +1,20 @@
+{
+  "files.exclude": {
+    "**/outputs/sandbox/**/.tmp": true,
+    "**/outputs/sandbox/**/logs": true,
+    "**/outputs/sandbox/**/debug": true,
+    "**/outputs/sandbox/**/steps": true
+  },
+  "search.exclude": {
+    "**/outputs/sandbox/**/.tmp": true,
+    "**/outputs/sandbox/**/logs": true,
+    "**/outputs/sandbox/**/debug": true,
+    "**/outputs/sandbox/**/steps": true
+  },
+  "files.watcherExclude": {
+    "**/outputs/sandbox/**/.tmp/**": true,
+    "**/outputs/sandbox/**/logs/**": true,
+    "**/outputs/sandbox/**/debug/**": true,
+    "**/outputs/sandbox/**/steps/**": true
+  }
+}

@@ -305,6 +305,121 @@ def test_debug_steps_markdown_uses_bash_fence_for_bash_actions(tmp_path) -> None
     assert "```bash\nls -la\n```" in steps_md_text
 
 
+def test_execute_actions_can_reappend_instance_template_after_observation() -> None:
+    from miniswewebagent.agents.default import DefaultAgent
+
+    class DummyModel:
+        def get_template_vars(self, **kwargs):
+            return {}
+
+        def format_message(self, **kwargs):
+            return {
+                "role": kwargs["role"],
+                "content": kwargs.get("content", ""),
+                "extra": kwargs.get("extra", {}),
+            }
+
+        def query(self, messages, **kwargs):
+            raise AssertionError("query should not be called in this test")
+
+        def format_observation_messages(self, message, outputs, template_vars=None):
+            return [self.format_message(role="user", content="observation")] 
+
+        def serialize(self):
+            return {}
+
+    class DummyEnv:
+        def get_template_vars(self, **kwargs):
+            return {}
+
+        def execute(self, action, cwd=""):
+            return {"observation": {"success": True}}
+
+        def serialize(self):
+            return {}
+
+    agent = DefaultAgent(
+        DummyModel(),
+        DummyEnv(),
+        system_template="system",
+        instance_template="instance reminder",
+        attach_instance_template_after_observation=True,
+    )
+
+    result = agent.execute_actions(
+        {
+            "role": "assistant",
+            "content": "do work",
+            "extra": {
+                "actions": [{"bash_command": "echo hi", "command": "echo hi"}],
+                "done": False,
+                "final_response": "",
+                "raw_response": {},
+            },
+        }
+    )
+
+    assert [message["content"] for message in result] == ["observation", "instance reminder"]
+
+
+def test_execute_actions_rejects_python_code_on_local_workspace() -> None:
+    from miniswewebagent.agents.default import DefaultAgent
+    from miniswewebagent.exceptions import FormatError
+
+    class DummyModel:
+        def get_template_vars(self, **kwargs):
+            return {}
+
+        def format_message(self, **kwargs):
+            return {
+                "role": kwargs["role"],
+                "content": kwargs.get("content", ""),
+                "extra": kwargs.get("extra", {}),
+            }
+
+        def query(self, messages, **kwargs):
+            raise AssertionError("query should not be called in this test")
+
+        def format_observation_messages(self, message, outputs, template_vars=None):
+            return []
+
+        def serialize(self):
+            return {}
+
+    class LocalWorkspaceEnvironment:
+        def get_template_vars(self, **kwargs):
+            return {}
+
+        def execute(self, action, cwd=""):
+            raise AssertionError("execute should not be called for python_code on local_workspace")
+
+        def serialize(self):
+            return {}
+
+    agent = DefaultAgent(
+        DummyModel(),
+        LocalWorkspaceEnvironment(),
+        system_template="system",
+        instance_template="instance",
+    )
+
+    with pytest.raises(FormatError) as exc_info:
+        agent.execute_actions(
+            {
+                "role": "assistant",
+                "content": "do work",
+                "extra": {
+                    "actions": [{"python_code": "print('hello')"}],
+                    "done": False,
+                    "final_response": "",
+                    "raw_response": {"python_code": "print('hello')"},
+                },
+            }
+        )
+
+    assert "python_code" in exc_info.value.messages[0]["content"]
+
+
 def test_run_one_closes_environment_when_prepare_fails(tmp_path, monkeypatch) -> None:
     events: list[str] = []
 

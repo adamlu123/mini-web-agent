@@ -11,6 +11,8 @@ def test_run_image_qa_returns_structured_json(monkeypatch, tmp_path: Path) -> No
     image_path.write_bytes(b"\x89PNG\r\n\x1a\n")
 
     class FakeResponse:
+        status_code = 200
+
         def raise_for_status(self) -> None:
             return None
 
@@ -78,6 +80,8 @@ def test_run_image_qa_supports_multiple_images(monkeypatch, tmp_path: Path) -> N
     image_b.write_bytes(b"\x89PNG\r\n\x1a\n")
 
     class FakeResponse:
+        status_code = 200
+
         def raise_for_status(self) -> None:
             return None
 
@@ -139,3 +143,130 @@ def test_run_image_qa_supports_multiple_images(monkeypatch, tmp_path: Path) -> N
     assert result["image_paths"] == [str(image_a), str(image_b)]
     assert "image_path" not in result
     assert result["unknown"] is False
+
+
+def test_run_image_qa_retries_on_transient_4xx(monkeypatch, tmp_path: Path) -> None:
+    import httpx
+
+    image_path = tmp_path / "shot.png"
+    image_path.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    calls = {"count": 0}
+
+    class Retry400Response:
+        status_code = 400
+        text = "transient"
+
+        def raise_for_status(self) -> None:
+            raise httpx.HTTPStatusError("bad request", request=None, response=None)  # type: ignore[arg-type]
+
+    class OkResponse:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "output": [
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": json.dumps(
+                                    {
+                                        "answer": "OK",
+                                        "evidence": [],
+                                        "unknown": False,
+                                        "confidence": 1.0,
+                                    }
+                                ),
+                            }
+                        ],
+                    }
+                ]
+            }
+
+    class FakeClient:
+        def __init__(self, timeout: int):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, url: str, headers: dict, json: dict):
+            calls["count"] += 1
+            if calls["count"] < 3:
+                return Retry400Response()
+            return OkResponse()
+
+    monkeypatch.setattr("miniswewebagent.tools.image_qa.httpx.Client", FakeClient)
+    monkeypatch.setattr("miniswewebagent.tools.image_qa.time.sleep", lambda _s: None)
+
+    result = run_image_qa(
+        image_path=image_path,
+        question="ok?",
+        api_key="dummy",
+        endpoint="http://gateway.example/api/responses",
+        model="gpt-5.4",
+        timeout_seconds=5,
+        max_attempts=4,
+        retry_base_delay=0.0,
+    )
+
+    assert calls["count"] == 3
+    assert result["answer"] == "OK"
+
+
+def test_run_image_qa_raises_after_max_attempts(monkeypatch, tmp_path: Path) -> None:
+    import httpx
+
+    image_path = tmp_path / "shot.png"
+    image_path.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    calls = {"count": 0}
+
+    class Always400Response:
+        status_code = 400
+        text = "persistent error"
+
+        def raise_for_status(self) -> None:
+            raise httpx.HTTPStatusError("bad request", request=None, response=None)  # type: ignore[arg-type]
+
+    class FakeClient:
+        def __init__(self, timeout: int):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, url: str, headers: dict, json: dict):
+            calls["count"] += 1
+            return Always400Response()
+
+    monkeypatch.setattr("miniswewebagent.tools.image_qa.httpx.Client", FakeClient)
+    monkeypatch.setattr("miniswewebagent.tools.image_qa.time.sleep", lambda _s: None)
+
+    import pytest
+
+    with pytest.raises(httpx.HTTPStatusError):
+        run_image_qa(
+            image_path=image_path,
+            question="ok?",
+            api_key="dummy",
+            endpoint="http://gateway.example/api/responses",
+            model="gpt-5.4",
+            timeout_seconds=5,
+            max_attempts=3,
+            retry_base_delay=0.0,
+        )
+
+    assert calls["count"] == 3

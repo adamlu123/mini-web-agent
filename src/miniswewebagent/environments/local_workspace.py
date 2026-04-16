@@ -125,7 +125,9 @@ class LocalWorkspaceEnvironment:
             handle.write("\n\n")
         return step_path
 
-    def _write_step_log(self, output: str) -> Path:
+    def _write_step_log(self, output: str) -> Path | None:
+        if not output:
+            return None
         self._logs_dir().mkdir(parents=True, exist_ok=True)
         log_path = self._logs_dir() / f"step_{self._step_index:04d}.log"
         log_path.write_text(output, encoding="utf-8")
@@ -207,7 +209,7 @@ class LocalWorkspaceEnvironment:
         output: str,
         returncode: int,
         exception_info: str,
-        log_path: Path,
+        log_path: Path | None,
     ) -> dict[str, Any]:
         final_script_path = self._final_script_path()
         recent_screenshot_paths = self._recent_screenshots()
@@ -234,7 +236,7 @@ class LocalWorkspaceEnvironment:
             "console_output": "",
             "recent_console": "",
             "command_output": self._truncate(output, self.config.output_truncation_chars),
-            "log_path": str(log_path),
+            "log_path": str(log_path) if log_path is not None else "",
             "task_metadata_path": str(self._task_metadata_path()),
             "final_script_path": str(final_script_path) if final_script_path.exists() else "",
             "final_script_exists": final_script_path.exists(),

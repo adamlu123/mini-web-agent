@@ -7,6 +7,7 @@ from miniswewebagent import Agent, Environment, Model
 
 _AGENT_MAPPING = {
     "default": "miniswewebagent.agents.default.DefaultAgent",
+    "iterative": "miniswewebagent.agents.iterative.IterativeRunner",
 }
 
 

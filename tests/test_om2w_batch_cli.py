@@ -192,10 +192,10 @@ def test_om2w_cli_uses_gateway_judge_endpoint_from_config(tmp_path, monkeypatch)
     def fake_run_one(**kwargs):
         return {"final_response": "ok"}
 
-    captured = {}
+    captured: list[dict[str, object]] = []
 
     def fake_run_online_mind2web_judge(**kwargs):
-        captured.update(kwargs)
+        captured.append(kwargs)
         return subprocess.CompletedProcess([], 0, stdout="", stderr="")
 
     monkeypatch.setattr("miniswewebagent.run.benchmarks.om2w.run_one", fake_run_one)
@@ -225,5 +225,62 @@ def test_om2w_cli_uses_gateway_judge_endpoint_from_config(tmp_path, monkeypatch)
     )
 
     assert result.exit_code == 0
-    assert captured["endpoint_target_uri"] == "http://gateway.example/api/responses"
-    assert captured["api_key"] == "gateway-key"
+    assert len(captured) == 3
+    assert all(row["endpoint_target_uri"] == "http://gateway.example/api/responses" for row in captured)
+    assert all(row["api_key"] == "gateway-key" for row in captured)
+
+
+def test_om2w_cli_allows_overriding_judge_runs(tmp_path, monkeypatch) -> None:
+    tasks_file = tmp_path / "om2w.json"
+    output_dir = tmp_path / "batch_output"
+    log_root = tmp_path / "logs"
+    tasks_file.write_text(
+        json.dumps(
+            [
+                {
+                    "task_id": "first",
+                    "confirmed_task": "Open the first page.",
+                    "website": "https://example.com/1",
+                    "level": "hard",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_run_one(**kwargs):
+        return {"final_response": "ok"}
+
+    captured: list[dict[str, object]] = []
+
+    def fake_run_online_mind2web_judge(**kwargs):
+        captured.append(kwargs)
+        return subprocess.CompletedProcess([], 0, stdout="", stderr="")
+
+    monkeypatch.setattr("miniswewebagent.run.benchmarks.om2w.run_one", fake_run_one)
+    monkeypatch.setattr(
+        "miniswewebagent.run.benchmarks.om2w.run_online_mind2web_judge",
+        fake_run_online_mind2web_judge,
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "key")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "--tasks-file",
+            str(tasks_file),
+            "--workers",
+            "1",
+            "--evaluate",
+            "--judge-runs",
+            "1",
+            "--output-dir",
+            str(output_dir),
+            "--log-root",
+            str(log_root),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert len(captured) == 1

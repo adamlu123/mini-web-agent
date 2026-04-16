@@ -5,12 +5,20 @@ import base64
 import json
 import mimetypes
 import os
+import random
+import sys
+import time
 from pathlib import Path
 from typing import Any
 
 import httpx
 
 from miniswewebagent.models.phyagi_model import _extract_response_text, text_part
+
+# HTTP statuses that are commonly transient at the phyagi gateway and worth
+# retrying. 401/403/404/413/422 are intentionally omitted — they will not
+# succeed on retry.
+_RETRYABLE_STATUS_CODES = frozenset({400, 408, 409, 425, 429, 500, 502, 503, 504})
 
 
 def _build_prompt(question: str) -> str:
@@ -69,6 +77,54 @@ def _gateway_config(args: argparse.Namespace) -> tuple[str, str, str]:
     return api_key, endpoint, model
 
 
+def _sleep_backoff(attempt: int, base_delay: float) -> float:
+    delay = base_delay * (2 ** (attempt - 1))
+    delay += random.uniform(0.0, delay * 0.25)
+    time.sleep(delay)
+    return delay
+
+
+def _post_with_retry(
+    client: httpx.Client,
+    url: str,
+    *,
+    headers: dict[str, str],
+    json_body: dict[str, Any],
+    max_attempts: int,
+    base_delay: float,
+) -> httpx.Response:
+    last_error: str = ""
+    for attempt in range(1, max_attempts + 1):
+        try:
+            response = client.post(url, headers=headers, json=json_body)
+        except httpx.TransportError as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
+            if attempt >= max_attempts:
+                raise
+            delay = _sleep_backoff(attempt, base_delay)
+            print(
+                f"[image_qa] transport error on attempt {attempt}/{max_attempts}: "
+                f"{last_error}; retrying in {delay:.2f}s",
+                file=sys.stderr,
+            )
+            continue
+
+        if response.status_code in _RETRYABLE_STATUS_CODES and attempt < max_attempts:
+            snippet = response.text[:500].replace("\n", " ") if response.text else ""
+            delay = _sleep_backoff(attempt, base_delay)
+            print(
+                f"[image_qa] retryable HTTP {response.status_code} on attempt "
+                f"{attempt}/{max_attempts}: {snippet}; retrying in {delay:.2f}s",
+                file=sys.stderr,
+            )
+            continue
+
+        response.raise_for_status()
+        return response
+
+    raise RuntimeError("image_qa retry loop exited without returning")  # unreachable
+
+
 def run_image_qa(
     *,
     image_path: Path | None = None,
@@ -78,6 +134,8 @@ def run_image_qa(
     endpoint: str,
     model: str,
     timeout_seconds: int,
+    max_attempts: int = 4,
+    retry_base_delay: float = 1.0,
 ) -> dict[str, Any]:
     resolved_image_paths = _normalize_image_paths(image_path=image_path, image_paths=image_paths)
     payload = {
@@ -115,15 +173,17 @@ def run_image_qa(
     }
 
     with httpx.Client(timeout=timeout_seconds) as client:
-        response = client.post(
+        response = _post_with_retry(
+            client,
             endpoint,
             headers={
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {api_key}",
             },
-            json=payload,
+            json_body=payload,
+            max_attempts=max_attempts,
+            base_delay=retry_base_delay,
         )
-        response.raise_for_status()
         response_payload = response.json()
 
     raw_text = _extract_response_text(response_payload).strip()
@@ -152,6 +212,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--endpoint", default="", help="Override the gateway endpoint.")
     parser.add_argument("--api-key", default="", help="Override the gateway API key.")
     parser.add_argument("--timeout-seconds", type=int, default=60, help="Gateway request timeout.")
+    parser.add_argument(
+        "--max-attempts",
+        type=int,
+        default=4,
+        help="Max total HTTP attempts before giving up (1 = no retry).",
+    )
+    parser.add_argument(
+        "--retry-base-delay",
+        type=float,
+        default=1.0,
+        help="Base delay (seconds) for exponential backoff between retries.",
+    )
     return parser
 
 
@@ -167,6 +239,8 @@ def main(argv: list[str] | None = None) -> int:
         endpoint=endpoint,
         model=model,
         timeout_seconds=args.timeout_seconds,
+        max_attempts=args.max_attempts,
+        retry_base_delay=args.retry_base_delay,
     )
     print(json.dumps(result, ensure_ascii=True, indent=2))
     return 0
