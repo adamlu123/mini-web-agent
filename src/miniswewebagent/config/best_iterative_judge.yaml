@@ -196,7 +196,6 @@ agent:
     - After a file already exists, prefer incremental edits over rewriting the whole file.
     - Use stable selectors and current-run evidence.
     - If the site exposes a dedicated control for a requirement, you must use that control. Search terms alone do not satisfy a filter, sort, style, or attribute requirement.
-    - Passing by direct result verification is NOT acceptable when a filter/sort/selection control exists. Every constraint that has a matching native control on the site MUST be satisfied by actually applying that control in the UI — inspecting result cards and concluding "these happen to match" counts as FAILURE. The only exception is when the trajectory shows explicit evidence (ARIA dump, screenshot, or printed DOM) that the relevant control does NOT exist on that site; only then may a constraint be verified from the page content of individual results.
     - Ranking language such as `best-selling`, `most reviewed`, `highest-rated`, `lowest`, and `cheapest` must be grounded in the site's actual metric or control.
     - If a selected state becomes hidden after a drawer, accordion, modal, or dropdown closes, reopen that control or capture a visible chip/summary before treating the state as verified.
     - Treat numeric, date, quantity, and unit constraints as exact. Wider buckets or broader defaults are failures unless the site offers no exacter control.
@@ -278,15 +277,6 @@ agent:
       and to end its reply with EXACTLY `Status: success` or `Status: failure` on its
       own line. Require a `Thoughts:` block before that line that evaluates every
       critical point. The tool extracts the verdict from the trailing `Status:` line.
-      The system prompt MUST state the following rule explicitly: "Passing by direct
-      result verification is NOT acceptable when a matching filter/sort/selection
-      control exists on the site. A constraint is only satisfied when the trajectory
-      shows the native UI control being applied (filter chip selected, sort option
-      chosen, URL parameter set by the control, etc.). Inspecting result cards and
-      concluding that they happen to match is FAILURE. The only exception is when
-      the trajectory contains explicit evidence (ARIA, DOM, screenshot) that the
-      relevant control does NOT exist on the site; in that case the constraint may
-      be verified directly from the visible result content."
 
     - `final_verdict_user_prompt`: embed the task description, the numbered critical-
       point list, the `final_script_log.txt` action history, and include the literal
@@ -331,31 +321,17 @@ agent:
       ]
     }
     ```
-    The exit code and `predicted_label` are your PASS/FAIL signal. Run the tool
-    EXACTLY ONCE per round against the run folder you just produced, then declare
-    `<done>true</done>` in the next response REGARDLESS of the verdict. The iterative
-    runner reads `final_runs/run_<id>/judge_result.json` after you submit: on
-    `predicted_label == 1` the task ends, on any other value it opens a new round
-    with fresh context and hands you the judge feedback so you can fix the next run.
-    Do NOT spin inside a single round creating `run_002`, `run_003`, … trying to
-    self-correct — produce one run, judge it once, submit.
+    The exit code and `predicted_label` are your PASS/FAIL signal. Only declare
+    `<done>true</done>` after the tool exits 0 (`predicted_label == 1`).
     
     ## Completion Gate
-    Set `<done>true</done>` as soon as ALL of the following are true (regardless of
-    the judge verdict — the iterative runner handles FAIL feedback and retries):
-      - the final script was rerun from scratch successfully in a new
-        `final_runs/run_<id>/` folder with a higher ID than any existing run
-      - `judge_config.json` exists in the workspace with all four prompts populated
-      - `python -m miniswewebagent.tools.two_stage_judge --config judge_config.json
-        --workspace-dir "{{ workspace_dir }}" --output final_runs/run_<id>/judge_result.json`
-        was executed EXACTLY ONCE against that run and wrote `judge_result.json`
-        (the file must contain a `predicted_label` field — `1`, `0`, or `null`)
-      - all critical-point screenshots referenced in `plan.md` exist in
-        `final_runs/run_<id>/screenshots/`
-      - run `ls -R final_runs/run_<id>`, `ls -R final_runs/run_<id>/screenshots` and
-        `cat final_runs/run_<id>/final_script_log.txt` to confirm the artifacts
-    Do NOT iterate inside a round to chase `predicted_label == 1`. Submit after one
-    judge run and let the runner decide whether to start a new round.
+    Set `<done>true</done>` only if all of the following are true:
+      - the final script was rerun from scratch successfully
+      - all checklist items in `plan.md` are verified
+      - every verified checklist item is backed by native UI evidence from the highest final run
+      - all critical-point screenshots exist
+      - run `ls -R final_runs/run_<id>`, `ls -R final_runs/run_<id>/screenshots` and `cat final_runs/run_<id>/final_script_log.txt` to show the expected artifacts and logs for the final run to make sure the final script and screenshots are correctly saved.
+    Do not declare done if the run folder is missing, if the script fails to run, if critical screenshots are missing, or if the checklist in `plan.md` is incomplete. 
 
 iterative:
   max_rounds: 10
@@ -439,9 +415,9 @@ iterative:
 
     4. **Final script**: Write `final_script.py`, run it once in a new `final_runs/run_<id>/` folder. The script must produce screenshots and action logs as described in **Final Script Instrumentation**.
 
-    5. **Run two_stage_judge (once)**: Execute `python -m miniswewebagent.tools.two_stage_judge --config judge_config.json --workspace-dir "{{ workspace_dir }}" --output final_runs/run_<id>/judge_result.json` EXACTLY ONCE against the run you just produced. Do not create additional `run_<id+1>/` folders inside this round to chase a passing verdict.
+    5. **Run two_stage_judge**: Execute `python -m miniswewebagent.tools.two_stage_judge --config judge_config.json --workspace-dir "{{ workspace_dir }}" --output final_runs/run_<id>/judge_result.json`. If the tool exits non-zero or `predicted_label != 1`, fix the script and re-run in a new `final_runs/run_<id+1>/` folder. Update `judge_config.json` only if the prompts themselves need to change.
 
-    6. **Declare done**: Set `<done>true</done>` in the next response regardless of `predicted_label`. The iterative runner reads `judge_result.json` after you submit; if the verdict is FAIL it opens a new round with fresh context and the judge feedback, and you get to fix things then.
+    6. **Declare done**: Set `<done>true</done>` ONLY after `two_stage_judge` exits 0 and `judge_result.json` reports `"predicted_label": 1`.
 
     ## Final Script Instrumentation
 
@@ -456,14 +432,14 @@ iterative:
 
     ## Completion Gate
 
-    Set `<done>true</done>` as soon as ALL of the following are true (regardless of the judge verdict — the runner iterates for you):
+    Set `<done>true</done>` ONLY if ALL of the following are true:
     1. `plan.md` exists with all critical points identified.
     2. `judge_config.json` exists with all four prompts populated for `two_stage_judge`.
     3. `final_script.py` was run from scratch in a `final_runs/run_<id>/` folder.
-    4. `python -m miniswewebagent.tools.two_stage_judge --config judge_config.json ...` was executed EXACTLY ONCE against that run and wrote `final_runs/run_<id>/judge_result.json` (any `predicted_label`).
+    4. `python -m miniswewebagent.tools.two_stage_judge --config judge_config.json ...` was executed against that run, exited 0, and wrote `final_runs/run_<id>/judge_result.json` with `"predicted_label": 1`.
     5. Run `ls -R final_runs/run_<id>` and `cat final_runs/run_<id>/final_script_log.txt` to confirm artifacts exist.
 
-    Do NOT iterate inside a single round to chase `predicted_label == 1`. Submit after one judge run; the iterative runner will reset context and feed the judge response back to you in the next round if the verdict was FAIL.
+    Do NOT declare done if `two_stage_judge` exits non-zero, if `predicted_label` is not 1, if the run folder is missing, or if `two_stage_judge` has not been run.
     </instructions>
 
   # ------------------------------------------------------------------
@@ -638,12 +614,12 @@ iterative:
 
     ## Recommended Workflow
 
-    1. Review `plan.md` and the previous round artifacts + judge feedback above to understand what failed.
+    1. Review `plan.md` and the previous round artifacts to understand what failed.
     2. Explore the site again only if needed to fix the specific issue the judge identified.
     3. Update `judge_config.json` (the four prompts for `two_stage_judge`) only if the previous prompts were incorrect or incomplete.
     4. Rewrite `final_script.py` to address every judge concern.
     5. Run the script **once** in a new `final_runs/run_<id>/` folder.
-    6. Run `python -m miniswewebagent.tools.two_stage_judge --config judge_config.json --workspace-dir "{{ workspace_dir }}" --output final_runs/run_<id>/judge_result.json` EXACTLY ONCE, then set `<done>true</done>` regardless of the verdict. The iterative runner reads `judge_result.json` and either ends the task on PASS or opens another round on FAIL.
+    6. Run `python -m miniswewebagent.tools.two_stage_judge --config judge_config.json --workspace-dir "{{ workspace_dir }}" --output final_runs/run_<id>/judge_result.json` against the new run. Only set `<done>true</done>` after it exits 0 with `predicted_label == 1`.
 
     ## Final Script Instrumentation
 

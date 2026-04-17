@@ -112,7 +112,10 @@ class IterativeRunner:
 
     Config keys (all under the ``iterative`` section in YAML):
       max_rounds            int   Maximum number of rounds (default 5).
-      judge_mode            str   "om2w" (external judge) or "workspace" (agent-created judge.py).
+      judge_mode            str   "om2w" (external WebJudge eval), "workspace" (legacy
+                                   agent-created judge.py), or "tool" (read the
+                                   agent-produced judge_result.json written by the
+                                   in-workspace two_stage_judge tool).
       judge_model           str   Model name for the om2w judge (e.g. "gpt-4o").
       judge_gateway_endpoint str  OpenAI-compatible gateway; uses env var if empty.
       judge_score_threshold int   Image relevance threshold for the om2w judge (default 3).
@@ -260,6 +263,8 @@ class IterativeRunner:
                     artifacts=round_artifacts,
                     workspace_dir=workspace_dir,
                 )
+            elif self.judge_mode == "tool":
+                judge_result = _read_tool_judge_result(artifacts=round_artifacts)
             else:
                 judge_result = _run_judge(
                     task=task,
@@ -444,7 +449,11 @@ def _fallback_workspace_screenshots(workspace_dir: Path, max_screenshots: int = 
 
 
 def _save_judge_result(artifacts: RoundArtifacts) -> None:
-    """Write judge_result.json next to the final_runs/run_N/ folder."""
+    """Write iterative_judge_result.json next to the final_runs/run_N/ folder.
+
+    We write to ``iterative_judge_result.json`` (not ``judge_result.json``) so we
+    never clobber files the in-workspace tool (e.g. ``two_stage_judge``) wrote.
+    """
     if artifacts.judge_result is None:
         return
     payload = {
@@ -453,8 +462,39 @@ def _save_judge_result(artifacts: RoundArtifacts) -> None:
         "key_points": artifacts.judge_result.key_points,
         "record": artifacts.judge_result.record,
     }
-    out_path = artifacts.round_dir / "judge_result.json"
+    out_path = artifacts.round_dir / "iterative_judge_result.json"
     out_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _read_tool_judge_result(*, artifacts: RoundArtifacts) -> JudgeResult:
+    """Read the agent-produced ``judge_result.json`` written by ``two_stage_judge``.
+
+    Expected shape: {"predicted_label": 1|0|null, "final_response": str,
+    "image_records": [...], ...}. We treat ``predicted_label == 1`` as success.
+    """
+    jr_path = artifacts.round_dir / "judge_result.json"
+    if not jr_path.exists():
+        return JudgeResult(
+            success=False,
+            response_text=f"[Tool judge: judge_result.json not found at {jr_path}]",
+        )
+    try:
+        data = json.loads(jr_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return JudgeResult(
+            success=False,
+            response_text=f"[Tool judge: failed to parse judge_result.json: {exc}]",
+        )
+    label = data.get("predicted_label")
+    response_text = str(data.get("final_response") or "")
+    if not response_text:
+        response_text = f"[Tool judge: predicted_label={label}]"
+    return JudgeResult(
+        success=label == 1,
+        response_text=response_text,
+        record=list(data.get("image_records") or []),
+        key_points="",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -494,7 +534,7 @@ def _run_workspace_judge(
             cmd,
             text=True,
             capture_output=True,
-            timeout=180,
+            timeout=300,
             cwd=str(workspace_dir),
             encoding="utf-8",
             errors="replace",

@@ -72,7 +72,7 @@ def _gateway_config(args: argparse.Namespace) -> tuple[str, str, str]:
     if not api_key:
         raise RuntimeError("Missing OPENAI_GATEWAY_API_KEY or PHYAGI_API_KEY.")
 
-    endpoint = args.endpoint or os.environ.get("OPENAI_GATEWAY_ENDPOINT", "http://gateway.phyagi.net/api/responses")
+    endpoint = args.endpoint or "http://gateway.phyagi.net/api/responses"
     model = args.model or os.environ.get("OPENAI_GATEWAY_MODEL", "gpt-5.4")
     return api_key, endpoint, model
 
@@ -148,7 +148,7 @@ def run_image_qa(
                 + [_high_detail_image_part_from_path(path) for path in resolved_image_paths],
             }
         ],
-        "max_output_tokens": 500,
+        "max_output_tokens": 32000,
         "text": {
             "format": {
                 "type": "json_schema",
