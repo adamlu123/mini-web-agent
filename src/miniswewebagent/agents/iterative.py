@@ -115,7 +115,7 @@ class IterativeRunner:
       judge_mode            str   "om2w" (external WebJudge eval), "workspace" (legacy
                                    agent-created judge.py), or "tool" (read the
                                    agent-produced judge_result.json written by the
-                                   in-workspace two_stage_judge tool).
+                                   in-workspace self_reflection tool).
       judge_model           str   Model name for the om2w judge (e.g. "gpt-4o").
       judge_gateway_endpoint str  OpenAI-compatible gateway; uses env var if empty.
       judge_score_threshold int   Image relevance threshold for the om2w judge (default 3).

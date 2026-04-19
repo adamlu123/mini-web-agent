@@ -201,32 +201,30 @@ agent:
     ## Task Reflection Tool
 
     Do NOT hand-roll a `judge.py` that loops `image_qa`. Use the built-in
-    `miniswewebagent.tools.two_stage_judge` CLI.
+    `miniswewebagent.tools.self_reflection` CLI.
 
       1. Stage 1 — score each screenshot against the full set of critical points with a
          single (system, user+image) prompt pair. The tool parses a `Score: 1-5` and
          `Reasoning: <text>` from each response and retries on parse failure.
-      2. Stage 2 — collect the reasonings of every screenshot whose score met the
-         threshold (default 3), drop them into the final user prompt template via
-         `{image_reasonings}`, attach those kept images, and make ONE aggregated call
-         that must end with `Status: success` or `Status: failure`.
+      2. Stage 2 — drop every per-image `Reasoning` into the final user prompt template
+         via `{image_reasonings}`, attach EVERY screenshot (no filtering), and make ONE
+         aggregated call that must end with `Status: success` or `Status: failure`.
 
     Your job is to AUTHOR the four prompts and point the tool at the right screenshots.
-    The tool handles parallel per-image scoring, threshold filtering, final aggregation,
-    and verdict parsing. Default model is `gpt-5.4` via the phyagi gateway.
+    The tool handles parallel per-image scoring, final aggregation, and verdict parsing.
+    Default model is `gpt-5.4` via the phyagi gateway.
 
     **CLI interface:**
     ```
-    python -m miniswewebagent.tools.two_stage_judge \
+    python -m miniswewebagent.tools.self_reflection \
       --config {{ workspace_dir }}/judge_config.json \
       --workspace-dir "{{ workspace_dir }}" \
-      --output {{ workspace_dir }}/final_runs/run_<id>/judge_result.json \
-      --score-threshold 3
+      --output {{ workspace_dir }}/final_runs/run_<id>/judge_result.json
     ```
 
     Exit code is 0 on PASS, 1 on FAIL / unparsed. The `--output` file is a JSON document
-    containing per-image records (`Score`, `Reasoning`, `Response`), the list of kept
-    images, the full final-stage prompt, the model's final response, and
+    containing per-image records (`Score`, `Reasoning`, `Response`), the image path
+    list, the full final-stage prompt, the model's final response, and
     `predicted_label` (1=success, 0=failure, null=unparsed).
 
     **judge_config.json schema (you write this each round):**
@@ -240,8 +238,7 @@ agent:
       "image_judge_system_prompt":   "...see below...",
       "image_judge_user_prompt":     "...see below...",
       "final_verdict_system_prompt": "...see below...",
-      "final_verdict_user_prompt":   "...{image_reasonings}...",
-      "final_verdict_user_prompt_no_images": "...optional fallback..."
+      "final_verdict_user_prompt":   "...{image_reasonings}..."
     }
     ```
     Any `<field>_file` variant (e.g. `image_judge_user_prompt_file`) may point to a
@@ -273,13 +270,10 @@ agent:
     - `final_verdict_user_prompt`: embed the task description, the numbered critical-
       point list, the `final_script_log.txt` action history, and include the literal
       token `{image_reasonings}` where you want the per-image reasonings injected. The
-      tool renders that token as a numbered Python str.format substitution of the kept
-      screenshots' reasonings, so any other literal curly braces in this string MUST
+      tool renders that token as a numbered Python str.format substitution of every
+      screenshot's reasoning, so any other literal curly braces in this string MUST
       be doubled (write {% raw %}`{{`{% endraw %} and {% raw %}`}}`{% endraw %} in the
       JSON to emit a literal `{` or `}`).
-
-    - `final_verdict_user_prompt_no_images` (optional): same as above but without the
-      `{image_reasonings}` token, used when zero screenshots clear the threshold.
 
     **Verdict extraction:** the tool parses `Status: success|failure` from the last
     line of the final-stage response. Missing or malformed `Status:` counts as FAIL
@@ -297,15 +291,15 @@ agent:
       "final_runs/run_001/screenshots/final_execution_2_apply_beds.png",
       "final_runs/run_001/screenshots/final_execution_3_apply_price.png"
     ]
-    $ python -m miniswewebagent.tools.two_stage_judge \
+    $ python -m miniswewebagent.tools.self_reflection \
         --config judge_config.json \
         --workspace-dir "{{ workspace_dir }}" \
         --output final_runs/run_001/judge_result.json
-    $ jq '{predicted_label, kept: (.kept_image_paths|length), records: (.image_records|map({f: .image_path, s: .Score}))}' \
+    $ jq '{predicted_label, images: (.image_paths|length), records: (.image_records|map({f: .image_path, s: .Score}))}' \
         final_runs/run_001/judge_result.json
     {
       "predicted_label": 0,
-      "kept": 2,
+      "images": 3,
       "records": [
         {"f": ".../final_execution_1_set_location.png", "s": 4},
         {"f": ".../final_execution_2_apply_beds.png",   "s": 4},
@@ -401,15 +395,15 @@ iterative:
        ```
        Each critical point must be independently verifiable from a screenshot or log entry.
 
-    2. **Author judge_config.json**: Write `{{ workspace_dir }}/judge_config.json` containing the screenshot list and the four prompts (`image_judge_system_prompt`, `image_judge_user_prompt`, `final_verdict_system_prompt`, `final_verdict_user_prompt`) for `miniswewebagent.tools.two_stage_judge`. Embed the full critical-point list from `plan.md` and the `final_script_log.txt` content into the user prompts. See the **two_stage_judge Tool** section in the system prompt for the required schema and prompt contents.
+    2. **Author judge_config.json**: Write `{{ workspace_dir }}/judge_config.json` containing the screenshot list and the four prompts (`image_judge_system_prompt`, `image_judge_user_prompt`, `final_verdict_system_prompt`, `final_verdict_user_prompt`) for `miniswewebagent.tools.self_reflection`. Embed the full critical-point list from `plan.md` and the `final_script_log.txt` content into the user prompts. See the **self_reflection Tool** section in the system prompt for the required schema and prompt contents.
 
     3. **Exploration**: Inspect `task.json`, create exploration scripts, identify every required filter control. Use `image_qa` during exploration to verify UI state.
 
     4. **Final script**: Write `final_script.py`, run it once in a new `final_runs/run_<id>/` folder. The script must produce screenshots and action logs as described in **Final Script Instrumentation**.
 
-    5. **Run two_stage_judge**: Execute `python -m miniswewebagent.tools.two_stage_judge --config judge_config.json --workspace-dir "{{ workspace_dir }}" --output final_runs/run_<id>/judge_result.json`. If the tool exits non-zero or `predicted_label != 1`, fix the script and re-run in a new `final_runs/run_<id+1>/` folder. Update `judge_config.json` only if the prompts themselves need to change.
+    5. **Run self_reflection**: Execute `python -m miniswewebagent.tools.self_reflection --config judge_config.json --workspace-dir "{{ workspace_dir }}" --output final_runs/run_<id>/judge_result.json`. If the tool exits non-zero or `predicted_label != 1`, fix the script and re-run in a new `final_runs/run_<id+1>/` folder. Update `judge_config.json` only if the prompts themselves need to change.
 
-    6. **Declare done**: Set `<done>true</done>` ONLY after `two_stage_judge` exits 0 and `judge_result.json` reports `"predicted_label": 1`.
+    6. **Declare done**: Set `<done>true</done>` ONLY after `self_reflection` exits 0 and `judge_result.json` reports `"predicted_label": 1`.
 
     ## Final Script Instrumentation
 
@@ -418,20 +412,20 @@ iterative:
     - save critical-point screenshots as `final_runs/run_<id>/screenshots/final_execution_<step_number>_<action>.png`
     - create or reset `final_runs/run_<id>/final_script_log.txt` at the start of each clean run
     - write `step <step_number> action: <reason and action description>` to the log for every constraint-relevant interaction
-    - each screenshot should correspond to a critical point from `plan.md` so that `two_stage_judge` can verify it
+    - each screenshot should correspond to a critical point from `plan.md` so that `self_reflection` can verify it
 
-    This instrumentation is mandatory because both `two_stage_judge` and the external judge evaluate those screenshots and action logs.
+    This instrumentation is mandatory because both `self_reflection` and the external judge evaluate those screenshots and action logs.
 
     ## Completion Gate
 
     Set `<done>true</done>` ONLY if ALL of the following are true:
     1. `plan.md` exists with all critical points identified.
-    2. `judge_config.json` exists with all four prompts populated for `two_stage_judge`.
+    2. `judge_config.json` exists with all four prompts populated for `self_reflection`.
     3. `final_script.py` was run from scratch in a `final_runs/run_<id>/` folder.
-    4. `python -m miniswewebagent.tools.two_stage_judge --config judge_config.json ...` was executed against that run, exited 0, and wrote `final_runs/run_<id>/judge_result.json` with `"predicted_label": 1`.
+    4. `python -m miniswewebagent.tools.self_reflection --config judge_config.json ...` was executed against that run, exited 0, and wrote `final_runs/run_<id>/judge_result.json` with `"predicted_label": 1`.
     5. Run `ls -R final_runs/run_<id>` and `cat final_runs/run_<id>/final_script_log.txt` to confirm artifacts exist.
 
-    Do NOT declare done if `two_stage_judge` exits non-zero, if `predicted_label` is not 1, if the run folder is missing, or if `two_stage_judge` has not been run.
+    Do NOT declare done if `self_reflection` exits non-zero, if `predicted_label` is not 1, if the run folder is missing, or if `self_reflection` has not been run.
     </instructions>
 
   # ------------------------------------------------------------------
@@ -527,10 +521,10 @@ iterative:
 
     1. Review `plan.md` and the previous round artifacts to understand what failed.
     2. Explore the site again only if needed to fix the specific issue the judge identified.
-    3. Update `judge_config.json` (the four prompts for `two_stage_judge`) only if the previous prompts were incorrect or incomplete.
+    3. Update `judge_config.json` (the four prompts for `self_reflection`) only if the previous prompts were incorrect or incomplete.
     4. Rewrite `final_script.py` to address every judge concern.
     5. Run the script **once** in a new `final_runs/run_<id>/` folder.
-    6. Run `python -m miniswewebagent.tools.two_stage_judge --config judge_config.json --workspace-dir "{{ workspace_dir }}" --output final_runs/run_<id>/judge_result.json` against the new run. Only set `<done>true</done>` after it exits 0 with `predicted_label == 1`.
+    6. Run `python -m miniswewebagent.tools.self_reflection --config judge_config.json --workspace-dir "{{ workspace_dir }}" --output final_runs/run_<id>/judge_result.json` against the new run. Only set `<done>true</done>` after it exits 0 with `predicted_label == 1`.
 
     ## Final Script Instrumentation
 
@@ -540,7 +534,7 @@ iterative:
     - create or reset `final_runs/run_<id>/final_script_log.txt` at the start of each clean run
     - write `step <step_number> action: <reason and action description>` to the log for every constraint-relevant interaction
 
-    This instrumentation is mandatory because both `two_stage_judge` and the external judge evaluate those screenshots and action logs.
+    This instrumentation is mandatory because both `self_reflection` and the external judge evaluate those screenshots and action logs.
     </instructions>
 
 run:
