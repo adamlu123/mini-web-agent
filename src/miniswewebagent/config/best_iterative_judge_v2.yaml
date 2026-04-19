@@ -87,9 +87,9 @@ agent:
     Emit exactly ONE <response> block per turn. Never output multiple <response> blocks.
 
     Global constraints:
-    - Use <bash_command>, not <python_code>.
-    - You can reason internally, then execute one bash command, then inspect the next observation.
-    - There is NO persistent browser state. Every Playwright run must create a fresh Browserbase session, navigate from scratch, and reconstruct state via code.
+    - Use <bash_command> for exactly one shell command per turn. Never emit raw Python or shell outside the required XML wrapper.
+    - You should reason internally, then execute one bash command, then inspect the next observation.
+    - There is NO persistent browser state. Every Playwright run must create a fresh Browserbase cloud session, navigate from scratch, and reconstruct state via code.
     - Step screenshots are NOT automatically attached to your prompt in this benchmark variant. If you need visual interpretation, you must invoke the image QA tool yourself.
     - Set `<done>true</done>` only when the task goal is complete and `final_script.py` is the final artifact.
     - NEVER set `<done>true</done>` in the same response as a `<bash_command>`. Declare done in a SEPARATE response AFTER you have already executed and verified the final script in a prior step.
@@ -187,11 +187,6 @@ agent:
       ```
 
     ## Rules
-    - Use `<bash_command>` for exactly one shell command per turn.
-    - Never emit raw Python or shell outside the required XML wrapper.
-    - The shell is stateless; each command runs independently. Always use Browserbase cloud sessions.
-    - Screenshots are not attached automatically; use `image_qa` when visual confirmation matters.
-    - Avoid `full_page=True` by default; prefer viewport screenshots. Use full-page only when content outside the viewport is required.
     - After a file already exists, prefer incremental edits over rewriting the whole file.
     - Use stable selectors and current-run evidence.
     - If the site exposes a dedicated control for a requirement, you must use that control. Search terms alone do not satisfy a filter, sort, style, or attribute requirement.
@@ -200,15 +195,13 @@ agent:
     - Treat numeric, date, quantity, and unit constraints as exact. Wider buckets or broader defaults are failures unless the site offers no exacter control.
     - If the task asks for a final datum (code, price, quote, review, winner, benefit list), state that datum explicitly in `<final_response>`.
     - For blocker claims (Access Denied, unavailable controls), only stop after repeated evidence from the actual site UI.
-
     - Make sure to save as more critical points as possible, especially those that show the application of required filters or constraints, and the final result display. The more evidence you save, the higher chance the judge will verify the successful completion of the task.
     It also needs to save the final response of the task in `final_runs/run_<id>/final_script_log.txt` in the end.
 
-    ## two_stage_judge Tool
+    ## Task Reflection Tool
 
     Do NOT hand-roll a `judge.py` that loops `image_qa`. Use the built-in
-    `miniswewebagent.tools.two_stage_judge` CLI, which mirrors the
-    `WebJudge_Online_Mind2Web_Sandbox` flow:
+    `miniswewebagent.tools.two_stage_judge` CLI.
 
       1. Stage 1 — score each screenshot against the full set of critical points with a
          single (system, user+image) prompt pair. The tool parses a `Score: 1-5` and
@@ -439,87 +432,6 @@ iterative:
     5. Run `ls -R final_runs/run_<id>` and `cat final_runs/run_<id>/final_script_log.txt` to confirm artifacts exist.
 
     Do NOT declare done if `two_stage_judge` exits non-zero, if `predicted_label` is not 1, if the run folder is missing, or if `two_stage_judge` has not been run.
-    </instructions>
-
-  # ------------------------------------------------------------------
-  # Gate-failed instance template: previous round ran but never produced
-  # a valid final_runs/run_N/ directory (completion gate rejected it).
-  # Used when prev_gate_failed=True and prev_artifacts=None.
-  # ------------------------------------------------------------------
-  gate_failed_instance_template: |
-    Task: {{ task }}
-    {% if task_id %}Task ID: {{ task_id }}
-    {% endif %}{% if start_url %}Start URL: {{ start_url }}
-    {% endif %}Workspace root: {{ workspace_dir }}
-    Task metadata JSON: {{ task_metadata_path }}
-    Required final script path: {{ final_script_path }}
-    Iteration round: {{ round_id }} (previous round: {{ prev_round_id }} — gate failed)
-
-    ══════════════════════════════════════════════════════════════
-    ⚠ COMPLETION GATE FAILED (round {{ prev_round_id }})
-    ══════════════════════════════════════════════════════════════
-
-    The previous round ({{ prev_round_id }}) finished without producing a valid
-    `final_runs/run_<id>/` directory.  The completion gate requires:
-      • A `final_runs/run_<id>/final_script_log.txt`, OR
-      • A `final_runs/run_<id>/screenshots/` directory with images.
-
-    Previous round's output directory: {{ prev_round_dir }}
-
-    All work from round {{ prev_round_id }} is still in the workspace at `{{ workspace_dir }}`.
-    Inspect it (plan.md, logs/, steps/, command_history.sh) to understand what went wrong
-    and why the final run folder was not created or is empty.
-
-    ══════════════════════════════════════════════════════════════
-    YOUR GOAL FOR THIS ROUND
-    ══════════════════════════════════════════════════════════════
-
-    1. Inspect the previous round's artifacts in `{{ workspace_dir }}` to diagnose what failed.
-    2. Fix the issue (e.g., network error, wrong path, script crash before writing the log).
-    3. Create exactly ONE new `final_runs/run_<id>/` folder (higher ID than any existing).
-    4. Run the corrected `final_script.py` inside that folder.
-    5. Ensure `final_script_log.txt` AND at least one screenshot are written successfully.
-    6. Then declare done.
-
-    <instructions>
-    # Task Instructions
-
-    You're solving an Online-Mind2Web task through a stateless local terminal + workspace harness.
-
-    <IMPORTANT>
-    This is an interactive process where you reason, execute exactly one bash command, inspect the result, and then produce your next command.
-    </IMPORTANT>
-
-    ## Harness Rules
-
-    - Work only inside `{{ workspace_dir }}`.
-    - The required final artifact is `{{ final_script_path }}`.
-    - Create exactly ONE new `final_runs/run_<id>/` folder for this round (higher ID than existing runs). But you are free to modify/add/remove any files in the run folder as needed to fix the issue.
-    - Store that run's `final_script.py`, `final_script_log.txt`, and verification screenshots **only** inside that run folder.
-    - Always use Browserbase cloud sessions.
-
-    ## Web Task Rules
-
-    - Do not guess UI interactions. Use printed evidence from the current run.
-    - A broad search query does not satisfy explicit filter constraints when the site exposes dedicated controls.
-    - Save critical-point screenshots inside the active `final_runs/run_<id>/screenshots/` folder.
-
-    ## Task Success Criteria
-
-    1. Filtered results must be displayed correctly.
-    2. Specific filter conditions must be applied using filter/sort controls.
-    3. Numeric ranges must exactly match the task requirement.
-    4. All explicit filters must use site controls when those controls exist.
-
-    ## Final Script Instrumentation
-
-    `final_script.py` must:
-    - be stored as `final_runs/run_<id>/final_script.py`
-    - save screenshots as `final_runs/run_<id>/screenshots/final_execution_<N>_<action>.png`
-    - create `final_runs/run_<id>/final_script_log.txt` at startup and write `step <N> action: <desc>` for every interaction
-    - copy itself to `{{ workspace_dir }}/final_script.py` at the end
-
-    This instrumentation is mandatory; the external judge evaluates those screenshots and logs.
     </instructions>
 
   # ------------------------------------------------------------------

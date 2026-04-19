@@ -4,8 +4,19 @@ import os
 from pathlib import Path
 from typing import Any, Protocol
 
-import dotenv
-from platformdirs import user_config_dir
+try:
+    import dotenv
+except ModuleNotFoundError:
+    class _DotenvShim:
+        @staticmethod
+        def load_dotenv(*args, **kwargs):
+            return False
+    dotenv = _DotenvShim()
+try:
+    from platformdirs import user_config_dir
+except ModuleNotFoundError:
+    def user_config_dir(appname: str) -> str:
+        return str(Path.home() / ".config" / appname)
 
 __version__ = "0.1.0"
 

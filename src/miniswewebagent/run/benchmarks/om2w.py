@@ -52,7 +52,7 @@ def _select_tasks(
     task_level: str | None,
 ) -> list[dict[str, object]]:
     tasks = load_om2w_tasks(tasks_file)
-    if task_level:
+    if task_level and task_level.lower() != "all":
         tasks = [task for task in tasks if task.get("level") == task_level]
     if task_ids:
         selected_ids = set(task_ids)
@@ -203,6 +203,10 @@ def main(
         limit,
         resolved_task_level,
     )
+
+    # Default judge parallelism to the number of tasks when not explicitly set
+    if not (judge_num_proc or run_config.get("judge_num_proc")):
+        resolved_judge_num_proc = max(1, len(tasks))
 
     model_name = str(model_config.get("model_name", "model"))
     step_limit = int(agent_config.get("step_limit", 0) or 0)
