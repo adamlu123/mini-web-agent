@@ -13,6 +13,22 @@ from miniswewebagent.exceptions import FormatError, InterruptAgentFlow, LimitsEx
 from miniswewebagent.utils.serialize import recursive_merge
 
 
+DEFAULT_SUMMARY_USER_PROMPT = """You are about to have your working context compacted to save tokens.
+
+Write a concise but COMPLETE summary of everything relevant from the conversation above so that a fresh
+agent with only this summary (plus the original system prompt and task instructions) can continue the
+task without losing progress. Include:
+
+- The original task goal and all critical points / constraints.
+- The workspace directory and key file paths (plan.md, judge_config.json, final_script.py, final_runs/).
+- Which critical points have been satisfied, which are still open, and any known blockers.
+- Key findings from prior exploration (working selectors, URLs, ARIA labels, pitfalls to avoid).
+- The latest final_runs/run_<id>/ state, most recent self_reflection verdict, and the next action to take.
+
+Write the summary as plain prose and bullet lists. Do NOT issue a new bash_command. Do NOT set done=true.
+Put the entire summary in the `thought` field (or equivalent text field) and leave action fields empty."""
+
+
 class AgentConfig(BaseModel):
     system_template: str
     instance_template: str
@@ -20,6 +36,9 @@ class AgentConfig(BaseModel):
     debug_log: bool = True
     attach_instance_template_after_observation: bool = False
     attach_plan_md_after_observation: bool = False
+    require_self_reflection_success: bool = False
+    summary_every_n_steps: int = 0
+    summary_user_prompt: str = DEFAULT_SUMMARY_USER_PROMPT
     output_path: Path | None = None
 
 
@@ -176,9 +195,111 @@ class DefaultAgent:
             return None
         return self.model.format_message(role="user", content=f"Current plan.md:\n\n{plan_text}")
 
+    def _self_reflection_gate_error(self) -> str | None:
+        """Return an error string if done=true should be blocked pending self_reflection success."""
+        if not self.config.require_self_reflection_success:
+            return None
+        workspace_dir = self.get_template_vars().get("workspace_dir")
+        if not workspace_dir:
+            return (
+                "Completion blocked: require_self_reflection_success is enabled but no workspace_dir is "
+                "available. Cannot locate final_runs/run_<id>/judge_result.json. Do not set done=true."
+            )
+        final_runs_dir = Path(workspace_dir) / "final_runs"
+        if not final_runs_dir.is_dir():
+            return (
+                "Completion blocked: no final_runs/ directory exists yet. You must run final_script.py "
+                "in a final_runs/run_<id>/ folder and then run "
+                "`python -m miniswewebagent.tools.self_reflection --config judge_config.json "
+                "--workspace-dir \"{0}\" --output final_runs/run_<id>/judge_result.json` with "
+                "predicted_label == 1 before setting done=true."
+            ).format(workspace_dir)
+        run_dirs: list[tuple[int, Path]] = []
+        for entry in final_runs_dir.iterdir():
+            if not entry.is_dir() or not entry.name.startswith("run_"):
+                continue
+            suffix = entry.name[len("run_"):]
+            try:
+                run_id = int(suffix)
+            except ValueError:
+                continue
+            run_dirs.append((run_id, entry))
+        if not run_dirs:
+            return (
+                "Completion blocked: final_runs/ contains no run_<id>/ folders. Create "
+                "final_runs/run_<id>/, execute final_script.py there, then run self_reflection and "
+                "only set done=true after judge_result.json reports predicted_label == 1."
+            )
+        run_dirs.sort(key=lambda item: item[0])
+        latest_run_id, latest_run_dir = run_dirs[-1]
+        judge_path = latest_run_dir / "judge_result.json"
+        if not judge_path.is_file():
+            return (
+                f"Completion blocked: {judge_path} does not exist. Run "
+                f"`python -m miniswewebagent.tools.self_reflection --config judge_config.json "
+                f"--workspace-dir \"{workspace_dir}\" --output {judge_path}` against the latest run "
+                f"(run_{latest_run_id}) and only set done=true after it exits 0 with "
+                f"predicted_label == 1."
+            )
+        try:
+            judge_data = json.loads(judge_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            return (
+                f"Completion blocked: could not parse {judge_path}: {exc}. Re-run self_reflection "
+                f"against run_{latest_run_id} and only set done=true after predicted_label == 1."
+            )
+        predicted_label = judge_data.get("predicted_label")
+        if predicted_label != 1:
+            return (
+                f"Completion blocked: {judge_path} has predicted_label={predicted_label!r} "
+                f"(expected 1). Diagnose the failure from judge_result.json, fix final_script.py, "
+                f"re-run it in a new final_runs/run_{latest_run_id + 1}/ folder, and re-run "
+                f"self_reflection. Only set done=true after self_reflection exits 0 with "
+                f"predicted_label == 1."
+            )
+        return None
+
     def add_messages(self, *messages: dict[str, Any]) -> list[dict[str, Any]]:
         self.messages.extend(messages)
         return list(messages)
+
+    def _compact_history(self) -> None:
+        """Summarize the running transcript via an LLM call and reset messages to [system, summary].
+
+        Preserves the original system message. Replaces every non-system message with a single user
+        message containing the summary. The summarization call is made with the current messages
+        plus a user prompt instructing the model to produce a complete compact summary.
+        """
+        if not self.messages:
+            return
+        system_message = next((m for m in self.messages if m.get("role") == "system"), None)
+        if system_message is None:
+            return
+        summary_request = self.model.format_message(
+            role="user",
+            content=self.config.summary_user_prompt,
+            extra={"interrupt_type": "HistoryCompactionRequest"},
+        )
+        summary_messages = list(self.messages) + [summary_request]
+        try:
+            response = self.model.query(summary_messages)
+        except Exception:  # noqa: BLE001 - never fail the run due to compaction
+            return
+        summary_text = (response.get("content") or "").strip()
+        if not summary_text:
+            extra = response.get("extra", {})
+            summary_text = (extra.get("final_response") or "").strip() or "(empty summary)"
+        summary_message = self.model.format_message(
+            role="user",
+            content=(
+                "## Compacted History Summary\n"
+                f"(context was compacted after step {self.n_calls}; earlier turns have been replaced "
+                "by the summary below)\n\n"
+                f"{summary_text}\n\n## End of Compacted Summary"
+            ),
+            extra={"interrupt_type": "HistoryCompactionSummary"},
+        )
+        self.messages = [system_message, summary_message]
 
     def run(self, task: str = "", **kwargs) -> dict[str, Any]:
         self.extra_template_vars |= {"task": task, **kwargs}
@@ -213,6 +334,13 @@ class DefaultAgent:
                 self.save(self.config.output_path)
             if self.messages[-1].get("role") == "exit":
                 break
+            if (
+                self.config.summary_every_n_steps > 0
+                and self.n_calls > 0
+                and self.n_calls % self.config.summary_every_n_steps == 0
+            ):
+                self._compact_history()
+                self.save(self.config.output_path)
         return self.messages[-1].get("extra", {})
 
     def step(self) -> list[dict[str, Any]]:
@@ -235,6 +363,16 @@ class DefaultAgent:
     def execute_actions(self, message: dict[str, Any]) -> list[dict[str, Any]]:
         extra = message.get("extra", {})
         if extra.get("done"):
+            gate_error = self._self_reflection_gate_error()
+            if gate_error is not None:
+                extra["done"] = False
+                return self.add_messages(
+                    self.model.format_message(
+                        role="user",
+                        content=gate_error,
+                        extra={"interrupt_type": "SelfReflectionGate"},
+                    )
+                )
             self._write_debug_step_artifact(step_index=self.n_calls, assistant_message=message, outputs=[])
             return self.add_messages(
                 self.model.format_message(
