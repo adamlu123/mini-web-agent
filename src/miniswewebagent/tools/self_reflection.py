@@ -29,8 +29,8 @@ JSON schema (paths relative to ``--workspace-dir`` or the CWD)::
       "images": ["final_runs/run_001/screenshots/final_execution_1.png", ...],
       "image_judge_system_prompt":     "...",
       "image_judge_user_prompt":       "...",           // sent verbatim with each image
-      "final_verdict_system_prompt":   "...",
-      "final_verdict_user_prompt":     "...{image_reasonings}..."
+            "final_verdict_system_prompt":   "...",
+            "final_verdict_user_prompt":     "...{action_history_log}...{image_reasonings}..."
     }
 
 Any of the four prompt fields may instead be supplied via
@@ -55,7 +55,7 @@ import random
 import re
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -76,6 +76,8 @@ _PROMPT_FIELDS = (
     ("final_verdict_user_prompt", True),
 )
 
+_IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp"})
+
 
 # ---------------------------------------------------------------------------
 # Image helpers
@@ -90,6 +92,140 @@ def _resolve_image_path(image_path: str, workspace_dir: str = "") -> Path:
     if not path.exists():
         raise FileNotFoundError(f"Image path does not exist: {path}")
     return path
+
+
+def _final_execution_sort_key(name: str) -> tuple[int, str]:
+    match = re.match(r"final_execution_(\d+)_", name)
+    if match:
+        return (int(match.group(1)), name)
+    nums = re.findall(r"\d+", name)
+    return (int(nums[0]) if nums else 0, name)
+
+
+def _run_id_sort_key(name: str) -> tuple[int, str]:
+    match = re.search(r"run_(\d+)", name)
+    if match:
+        return (int(match.group(1)), name)
+    return (0, name)
+
+
+def _sorted_image_paths(image_dir: Path) -> list[Path]:
+    if not image_dir.is_dir():
+        return []
+    return sorted(
+        [path for path in image_dir.iterdir() if path.is_file() and path.suffix.lower() in _IMAGE_SUFFIXES],
+        key=lambda path: _final_execution_sort_key(path.name),
+    )
+
+
+def _discover_latest_run_screenshots(
+    final_runs_dir: Path,
+) -> tuple[Path | None, list[Path]]:
+    """Find the highest-numbered ``final_runs/run_<id>/screenshots`` dir and its images.
+
+    Returns ``(run_dir_or_None, sorted_image_paths)``. Empty list if no images found.
+    """
+    if not final_runs_dir.exists() or not final_runs_dir.is_dir():
+        return None, []
+    candidates = sorted(
+        (d for d in final_runs_dir.iterdir() if d.is_dir() and re.fullmatch(r"run_\d+", d.name)),
+        key=lambda p: _run_id_sort_key(p.name),
+    )
+    # Walk from highest-numbered run downward and pick the first one with any screenshots.
+    for run_dir in reversed(candidates):
+        screenshots_dir = run_dir / "screenshots"
+        images = _sorted_image_paths(screenshots_dir)
+        if images:
+            return run_dir, images
+    return None, []
+
+
+def _infer_run_dir_from_images(images: list[Path]) -> Path | None:
+    run_dirs = {
+        path.parent.parent.resolve()
+        for path in images
+        if path.parent.name == "screenshots"
+    }
+    if len(run_dirs) == 1:
+        return next(iter(run_dirs))
+    return None
+
+
+def _resolve_artifact_dir(
+    *,
+    images: list[Path],
+    discovered_run_dir: Path | None,
+    output_path: str,
+    workspace_dir: str,
+) -> Path | None:
+    candidates: list[Path] = []
+
+    inferred_run_dir = _infer_run_dir_from_images(images)
+    if inferred_run_dir is not None:
+        candidates.append(inferred_run_dir)
+
+    if discovered_run_dir is not None:
+        candidates.append(discovered_run_dir.resolve())
+
+    if output_path:
+        candidates.append(Path(output_path).resolve().parent)
+
+    base_dir = Path(workspace_dir).resolve() if workspace_dir else Path.cwd().resolve()
+    candidates.append(base_dir)
+
+    seen: set[Path] = set()
+    ordered_candidates: list[Path] = []
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        ordered_candidates.append(candidate)
+
+    for candidate in ordered_candidates:
+        if (candidate / "final_script_log.txt").is_file():
+            return candidate
+
+    return ordered_candidates[0] if ordered_candidates else None
+
+
+def _load_action_history_log(artifact_dir: Path | None) -> str:
+    if artifact_dir is None:
+        return ""
+    log_path = artifact_dir / "final_script_log.txt"
+    if not log_path.is_file():
+        return ""
+    return log_path.read_text(encoding="utf-8").rstrip()
+
+
+def _render_final_verdict_user_prompt(
+    template: str,
+    *,
+    image_reasonings: str,
+    action_history_log: str,
+) -> str:
+    rendered = template
+    if "{image_reasonings}" in template or "{action_history_log}" in template:
+        try:
+            rendered = template.format(
+                image_reasonings=image_reasonings,
+                action_history_log=action_history_log,
+            )
+        except KeyError as exc:
+            raise ValueError(
+                "Unknown placeholder in final_verdict_user_prompt: "
+                f"{exc.args[0]!r}. Supported placeholders are "
+                "{image_reasonings} and {action_history_log}; double any literal "
+                "braces as {{ and }}."
+            ) from exc
+
+    # additions: list[str] = []
+    # if "{action_history_log}" not in template and action_history_log:
+    #     additions.append(f"Action history log:\n{action_history_log}")
+    # if "{image_reasonings}" not in template and image_reasonings:
+    #     additions.append(f"Image reasonings:\n{image_reasonings}")
+    # if additions:
+    #     rendered = f"{rendered.rstrip()}\n\n" + "\n\n".join(additions)
+    return rendered
 
 
 def _high_detail_image_part_from_path(image_path: Path) -> dict[str, Any]:
@@ -371,6 +507,7 @@ async def run_self_reflection_async(
     image_judge_user_prompt: str,
     final_verdict_system_prompt: str,
     final_verdict_user_prompt: str,
+    action_history_log: str,
     max_image_parse_retries: int,
     final_max_new_tokens: int,
     image_max_new_tokens: int,
@@ -410,13 +547,11 @@ async def run_self_reflection_async(
         f"{i + 1}. {text}" for i, text in enumerate(reasonings)
     )
 
-    template = final_verdict_user_prompt
-    if "{image_reasonings}" in template:
-        final_user_text = template.format(image_reasonings=reasonings_block)
-    else:
-        final_user_text = template
-        if reasonings_block:
-            final_user_text = f"{template.rstrip()}\n\nImage reasonings:\n{reasonings_block}"
+    final_user_text = _render_final_verdict_user_prompt(
+        final_verdict_user_prompt,
+        image_reasonings=reasonings_block,
+        action_history_log=action_history_log,
+    )
 
     user_content: list[dict[str, Any]] = [text_part(final_user_text)]
     for path_str in image_paths:
@@ -489,6 +624,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", required=True, help="Path to JSON config, or '-' for stdin.")
     parser.add_argument("--workspace-dir", default="", help="Base directory for relative image paths.")
     parser.add_argument("--output", default="", help="Write JSON result to this path instead of stdout.")
+    parser.add_argument(
+        "--auto-latest-run",
+        default="final_runs",
+        help=(
+            "When the config has no 'images' list, auto-discover screenshots from the "
+            "highest-numbered `<workspace-dir>/<this-value>/run_<id>/screenshots` folder. "
+            "Default: 'final_runs'. Pass '' (empty string) to disable auto-discovery."
+        ),
+    )
     parser.add_argument("--max-image-parse-retries", type=int, default=DEFAULT_IMAGE_PARSE_MAX_RETRIES)
     parser.add_argument("--image-max-new-tokens", type=int, default=1024)
     parser.add_argument("--final-max-new-tokens", type=int, default=8192)
@@ -504,6 +648,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    base_dir = Path(args.workspace_dir).resolve() if args.workspace_dir else Path.cwd().resolve()
 
     cfg = _load_config(args.config)
 
@@ -516,9 +661,44 @@ def main(argv: list[str] | None = None) -> int:
     resolved_images = [
         _resolve_image_path(p, workspace_dir=args.workspace_dir) for p in images_config
     ]
+    discovered_run_dir = _infer_run_dir_from_images(resolved_images)
+
+    # If config did not provide images, fall back to the latest run's screenshots.
+    if not resolved_images:
+        discovered: list[Path] = []
+        discovered_source = ""
+        if args.auto_latest_run:
+            auto_root = Path(args.auto_latest_run)
+            if not auto_root.is_absolute():
+                auto_root = base_dir / auto_root
+            auto_root = auto_root.resolve()
+            discovered_run_dir, discovered = _discover_latest_run_screenshots(auto_root)
+            if discovered_run_dir is not None:
+                discovered_source = str(discovered_run_dir / "screenshots")
+        if discovered:
+            resolved_images = discovered
+            print(
+                f"[self_reflection] auto-discovered {len(resolved_images)} screenshots from {discovered_source}",
+                file=sys.stderr,
+            )
+
+    artifact_dir = _resolve_artifact_dir(
+        images=resolved_images,
+        discovered_run_dir=discovered_run_dir,
+        output_path=args.output,
+        workspace_dir=args.workspace_dir,
+    )
+    action_history_log = _load_action_history_log(artifact_dir)
+
     if not resolved_images:
         print(
-            "[self_reflection] warning: no images provided; final stage will run with reasonings only.",
+            "[self_reflection] warning: no images provided; final stage will run without screenshot attachments.",
+            file=sys.stderr,
+        )
+
+    if not action_history_log:
+        print(
+            "[self_reflection] warning: no final_script_log.txt found; final prompt will omit action history content.",
             file=sys.stderr,
         )
 
@@ -532,6 +712,7 @@ def main(argv: list[str] | None = None) -> int:
         image_judge_user_prompt=prompts["image_judge_user_prompt"],
         final_verdict_system_prompt=prompts["final_verdict_system_prompt"],
         final_verdict_user_prompt=prompts["final_verdict_user_prompt"],
+        action_history_log=action_history_log,
         max_image_parse_retries=args.max_image_parse_retries,
         final_max_new_tokens=args.final_max_new_tokens,
         image_max_new_tokens=args.image_max_new_tokens,
