@@ -11,7 +11,7 @@ from typing import Annotated, Any
 
 import httpx
 from jinja2 import StrictUndefined, Template
-from pydantic import BaseModel as PydanticBaseModel, BeforeValidator
+from pydantic import BaseModel as PydanticBaseModel, BeforeValidator, field_validator
 
 from webwright.exceptions import FormatError
 from webwright.utils.logging import append_runtime_log
@@ -45,9 +45,12 @@ DEFAULT_FORMAT_ERROR_TEMPLATE = """Format error:
 Please respond with strict JSON using exactly these fields:
 - thought: short reasoning about the next step
 - bash_command: exactly one shell command for local-workspace tasks
+- python_code: exactly one async Python browser step for local-browser tasks
 - done: boolean indicating whether the task is complete
 - final_response: final natural-language answer when done, otherwise empty
 """
+
+ACTION_FIELDS = {"bash_command", "python_code"}
 
 
 def _is_rate_limit_error(exc: BaseException | None) -> bool:
@@ -101,16 +104,17 @@ def _is_transient_http_error(exc: BaseException | None) -> bool:
     return False
 
 
-def parse_json_output(raw: str) -> dict[str, Any]:
+def parse_json_output(raw: str, *, action_field: str = "bash_command") -> dict[str, Any]:
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise ValueError(f"Unable to parse JSON output: {exc}") from exc
     if not isinstance(parsed, dict):
         raise ValueError("Model output was JSON but not a JSON object.")
-    # Strict-schema responses cannot have done=true with a non-empty bash_command;
+    # Strict-schema responses cannot have done=true with a non-empty action;
     # tolerate it from non-strict callers by demoting `done`.
-    if str(parsed.get("bash_command", "") or "").strip() and bool(parsed.get("done", False)):
+    action_text = str(parsed.get(action_field, "") or "").strip()
+    if action_text and bool(parsed.get("done", False)):
         parsed = dict(parsed)
         parsed["done"] = False
     return parsed
@@ -207,6 +211,15 @@ class BaseModelConfig(PydanticBaseModel):
     observation_template: OptStr = DEFAULT_OBSERVATION_TEMPLATE
     format_error_template: OptStr = DEFAULT_FORMAT_ERROR_TEMPLATE
     attach_observation_screenshot: bool = True
+    action_field: str = "bash_command"
+
+    @field_validator("action_field")
+    @classmethod
+    def validate_action_field(cls, value: str) -> str:
+        normalized = value.strip()
+        if normalized not in ACTION_FIELDS:
+            raise ValueError(f"action_field must be one of: {', '.join(sorted(ACTION_FIELDS))}")
+        return normalized
 
 
 class BaseModel:
@@ -273,7 +286,10 @@ class BaseModel:
     # ---- shared infrastructure ----------------------------------------------------
 
     def get_template_vars(self, **kwargs) -> dict[str, Any]:
-        vars: dict[str, Any] = {"model_name": self.config.model_name}
+        vars: dict[str, Any] = {
+            "action_field": self.config.action_field,
+            "model_name": self.config.model_name,
+        }
         for k, v in self._last_request_metrics.items():
             vars[f"last_request_{k}"] = v
         for k, v in self._last_usage_metrics.items():
@@ -284,6 +300,20 @@ class BaseModel:
             vars[f"cumulative_{k}"] = v
         vars.update(kwargs)
         return vars
+
+    def _response_schema(self) -> dict[str, Any]:
+        action_field = self.config.action_field
+        return {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "thought": {"type": "string"},
+                action_field: {"type": "string"},
+                "done": {"type": "boolean"},
+                "final_response": {"type": "string"},
+            },
+            "required": ["thought", action_field, "done", "final_response"],
+        }
 
     def _usage_snapshot(self) -> dict[str, dict[str, int]]:
         return {
@@ -372,6 +402,7 @@ class BaseModel:
                 content=Template(self.config.format_error_template, undefined=StrictUndefined).render(
                     error=error,
                     model_response=raw_text,
+                    **self.get_template_vars(),
                 ),
                 extra={
                     "interrupt_type": "FormatError",
@@ -386,6 +417,7 @@ class BaseModel:
             content=Template(self.config.format_error_template, undefined=StrictUndefined).render(
                 error=error,
                 model_response=raw_text,
+                **self.get_template_vars(),
             ),
             extra={
                 "interrupt_type": "FormatErrorRetry",
@@ -452,7 +484,7 @@ class BaseModel:
                 raw_text=raw_text,
             )
             try:
-                parsed = parse_json_output(raw_text)
+                parsed = parse_json_output(raw_text, action_field=self.config.action_field)
                 break
             except ValueError as exc:
                 last_error = exc
@@ -467,13 +499,19 @@ class BaseModel:
             )
 
         actions: list[dict[str, Any]] = []
-        bash_command = str(parsed.get("bash_command", "") or "").strip()
-        if bash_command:
-            try:
-                _validate_bash_command(bash_command)
-            except ValueError as exc:
-                raise self._format_error(raw_text=raw_text, error=str(exc))
-            actions.append({"bash_command": bash_command, "command": bash_command})
+        action_field = self.config.action_field
+        action_text = str(parsed.get(action_field, "") or "").strip()
+        if action_text:
+            action = {action_field: action_text, "command": action_text}
+            if action_field == "bash_command":
+                action["bash_command"] = action_text
+                try:
+                    _validate_bash_command(action_text)
+                except ValueError as exc:
+                    raise self._format_error(raw_text=raw_text, error=str(exc))
+            else:
+                action["python_code"] = action_text
+            actions.append(action)
 
         return self.format_message(
             role="assistant",

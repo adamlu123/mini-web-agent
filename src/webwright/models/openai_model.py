@@ -125,19 +125,6 @@ class OpenAIModel(BaseModel):
     def _post_url(self) -> str:
         return self.config.openai_endpoint
 
-    def _response_schema(self) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "additionalProperties": False,
-            "properties": {
-                "thought": {"type": "string"},
-                "bash_command": {"type": "string"},
-                "done": {"type": "boolean"},
-                "final_response": {"type": "string"},
-            },
-            "required": ["thought", "bash_command", "done", "final_response"],
-        }
-
     def _build_payload(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
         return {
             "model": self.config.model_name,

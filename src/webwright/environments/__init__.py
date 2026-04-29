@@ -6,6 +6,7 @@ import importlib
 from webwright import Environment
 
 _ENVIRONMENT_MAPPING = {
+    "local_browser": "webwright.environments.local_browser.LocalBrowserEnvironment",
     "local_workspace": "webwright.environments.local_workspace.LocalWorkspaceEnvironment",
 }
 
