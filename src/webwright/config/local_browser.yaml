@@ -6,8 +6,12 @@
 #     -t "Open example.com and report the title" \
 #     --start-url https://example.com
 #
-# Use environment.browser_mode=local_persistent and a stable user_data_dir when
-# you need cookies/login state to survive across runs.
+# By default this uses real Edge/Chrome over CDP on http://127.0.0.1:9222
+# with ~/.cache/mini-web-agent/edge-profile, matching the browser startup
+# convention used by the local browser skills. Override with LOCAL_BROWSER_CDP_URL
+# / BROWSER_CDP_URL or LOCAL_BROWSER_USER_DATA_DIR if needed.
+# local_cdp uses the real browser window size instead of forcing a Playwright
+# viewport, so pages lay out like a normal user-controlled browser window.
 
 model:
   action_field: python_code
@@ -29,8 +33,14 @@ model:
     {% endif %}
 environment:
   environment_class: local_browser
-  # Override to local_persistent and set user_data_dir when you need cookies.
-  browser_mode: local_launch
+  # Modes:
+  # - local_launch: clean Playwright browser context, no saved cookies.
+  # - local_persistent: Playwright persistent context.
+  # - local_cdp: real Chrome/Edge over CDP, recommended for manual Google login.
+  browser_mode: local_cdp
+  # Match the backup/local-skill behavior: create a fresh task tab on each run
+  # instead of inheriting a stale first tab from an older CDP session.
+  local_cdp_new_page: true
 
 agent:
   require_self_reflection_success: false
@@ -56,13 +66,14 @@ agent:
     - Do not close `page`, `context`, `browser`, or `playwright`.
     - Set `"done": true` only after the task is complete, and leave `python_code` empty when declaring done.
     - If the latest observation has Status: error, recover with another browser step instead of ending.
+    - If browser mode is `local_cdp`, you are connected to a real Chrome/Edge profile. Reuse the current tab state and do not close the browser.
 
   instance_template: |
     Task: {{ task }}
     {% if task_id %}Task ID: {{ task_id }}
     {% endif %}{% if start_url %}Start URL: {{ start_url }}
     {% endif %}Browser mode: {{ browser_mode }}
-    {% if browser_mode == "local_persistent" %}Persistent profile: {{ user_data_dir }}
+    {% if browser_mode in ("local_persistent", "local_cdp") %}Persistent profile: {{ user_data_dir }}
     {% endif %}
 
     Use the live browser session to complete the task.

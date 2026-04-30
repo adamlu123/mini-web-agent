@@ -3,15 +3,153 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import os
+import shutil
+import subprocess
+import sys
 import textwrap
+import time
 import traceback
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, urlparse
+from urllib.request import ProxyHandler, Request, build_opener
 
 from pydantic import BaseModel, Field, field_validator
 
-_BROWSER_MODES = {"local_launch", "local_persistent"}
+_BROWSER_MODES = {"local_cdp", "local_launch", "local_persistent"}
+_DEFAULT_LOCAL_CDP_URL = "http://127.0.0.1:9222"
+_DEFAULT_LOCAL_CDP_USER_DATA_DIR = Path("~/.cache/mini-web-agent/edge-profile")
+_CHROMIUM_EXECUTABLE_CANDIDATES = (
+    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+    "~/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "~/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "google-chrome",
+    "google-chrome-stable",
+    "chromium-browser",
+    "chromium",
+    "chrome",
+)
+_LOCAL_CDP_OPENER = build_opener(ProxyHandler({}))
+
+
+def _urlopen_local_cdp(url_or_request: str | Request, *, timeout: float):
+    return _LOCAL_CDP_OPENER.open(url_or_request, timeout=timeout)
+
+
+def _local_cdp_origin(cdp_url: str) -> str:
+    parsed = urlparse(cdp_url or _DEFAULT_LOCAL_CDP_URL)
+    scheme = parsed.scheme or "http"
+    netloc = parsed.netloc or parsed.path
+    if not netloc:
+        netloc = urlparse(_DEFAULT_LOCAL_CDP_URL).netloc
+    return f"{scheme}://{netloc}"
+
+
+def _local_cdp_port(cdp_url: str) -> int:
+    parsed = urlparse(cdp_url or _DEFAULT_LOCAL_CDP_URL)
+    if parsed.port is not None:
+        return parsed.port
+    return 443 if parsed.scheme == "https" else 80
+
+
+def _is_local_cdp_available(cdp_url: str, *, timeout_seconds: float = 0.5) -> bool:
+    try:
+        with _urlopen_local_cdp(
+            f"{_local_cdp_origin(cdp_url).rstrip('/')}/json/version",
+            timeout=timeout_seconds,
+        ) as response:
+            return 200 <= response.status < 300
+    except Exception:
+        return False
+
+
+def _local_cdp_json_url(cdp_url: str, path: str) -> str:
+    return f"{_local_cdp_origin(cdp_url).rstrip('/')}{path}"
+
+
+def _local_cdp_page_targets(cdp_url: str, *, timeout_seconds: float = 0.5) -> list[dict[str, Any]]:
+    try:
+        with _urlopen_local_cdp(
+            _local_cdp_json_url(cdp_url, "/json/list"),
+            timeout=timeout_seconds,
+        ) as response:
+            if not 200 <= response.status < 300:
+                return []
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception:
+        return []
+    if not isinstance(payload, list):
+        return []
+    return [
+        target
+        for target in payload
+        if isinstance(target, dict) and target.get("type") == "page"
+    ]
+
+
+def _ensure_local_cdp_page_target(cdp_url: str, *, timeout_seconds: float = 1.0) -> None:
+    if _local_cdp_page_targets(cdp_url, timeout_seconds=timeout_seconds):
+        return
+
+    target_url = f"{_local_cdp_json_url(cdp_url, '/json/new')}?{quote('about:blank', safe='')}"
+    request = Request(target_url, method="PUT")
+    with _urlopen_local_cdp(request, timeout=timeout_seconds) as response:
+        if not 200 <= response.status < 300:
+            raise RuntimeError(f"Could not create a local CDP page target: {cdp_url}")
+
+
+def _resolve_local_cdp_url(configured_url: str, *, explicit: bool) -> str:
+    if explicit and configured_url:
+        return configured_url
+    return (
+        os.environ.get("LOCAL_BROWSER_CDP_URL")
+        or os.environ.get("BROWSER_CDP_URL")
+        or configured_url
+        or _DEFAULT_LOCAL_CDP_URL
+    )
+
+
+def _resolve_user_data_dir(configured_dir: Path, *, explicit: bool) -> Path:
+    if explicit:
+        return configured_dir
+    env_dir = os.environ.get("LOCAL_BROWSER_USER_DATA_DIR") or os.environ.get("BROWSER_USER_DATA_DIR")
+    return Path(env_dir).expanduser() if env_dir else _DEFAULT_LOCAL_CDP_USER_DATA_DIR.expanduser()
+
+
+def _find_chromium_executable(explicit_path: str = "") -> str:
+    candidates = []
+    if explicit_path:
+        candidates.append(explicit_path)
+    candidates.extend(
+        value
+        for value in (os.environ.get("LOCAL_BROWSER_EXECUTABLE"), os.environ.get("BROWSER_EXECUTABLE"))
+        if value
+    )
+    candidates.extend(_CHROMIUM_EXECUTABLE_CANDIDATES)
+
+    for candidate in candidates:
+        expanded = os.path.expanduser(candidate)
+        if Path(expanded).exists():
+            return expanded
+        resolved = shutil.which(expanded)
+        if resolved:
+            return resolved
+    raise FileNotFoundError(
+        "Could not find Chrome/Chromium. Set local_cdp_executable or LOCAL_BROWSER_EXECUTABLE."
+    )
+
+
+def _macos_open_app_name(executable: str) -> str:
+    if sys.platform != "darwin":
+        return ""
+    if "/Microsoft Edge.app/" in executable:
+        return "Microsoft Edge"
+    if "/Google Chrome.app/" in executable:
+        return "Google Chrome"
+    return ""
 
 
 class LocalBrowserEnvironmentConfig(BaseModel):
@@ -29,8 +167,15 @@ class LocalBrowserEnvironmentConfig(BaseModel):
     step_execution_timeout_ms: int = 20000
     observation_timeout_ms: int = 5000
     output_dir: Path = Path("outputs/default")
-    user_data_dir: Path = Path("~/.cache/webwright/chrome-profile")
+    user_data_dir: Path = _DEFAULT_LOCAL_CDP_USER_DATA_DIR
     launch_args: list[str] = Field(default_factory=list)
+    local_cdp_url: str = _DEFAULT_LOCAL_CDP_URL
+    local_cdp_new_page: bool = True
+    local_cdp_close_page_on_exit: bool = False
+    local_cdp_auto_start: bool = True
+    local_cdp_executable: str = ""
+    local_cdp_startup_timeout_seconds: float = 10
+    local_cdp_close_started_browser_on_exit: bool = False
 
     @field_validator("browser_mode")
     @classmethod
@@ -53,13 +198,27 @@ class LocalBrowserEnvironment:
 
     def __init__(self, *, config_class: type = LocalBrowserEnvironmentConfig, **kwargs):
         self.config = config_class(**kwargs)
+        fields_set = getattr(self.config, "model_fields_set", None)
+        if fields_set is None:
+            fields_set = getattr(self.config, "__fields_set__", set())
+        self._config_fields_set = set(fields_set)
+        self.config.local_cdp_url = _resolve_local_cdp_url(
+            self.config.local_cdp_url,
+            explicit="local_cdp_url" in self._config_fields_set,
+        )
         self.config.output_dir = self.config.output_dir.expanduser()
-        self.config.user_data_dir = self.config.user_data_dir.expanduser()
+        self.config.user_data_dir = _resolve_user_data_dir(
+            self.config.user_data_dir,
+            explicit="user_data_dir" in self._config_fields_set,
+        )
         self._playwright = None
         self._browser = None
         self._context = None
         self._page = None
+        self._local_cdp_page = None
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._local_cdp_process: subprocess.Popen | None = None
+        self._connected_over_cdp = False
         self._step_index = 0
         self._prepared_task: dict[str, Any] = {}
         self._console_history: list[str] = []
@@ -100,8 +259,59 @@ class LocalBrowserEnvironment:
         loop = self._ensure_loop()
         return loop.run_until_complete(coro)
 
+    def _ensure_local_cdp_browser(self) -> None:
+        if _is_local_cdp_available(self.config.local_cdp_url):
+            return
+        if not self.config.local_cdp_auto_start:
+            raise RuntimeError(
+                "Local CDP endpoint is not reachable. Start Chrome/Chromium with "
+                f"remote debugging enabled for {self.config.local_cdp_url}."
+            )
+
+        self.config.user_data_dir.mkdir(parents=True, exist_ok=True)
+        browser_args = list(self.config.launch_args)
+        executable = _find_chromium_executable(self.config.local_cdp_executable)
+        browser_flags = [
+            "--remote-debugging-address=127.0.0.1",
+            f"--remote-debugging-port={_local_cdp_port(self.config.local_cdp_url)}",
+            f"--user-data-dir={self.config.user_data_dir}",
+            "--no-first-run",
+            "--no-default-browser-check",
+            *browser_args,
+        ]
+        app_name = _macos_open_app_name(executable)
+        launched_with_open = bool(app_name)
+        command = (
+            ["open", "-na", app_name, "--args", *browser_flags]
+            if launched_with_open
+            else [executable, *browser_flags]
+        )
+        self._local_cdp_process = subprocess.Popen(
+            command,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+
+        deadline = time.monotonic() + self.config.local_cdp_startup_timeout_seconds
+        while time.monotonic() < deadline:
+            if not launched_with_open and self._local_cdp_process.poll() is not None:
+                raise RuntimeError(
+                    f"Chrome/Chromium exited before CDP became available: {self.config.local_cdp_url}"
+                )
+            if _is_local_cdp_available(self.config.local_cdp_url):
+                return
+            time.sleep(0.2)
+
+        self._local_cdp_process.terminate()
+        self._local_cdp_process = None
+        raise TimeoutError(f"Timed out waiting for local CDP endpoint: {self.config.local_cdp_url}")
+
     async def _prepare_async(self) -> None:
         from playwright.async_api import async_playwright
+
+        if self._page is not None and self._context is not None:
+            return
 
         self._playwright = await async_playwright().start()
         chromium = self._playwright.chromium
@@ -114,7 +324,22 @@ class LocalBrowserEnvironment:
             "args": launch_args,
         }
 
-        if self.config.browser_mode == "local_persistent":
+        if self.config.browser_mode == "local_cdp":
+            self._ensure_local_cdp_browser()
+            _ensure_local_cdp_page_target(self.config.local_cdp_url)
+            self._browser = await chromium.connect_over_cdp(self.config.local_cdp_url)
+            self._connected_over_cdp = True
+            self._context = (
+                self._browser.contexts[0]
+                if self._browser.contexts
+                else await self._browser.new_context(no_viewport=True)
+            )
+            if self.config.local_cdp_new_page or not self._context.pages:
+                self._page = await self._context.new_page()
+                self._local_cdp_page = self._page
+            else:
+                self._page = self._context.pages[0]
+        elif self.config.browser_mode == "local_persistent":
             self.config.user_data_dir.mkdir(parents=True, exist_ok=True)
             self._context = await chromium.launch_persistent_context(
                 user_data_dir=str(self.config.user_data_dir),
@@ -309,14 +534,31 @@ class LocalBrowserEnvironment:
 
         context = self._context
         browser = self._browser
+        page = self._local_cdp_page
         playwright = self._playwright
+        connected_over_cdp = self._connected_over_cdp
+        local_cdp_process = self._local_cdp_process
         self._page = None
+        self._local_cdp_page = None
         self._context = None
         self._browser = None
         self._playwright = None
+        self._connected_over_cdp = False
+        self._local_cdp_process = None
 
         try:
-            if context is not None:
+            if connected_over_cdp:
+                if page is not None and self.config.local_cdp_close_page_on_exit:
+                    try:
+                        await page.close()
+                    except Exception:
+                        pass
+                if (
+                    local_cdp_process is not None
+                    and self.config.local_cdp_close_started_browser_on_exit
+                ):
+                    local_cdp_process.terminate()
+            elif context is not None:
                 await context.close()
             elif browser is not None:
                 await browser.close()
