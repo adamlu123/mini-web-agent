@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "webwright"
 version = "0.1.0"
-description = "Webwright: minimal SWE-style web agent harness with OpenAI / Anthropic backends and Browserbase or local Playwright."
+description = "Webwright: tiny SWE-style web agent harness"
 requires-python = ">=3.10"
 dependencies = [
     "httpx>=0.27",
