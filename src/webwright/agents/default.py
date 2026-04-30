@@ -20,7 +20,7 @@ agent with only this summary (plus the original system prompt and task instructi
 task without losing progress. Include:
 
 - The original task goal and all critical points / constraints.
-- The workspace directory and key file paths (plan.md, judge_config.json, final_script.py, final_runs/).
+- The workspace directory and key file paths (plan.md, self_reflect_config.json, final_script.py, final_runs/).
 - Which critical points have been satisfied, which are still open, and any known blockers.
 - Key findings from prior exploration (working selectors, URLs, ARIA labels, pitfalls to avoid).
 - The latest final_runs/run_<id>/ state, most recent self_reflection verdict, and the next action to take.
@@ -202,20 +202,20 @@ class DefaultAgent:
         return self._tool_gate_error()
 
     def _tool_gate_error(self) -> str | None:
-        """Require final_runs/run_<latest>/judge_result.json with predicted_label == 1."""
+        """Require final_runs/run_<latest>/self_reflect_result.json with predicted_label == 1."""
         workspace_dir = self.get_template_vars().get("workspace_dir")
         if not workspace_dir:
             return (
                 "Completion blocked: require_self_reflection_success is enabled but no workspace_dir is "
-                "available. Cannot locate final_runs/run_<id>/judge_result.json. Do not set done=true."
+                "available. Cannot locate final_runs/run_<id>/self_reflect_result.json. Do not set done=true."
             )
         final_runs_dir = Path(workspace_dir) / "final_runs"
         if not final_runs_dir.is_dir():
             return (
                 "Completion blocked: no final_runs/ directory exists yet. You must run final_script.py "
                 "in a final_runs/run_<id>/ folder and then run "
-                "`python -m webwright.tools.self_reflection --config judge_config.json "
-                "--workspace-dir \"{0}\" --output final_runs/run_<id>/judge_result.json` with "
+                "`python -m webwright.tools.self_reflection --config self_reflect_config.json "
+                "--workspace-dir \"{0}\" --output final_runs/run_<id>/self_reflect_result.json` with "
                 "predicted_label == 1 before setting done=true."
             ).format(workspace_dir)
         run_dirs: list[tuple[int, Path]] = []
@@ -232,15 +232,15 @@ class DefaultAgent:
             return (
                 "Completion blocked: final_runs/ contains no run_<id>/ folders. Create "
                 "final_runs/run_<id>/, execute final_script.py there, then run self_reflection and "
-                "only set done=true after judge_result.json reports predicted_label == 1."
+                "only set done=true after self_reflect_result.json reports predicted_label == 1."
             )
         run_dirs.sort(key=lambda item: item[0])
         latest_run_id, latest_run_dir = run_dirs[-1]
-        judge_path = latest_run_dir / "judge_result.json"
+        judge_path = latest_run_dir / "self_reflect_result.json"
         if not judge_path.is_file():
             return (
                 f"Completion blocked: {judge_path} does not exist. Run "
-                f"`python -m webwright.tools.self_reflection --config judge_config.json "
+                f"`python -m webwright.tools.self_reflection --config self_reflect_config.json "
                 f"--workspace-dir \"{workspace_dir}\" --output {judge_path}` against the latest run "
                 f"(run_{latest_run_id}) and only set done=true after it exits 0 with "
                 f"predicted_label == 1."
@@ -256,7 +256,7 @@ class DefaultAgent:
         if predicted_label != 1:
             return (
                 f"Completion blocked: {judge_path} has predicted_label={predicted_label!r} "
-                f"(expected 1). Diagnose the failure from judge_result.json, fix final_script.py, "
+                f"(expected 1). Diagnose the failure from self_reflect_result.json, fix final_script.py, "
                 f"re-run it in a new final_runs/run_{latest_run_id + 1}/ folder, and re-run "
                 f"self_reflection. Only set done=true after self_reflection exits 0 with "
                 f"predicted_label == 1."

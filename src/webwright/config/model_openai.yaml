@@ -1,7 +1,7 @@
 # Model modifier — OpenAI variant.
 #
-# Stack on top of mini.yaml:
-#   python -m webwright.run.mini -c mini.yaml -c model_openai.yaml ...
+# Stack on top of base.yaml:
+#   python -m webwright.run.cli -c base.yaml -c model_openai.yaml ...
 #
 # Required env: OPENAI_API_KEY (also used by image_qa / self_reflection tools).
 

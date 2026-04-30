@@ -8,12 +8,12 @@ A tiny SWE-style web agent harness (`webwright`). It drives a Playwright browser
 mini-web-agent/
 ├── pyproject.toml           # package: webwright
 ├── src/webwright/
-│   ├── run/mini.py          # CLI entrypoint (`webwright`)
+│   ├── run/cli.py           # CLI entrypoint (`webwright`)
 │   ├── agents/default.py    # core agent loop
 │   ├── environments/        # Playwright browser workspace
 │   ├── tools/               # image_qa, self_reflection
 │   ├── models/              # openai_model, anthropic_model, base
-│   ├── config/              # mini.yaml, model_openai.yaml, model_claude.yaml
+│   ├── config/              # base.yaml, model_openai.yaml, model_claude.yaml
 │   └── utils/
 ├── tests/
 └── outputs/                 # run artifacts (trajectories, screenshots)
@@ -32,8 +32,8 @@ playwright install chromium
 Export credentials for the chosen backend (e.g. `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`), then:
 
 ```bash
-python -m webwright.run.mini \
-    -c mini.yaml -c model_openai.yaml \
+python -m webwright.run.cli \
+    -c base.yaml -c model_openai.yaml \
     -t "Find the cheapest economy flight from SEA to JFK on 2026-05-15" \
     --start-url https://www.google.com/flights \
     --task-id demo_openai \

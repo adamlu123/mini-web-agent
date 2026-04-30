@@ -20,7 +20,7 @@ dependencies = [
 ]
 
 [project.scripts]
-webwright = "webwright.run.mini:app"
+webwright = "webwright.run.cli:app"
 
 [tool.setuptools.packages.find]
 where = ["src"]

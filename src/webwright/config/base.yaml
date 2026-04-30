@@ -4,15 +4,15 @@
 # Anthropic variants. Stack a model modifier on top via repeated -c flags:
 #
 #   source ~/cred.sh
-#   python -m webwright.run.mini \
-#     -c mini.yaml -c model_openai.yaml \
+#   python -m webwright.run.cli \
+#     -c base.yaml -c model_openai.yaml \
 #     -t "Find the cheapest economy flight from SEA to JFK on 2026-05-15" \
 #     --start-url https://www.google.com/flights \
 #     --task-id demo_openai \
 #     -o outputs/default
 #
 # Or for Claude:
-#     -c mini.yaml -c model_claude.yaml
+#     -c base.yaml -c model_claude.yaml
 #
 # Required env (provided by ~/cred.sh):
 #   - OPENAI_API_KEY    (always — used by self_reflection and image_qa tools)
@@ -85,7 +85,7 @@ agent:
   agent_class: default
   debug_log: true
   output_path: outputs/default/trajectory.json
-  step_limit: 300
+  step_limit: 100
   require_self_reflection_success: true
   summary_every_n_steps: 20
 
@@ -223,9 +223,9 @@ agent:
     **CLI interface:**
     ```
     python -m webwright.tools.self_reflection \
-      --config {{ workspace_dir }}/judge_config.json \
+      --config {{ workspace_dir }}/self_reflect_config.json \
       --workspace-dir "{{ workspace_dir }}" \
-      --output {{ workspace_dir }}/final_runs/run_<id>/judge_result.json
+      --output {{ workspace_dir }}/final_runs/run_<id>/self_reflect_result.json
     ```
 
     Exit code is 0 on PASS, 1 on FAIL / unparsed. The `--output` file is a JSON document
@@ -234,7 +234,7 @@ agent:
     `predicted_label` (1=success, 0=failure, null=unparsed). You MUST run self_reflection before
     declaring done.
 
-    **judge_config.json schema (authored once, prompts only):**
+    **self_reflect_config.json schema (authored once, prompts only):**
     ```json
     {
       "image_judge_system_prompt":   "...see below...",
@@ -290,15 +290,15 @@ agent:
 
     Set `"done": true` ONLY if ALL of the following are true:
       1. `plan.md` exists and every critical point is enumerated as a checklist item.
-      2. `judge_config.json` exists at the workspace root with all four prompts populated
+      2. `self_reflect_config.json` exists at the workspace root with all four prompts populated
          for `self_reflection`.
       3. `final_script.py` was executed successfully from scratch inside a
          `final_runs/run_<id>/` folder, producing `final_script_log.txt` and all
          critical-point screenshots.
-      4. `python -m webwright.tools.self_reflection --config judge_config.json
-         --workspace-dir "{{ workspace_dir }}" --output final_runs/run_<id>/judge_result.json`
+      4. `python -m webwright.tools.self_reflection --config self_reflect_config.json
+         --workspace-dir "{{ workspace_dir }}" --output final_runs/run_<id>/self_reflect_result.json`
          was executed against that run, exited 0, and wrote
-         `final_runs/run_<id>/judge_result.json` with `"predicted_label": 1`.
+         `final_runs/run_<id>/self_reflect_result.json` with `"predicted_label": 1`.
       5. You have run `ls -R final_runs/run_<id>`,
          `ls -R final_runs/run_<id>/screenshots`, and
          `cat final_runs/run_<id>/final_script_log.txt` to confirm the artifacts and
@@ -310,7 +310,7 @@ agent:
     `self_reflection` fails, diagnose the specific issue (wrong filter value, missing
     control, missing confirmation, missing screenshot, etc.), fix `final_script.py`,
     re-run it in a new `final_runs/run_<id+1>/` folder, and re-run `self_reflection`
-    against the new run. Do NOT edit `judge_config.json` between attempts unless a
+    against the new run. Do NOT edit `self_reflect_config.json` between attempts unless a
     prompt itself is objectively wrong.
 
   instance_template: |
@@ -376,15 +376,15 @@ agent:
        ```
        Each critical point must be independently verifiable from a screenshot or log entry.
 
-    2. **Author judge_config.json (once)**: Write `{{ workspace_dir }}/judge_config.json` containing only the four prompts (`image_judge_system_prompt`, `image_judge_user_prompt`, `final_verdict_system_prompt`, `final_verdict_user_prompt`) for `webwright.tools.self_reflection`. Embed the full critical-point list from `plan.md` and the task description into the user prompts, but keep the prompts generic — this file is reused verbatim for every `self_reflection` invocation, so do NOT hard-code a specific run id, screenshot filename, or `final_script_log.txt` content.
+    2. **Author self_reflect_config.json (once)**: Write `{{ workspace_dir }}/self_reflect_config.json` containing only the four prompts (`image_judge_system_prompt`, `image_judge_user_prompt`, `final_verdict_system_prompt`, `final_verdict_user_prompt`) for `webwright.tools.self_reflection`. Embed the full critical-point list from `plan.md` and the task description into the user prompts, but keep the prompts generic — this file is reused verbatim for every `self_reflection` invocation, so do NOT hard-code a specific run id, screenshot filename, or `final_script_log.txt` content.
 
     3. **Exploration**: Inspect `task.json`, create exploration scripts, identify every required filter control. Use `image_qa` during exploration to verify UI state.
 
     4. **Final script**: Write `final_script.py`, run it once in a new `final_runs/run_<id>/` folder. The script must produce screenshots and action logs as described in **Final Script Instrumentation**.
 
-    5. **Run self_reflection**: Execute `python -m webwright.tools.self_reflection --config judge_config.json --workspace-dir "{{ workspace_dir }}" --output final_runs/run_<id>/judge_result.json`. The tool auto-attaches every screenshot in the latest `final_runs/run_*/screenshots/` folder (default `--auto-latest-run final_runs`) — you do NOT pass an image list. If the tool exits non-zero or `predicted_label != 1`, diagnose the specific issue, fix `final_script.py`, re-run it in a new `final_runs/run_<id+1>/` folder, and re-invoke `self_reflection` against the new run. Do NOT edit `judge_config.json` between attempts.
+    5. **Run self_reflection**: Execute `python -m webwright.tools.self_reflection --config self_reflect_config.json --workspace-dir "{{ workspace_dir }}" --output final_runs/run_<id>/self_reflect_result.json`. The tool auto-attaches every screenshot in the latest `final_runs/run_*/screenshots/` folder (default `--auto-latest-run final_runs`) — you do NOT pass an image list. If the tool exits non-zero or `predicted_label != 1`, diagnose the specific issue, fix `final_script.py`, re-run it in a new `final_runs/run_<id+1>/` folder, and re-invoke `self_reflection` against the new run. Do NOT edit `self_reflect_config.json` between attempts.
 
-    6. **Declare done**: Set `"done": true` ONLY after `self_reflection` exits 0 and `judge_result.json` reports `"predicted_label": 1` for the latest run. The external judge reads that same `judge_result.json` as the final verdict. Declaring done in any other state is a failure.
+    6. **Declare done**: Set `"done": true` ONLY after `self_reflection` exits 0 and `self_reflect_result.json` reports `"predicted_label": 1` for the latest run. The external judge reads that same `self_reflect_result.json` as the final verdict. Declaring done in any other state is a failure.
 
     ## Final Script Instrumentation
 
@@ -401,9 +401,9 @@ agent:
 
     Set `"done": true` ONLY if ALL of the following are true:
     1. `plan.md` exists with all critical points identified.
-    2. `judge_config.json` exists with all four prompts populated for `self_reflection`.
+    2. `self_reflect_config.json` exists with all four prompts populated for `self_reflection`.
     3. `final_script.py` was run from scratch in a `final_runs/run_<id>/` folder.
-    4. `python -m webwright.tools.self_reflection --config judge_config.json --workspace-dir "{{ workspace_dir }}" --output final_runs/run_<id>/judge_result.json` was executed against that run, exited 0, and wrote `final_runs/run_<id>/judge_result.json` with `"predicted_label": 1`.
+    4. `python -m webwright.tools.self_reflection --config self_reflect_config.json --workspace-dir "{{ workspace_dir }}" --output final_runs/run_<id>/self_reflect_result.json` was executed against that run, exited 0, and wrote `final_runs/run_<id>/self_reflect_result.json` with `"predicted_label": 1`.
     5. `ls -R final_runs/run_<id>` and `cat final_runs/run_<id>/final_script_log.txt` confirm the expected artifacts.
 
     Do NOT declare done if `self_reflection` exits non-zero, if `predicted_label` is not 1, if the run folder is missing, if required screenshots are missing, or if `self_reflection` has not been run against the latest `final_runs/run_<id>/`.

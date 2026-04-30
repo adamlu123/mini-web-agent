@@ -16,7 +16,7 @@ prepare it in one turn and invoke the tool in the next. Default model is
 
 Usage::
 
-    python -m webwright.tools.self_reflection --config judge_config.json
+    python -m webwright.tools.self_reflection --config self_reflect_config.json
 
 JSON schema (paths relative to ``--workspace-dir`` or the CWD)::
 

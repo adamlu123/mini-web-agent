@@ -1,8 +1,8 @@
-# Live local browser modifier. Stack it on top of mini.yaml, then add a model
+# Live local browser modifier. Stack it on top of base.yaml, then add a model
 # modifier, for example:
 #
-#   python -m webwright.run.mini \
-#     -c mini.yaml -c local_browser.yaml -c model_openai.yaml \
+#   python -m webwright.run.cli \
+#     -c base.yaml -c local_browser.yaml -c model_openai.yaml \
 #     -t "Open example.com and report the title" \
 #     --start-url https://example.com
 #
