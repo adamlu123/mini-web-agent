@@ -4,6 +4,7 @@ import asyncio
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -19,6 +20,7 @@ from urllib.request import ProxyHandler, Request, build_opener
 from pydantic import BaseModel, Field, field_validator
 
 _BROWSER_MODES = {"local_cdp", "local_launch", "local_persistent"}
+_EXPORT_RE = re.compile(r"^export\s+([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
 _DEFAULT_LOCAL_CDP_URL = "http://127.0.0.1:9222"
 _DEFAULT_LOCAL_CDP_USER_DATA_DIR = Path("~/.cache/mini-web-agent/edge-profile")
 _CHROMIUM_EXECUTABLE_CANDIDATES = (
@@ -165,8 +167,12 @@ class LocalBrowserEnvironmentConfig(BaseModel):
     browser_timeout_ms: int = 10000
     browser_navigation_timeout_ms: int = 30000
     step_execution_timeout_ms: int = 20000
+    command_timeout_seconds: int = 180
     observation_timeout_ms: int = 5000
     output_dir: Path = Path("outputs/default")
+    shell: str = "/bin/bash"
+    env: dict[str, str] = Field(default_factory=dict)
+    credentials_file: Path | None = None
     user_data_dir: Path = _DEFAULT_LOCAL_CDP_USER_DATA_DIR
     launch_args: list[str] = Field(default_factory=list)
     local_cdp_url: str = _DEFAULT_LOCAL_CDP_URL
@@ -211,6 +217,7 @@ class LocalBrowserEnvironment:
             self.config.user_data_dir,
             explicit="user_data_dir" in self._config_fields_set,
         )
+        self._credential_env = self._load_credential_env(self.config.credentials_file)
         self._playwright = None
         self._browser = None
         self._context = None
@@ -226,11 +233,58 @@ class LocalBrowserEnvironment:
         self._step_python_code = ""
         self._step_python_output = ""
 
+    def _load_credential_env(self, path: Path | None) -> dict[str, str]:
+        if path is None:
+            return {}
+        resolved = Path(path).expanduser()
+        if not resolved.exists():
+            return {}
+
+        parsed: dict[str, str] = {}
+        for raw_line in resolved.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            match = _EXPORT_RE.match(line)
+            if match is None:
+                continue
+            key, raw_value = match.groups()
+            value = raw_value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+                value = value[1:-1]
+            parsed[key] = value
+        return parsed
+
     def _screenshots_dir(self) -> Path:
         return self.config.output_dir / "screenshots"
 
     def _steps_dir(self) -> Path:
         return self.config.output_dir / "steps"
+
+    def _logs_dir(self) -> Path:
+        return self.config.output_dir / "logs"
+
+    def _workspace_dir(self) -> Path:
+        return self.config.output_dir.resolve()
+
+    def _task_metadata_path(self) -> Path:
+        return self._workspace_dir() / "task.json"
+
+    def _final_script_path(self) -> Path:
+        return self._workspace_dir() / "final_script.py"
+
+    def _workspace_env(self) -> dict[str, str]:
+        workspace_dir = self._workspace_dir()
+        return {
+            "BROWSER_MODE": str(self.config.browser_mode),
+            "LOCAL_BROWSER_CDP_URL": str(self.config.local_cdp_url),
+            "BROWSER_CDP_URL": str(self.config.local_cdp_url),
+            "LOCAL_BROWSER_USER_DATA_DIR": str(self.config.user_data_dir),
+            "WORKSPACE_DIR": str(workspace_dir),
+            "OM2W_TASK_JSON": str(self._task_metadata_path()),
+            "FINAL_SCRIPT_PATH": str(self._final_script_path()),
+            "TMPDIR": str(workspace_dir / ".tmp"),
+        }
 
     def prepare(self, **kwargs) -> None:
         self._prepared_task = dict(kwargs)
@@ -243,8 +297,10 @@ class LocalBrowserEnvironment:
 
         self.config.output_dir.mkdir(parents=True, exist_ok=True)
         self._steps_dir().mkdir(parents=True, exist_ok=True)
+        self._logs_dir().mkdir(parents=True, exist_ok=True)
         self._screenshots_dir().mkdir(parents=True, exist_ok=True)
-        (self.config.output_dir / "task.json").write_text(
+        (self.config.output_dir / ".tmp").mkdir(parents=True, exist_ok=True)
+        self._task_metadata_path().write_text(
             json.dumps(kwargs, indent=2),
             encoding="utf-8",
         )
@@ -434,19 +490,59 @@ class LocalBrowserEnvironment:
             raise RuntimeError("Browser environment was not prepared.")
 
         buffer = io.StringIO()
-        globals_dict: dict[str, Any] = {"asyncio": asyncio}
+        workspace_dir = self._workspace_dir()
+        workspace_env = self._workspace_env()
+        execution_env = self._credential_env | self.config.env | workspace_env
+
+        def run_command(command: str, *, cwd: str | Path | None = None, timeout: float | None = None):
+            """Run a shell command in the workspace and print output into the observation."""
+            result = subprocess.run(
+                command,
+                shell=True,
+                executable=self.config.shell,
+                text=True,
+                cwd=str(cwd or workspace_dir),
+                env=os.environ | execution_env,
+                timeout=timeout or self.config.command_timeout_seconds,
+                encoding="utf-8",
+                errors="replace",
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
+            print(result.stdout, end="")
+            if result.returncode != 0:
+                print(f"\n[command exited with return code {result.returncode}]")
+            return result
+
+        globals_dict: dict[str, Any] = {
+            "asyncio": asyncio,
+            "run_command": run_command,
+            "workspace_dir": str(workspace_dir),
+            "output_dir": str(workspace_dir),
+            "task_metadata_path": str(self._task_metadata_path()),
+            "final_script_path": str(self._final_script_path()),
+        }
         locals_dict: dict[str, Any] = {}
         wrapped = "async def __agent_step__(page, context, browser, playwright, task):\n"
         wrapped += textwrap.indent(python_code, "    ")
         with redirect_stdout(buffer), redirect_stderr(buffer):
-            exec(wrapped, globals_dict, locals_dict)
-            await locals_dict["__agent_step__"](
-                self._page,
-                self._context,
-                self._browser,
-                self._playwright,
-                self._prepared_task,
-            )
+            previous_env = {key: os.environ.get(key) for key in execution_env}
+            os.environ.update(execution_env)
+            try:
+                exec(wrapped, globals_dict, locals_dict)
+                await locals_dict["__agent_step__"](
+                    self._page,
+                    self._context,
+                    self._browser,
+                    self._playwright,
+                    self._prepared_task,
+                )
+            finally:
+                for key, previous_value in previous_env.items():
+                    if previous_value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = previous_value
         self._step_python_output = buffer.getvalue()
 
     async def _wait_for_observation_ready(self) -> None:
@@ -502,19 +598,24 @@ class LocalBrowserEnvironment:
         }
 
     def get_template_vars(self, **kwargs) -> dict[str, Any]:
+        workspace_dir = self._workspace_dir()
         return {
             "start_url": self.config.start_url or "",
-            "output_dir": str(self.config.output_dir.resolve()),
+            "output_dir": str(workspace_dir),
+            "workspace_dir": str(workspace_dir),
+            "task_metadata_path": str(self._task_metadata_path()),
+            "final_script_path": str(self._final_script_path()),
             "browser_mode": self.config.browser_mode,
-            "user_data_dir": str(self.config.user_data_dir),
             **kwargs,
         }
 
     def serialize(self) -> dict[str, Any]:
+        workspace_dir = self._workspace_dir()
         return {
             "environment": {
                 "config": self.config.model_dump(mode="json"),
                 "environment_type": f"{self.__class__.__module__}.{self.__class__.__name__}",
+                "workspace_dir": str(workspace_dir),
             }
         }
 
