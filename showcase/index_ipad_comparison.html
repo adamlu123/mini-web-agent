@@ -1,0 +1,680 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Apple iPad Budget Comparison · Task Replay</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7fa;
+      --panel: #ffffff;
+      --panel-soft: #fbfbfd;
+      --line: #e6e8ee;
+      --line-soft: #eef0f4;
+      --text: #0f172a;
+      --text-soft: #475569;
+      --muted: #6b7280;
+      --muted-2: #94a3b8;
+      --accent: #2f6feb;
+      --accent-ink: #1d4ed8;
+      --accent-soft: #eaf1ff;
+      --accent-edge: rgba(47, 111, 235, 0.28);
+      --ok: #16a34a;
+      --shadow-md: 0 8px 24px rgba(15, 23, 42, 0.06), 0 2px 6px rgba(15, 23, 42, 0.04);
+      --radius-lg: 14px;
+      --radius-md: 10px;
+      --radius-sm: 8px;
+      --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      --sans: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+
+    body {
+      margin: 0;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0)),
+        var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      font-feature-settings: "cv02", "cv03", "cv04", "ss01";
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+
+    .app {
+      display: grid;
+      grid-template-columns: 380px minmax(0, 1fr);
+      gap: 16px;
+      height: 100vh;
+      padding: 16px;
+    }
+
+    .panel {
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      min-height: 0;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-md);
+      overflow: hidden;
+    }
+
+    .sidebar-header {
+      padding: 16px 18px 14px;
+      border-bottom: 1px solid var(--line);
+      background: linear-gradient(180deg, #ffffff, var(--panel-soft));
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+
+    .brand-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #2f6feb, #7c3aed);
+      box-shadow: 0 0 0 3px rgba(47, 111, 235, 0.12);
+    }
+
+    .task-title {
+      margin: 0 0 8px;
+      font-size: 15px;
+      font-weight: 600;
+      line-height: 1.45;
+      letter-spacing: -0.01em;
+      color: var(--text);
+    }
+
+    .task-desc {
+      margin: 0;
+      color: var(--text-soft);
+      font-size: 12.5px;
+      line-height: 1.6;
+    }
+
+    .task-desc code {
+      padding: 1px 5px;
+      border-radius: 5px;
+      background: var(--line-soft);
+      font-family: var(--mono);
+      font-size: 11.5px;
+      color: var(--text);
+    }
+
+    .meta-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 12px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 8px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fff;
+      font-family: var(--mono);
+      font-size: 10.5px;
+      font-weight: 500;
+      color: var(--text-soft);
+      letter-spacing: 0.02em;
+    }
+
+    .chip svg { width: 11px; height: 11px; }
+
+    .chip.accent {
+      border-color: var(--accent-edge);
+      background: var(--accent-soft);
+      color: var(--accent-ink);
+    }
+
+    .steps-wrap {
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .steps {
+      list-style: none;
+      margin: 0;
+      padding: 6px;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      scrollbar-width: thin;
+      scrollbar-color: #cdd2dc transparent;
+    }
+
+    .steps::-webkit-scrollbar { width: 8px; }
+    .steps::-webkit-scrollbar-thumb {
+      background: #d6dae3;
+      border-radius: 999px;
+      border: 2px solid transparent;
+      background-clip: padding-box;
+    }
+    .steps::-webkit-scrollbar-thumb:hover { background: #b9bfcc; background-clip: padding-box; }
+
+    .step {
+      position: relative;
+      display: grid;
+      grid-template-columns: 56px 1fr;
+      gap: 10px;
+      width: 100%;
+      margin: 2px 0;
+      padding: 10px 12px;
+      border: 1px solid transparent;
+      border-radius: var(--radius-md);
+      background: transparent;
+      color: inherit;
+      text-align: left;
+      cursor: pointer;
+      font: inherit;
+      transition: background 140ms ease, border-color 140ms ease;
+    }
+
+    .step + .step::before {
+      content: "";
+      position: absolute;
+      left: 35px;
+      top: -4px;
+      width: 1px;
+      height: 6px;
+      background: var(--line);
+    }
+
+    .step:hover {
+      border-color: var(--line);
+      background: #f7f8fb;
+    }
+
+    .step.is-active {
+      border-color: var(--accent-edge);
+      background: var(--accent-soft);
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      height: 22px;
+      padding: 0 8px;
+      border-radius: 6px;
+      background: #f1f3f7;
+      color: var(--text-soft);
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      align-self: start;
+      margin-top: 2px;
+    }
+
+    .step.is-active .badge {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .step-body { min-width: 0; }
+
+    .step-title {
+      display: block;
+      margin: 0;
+      font-size: 13.5px;
+      font-weight: 600;
+      line-height: 1.4;
+      letter-spacing: -0.005em;
+      color: var(--text);
+    }
+
+    .step-action {
+      display: block;
+      margin: 4px 0 0;
+      color: var(--text-soft);
+      font-size: 12.5px;
+      line-height: 1.55;
+    }
+
+    .step-action code,
+    .step-note code {
+      padding: 1px 5px;
+      border-radius: 5px;
+      background: rgba(15, 23, 42, 0.05);
+      font-family: var(--mono);
+      font-size: 11.5px;
+      color: var(--text);
+    }
+
+    .step-note {
+      display: none;
+      margin: 8px 0 0;
+      padding: 7px 10px;
+      border-left: 2px solid var(--accent-edge);
+      background: rgba(47, 111, 235, 0.05);
+      border-radius: 0 6px 6px 0;
+      color: var(--text-soft);
+      font-size: 11.5px;
+      line-height: 1.55;
+    }
+
+    .step.is-active .step-note { display: block; }
+
+    .panel-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 10px 14px;
+      border-top: 1px solid var(--line);
+      background: var(--panel-soft);
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .panel-footer .dot {
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      margin-right: 6px;
+      border-radius: 50%;
+      background: var(--ok);
+      box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.12);
+    }
+
+    .stage {
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      min-width: 0;
+      min-height: 0;
+      background: #0b1020;
+      border: 1px solid #11162a;
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-md);
+      overflow: hidden;
+    }
+
+    .stage-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      border-bottom: 1px solid #11162a;
+      background: linear-gradient(180deg, #10162c, #0b1020);
+      color: #c7cce0;
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: 0.04em;
+    }
+
+    .stage-header .left,
+    .stage-header .right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .traffic { display: inline-flex; gap: 6px; }
+    .traffic span {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #2a2f45;
+    }
+    .traffic span:nth-child(1) { background: #ff5f57; }
+    .traffic span:nth-child(2) { background: #febc2e; }
+    .traffic span:nth-child(3) { background: #28c840; }
+
+    .live-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 10px;
+      border-radius: 999px;
+      background: rgba(47, 111, 235, 0.18);
+      color: #cfdcff;
+      border: 1px solid rgba(47, 111, 235, 0.35);
+      font-weight: 600;
+    }
+
+    .live-pill::before {
+      content: "";
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #74e0a3;
+      box-shadow: 0 0 0 2px rgba(116, 224, 163, 0.25);
+    }
+
+    .stage-body {
+      position: relative;
+      min-height: 0;
+      padding: 12px;
+    }
+
+    .video-wrap {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      min-height: 0;
+      overflow: hidden;
+      border-radius: 12px;
+      background: #050816;
+      border: 1px solid #11162a;
+    }
+
+    video {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      background: #050816;
+    }
+
+    .video-fallback {
+      padding: 20px;
+      color: #c7cce0;
+      font-size: 13px;
+      line-height: 1.7;
+    }
+
+    .stage-footer {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 14px;
+      align-items: center;
+      padding: 12px 14px;
+      border-top: 1px solid #11162a;
+      background: linear-gradient(180deg, #0b1020, #0a0f1c);
+      color: #e8ecf8;
+    }
+
+    .now-time {
+      padding: 6px 10px;
+      border-radius: 8px;
+      background: rgba(47, 111, 235, 0.18);
+      color: #cfdcff;
+      font-family: var(--mono);
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      border: 1px solid rgba(47, 111, 235, 0.35);
+    }
+
+    .now-body { min-width: 0; }
+
+    .now-title {
+      margin: 0;
+      font-size: 13.5px;
+      font-weight: 600;
+      letter-spacing: -0.005em;
+      color: #f3f6ff;
+    }
+
+    .now-text {
+      margin: 4px 0 0;
+      color: #aab2c8;
+      font-size: 12.5px;
+      line-height: 1.5;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    @media (max-width: 1080px) {
+      .app { grid-template-columns: 340px minmax(0, 1fr); }
+    }
+
+    @media (max-width: 880px) {
+      .app {
+        grid-template-columns: 1fr;
+        height: auto;
+      }
+
+      .panel { min-height: 50vh; }
+      .stage { min-height: 50vh; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <aside class="panel sidebar" aria-label="Task replay sidebar">
+      <header class="sidebar-header">
+        <div class="brand">
+          <span class="brand-dot" aria-hidden="true"></span>
+          <span>Codex / Browser Replay</span>
+        </div>
+        <h1 class="task-title">Compare iPad Pro, iPad Air, Best Buy iPad options, MacBook Pro pricing, and Amazon iPhone listings.</h1>
+        <p class="task-desc">Recorded from <code>apple_ipad_budget_browser_comparison</code> on a local CDP browser.</p>
+        <div class="meta-row">
+          <span class="chip accent">local browser</span>
+          <span class="chip">Apple</span>
+          <span class="chip">Best Buy</span>
+          <span class="chip">Amazon</span>
+        </div>
+      </header>
+
+      <div class="steps-wrap">
+        <ol id="steps" class="steps" role="list"></ol>
+      </div>
+
+      <footer class="panel-footer">
+        <span><span class="dot"></span>Replay ready</span>
+        <span id="durationLabel">--:--</span>
+      </footer>
+    </aside>
+
+    <section class="panel stage" aria-label="Task recording">
+      <header class="stage-header">
+        <div class="left">
+          <span class="traffic" aria-hidden="true"><span></span><span></span><span></span></span>
+        </div>
+        <div class="right"></div>
+      </header>
+
+      <div class="stage-body">
+        <div class="video-wrap">
+          <video id="taskVideo" controls preload="metadata" playsinline>
+            <source src="./ipad_comparison.mp4" type="video/mp4">
+            <div class="video-fallback">
+              Could not load <code>ipad_comparison.mp4</code>. Make sure the video file sits next to this page, or update the source path above.
+            </div>
+          </video>
+        </div>
+      </div>
+
+      <footer class="stage-footer" aria-live="polite">
+        <span id="nowTime" class="now-time">00:00</span>
+        <div class="now-body">
+          <p id="nowTitle" class="now-title">Ready to play</p>
+          <p id="nowText" class="now-text">Pick an entry on the left to jump to the matching frame.</p>
+        </div>
+      </footer>
+    </section>
+  </main>
+
+  <script>
+    const keyframes = [
+      {
+        time: 0,
+        title: "TASK START: iPad budget comparison request",
+        action: "The run starts from Cursor with the apple_ipad_budget_browser_comparison task file and local CDP browser configuration.",
+        note: "This is the user task handoff before browser evidence collection."
+      },
+      {
+        time: 2,
+        title: "BROWSER TASK START: Chrome session opens",
+        action: "The browser opens on a blank page and begins creating tabs for the live Apple comparison.",
+        note: "This marks the start of the visible browser operation."
+      },
+      {
+        time: 6,
+        title: "APPLE COMPARISON: iPad Air and iPad Pro tabs",
+        action: "Apple iPad Air and iPad Pro pages are opened in separate tabs so the run can compare starting price and product differences.",
+        note: "The task asks for live Apple pages rather than a generic summary."
+      },
+      {
+        time: 24,
+        title: "BEST BUY CHECK: blue iPad listing",
+        action: "Best Buy shows the 11-inch iPad A16 Wi-Fi 128GB in Blue at $329.00.",
+        note: "This is the standard new listing used as a baseline for Best Buy pricing."
+      },
+      {
+        time: 32,
+        title: "COLOR CHECK: pink iPad listing",
+        action: "The Best Buy product page switches to the Pink 11-inch iPad A16 Wi-Fi 128GB, also shown at $329.00.",
+        note: "This verifies that the requested pink and blue variants are actual product pages."
+      },
+      {
+        time: 44,
+        title: "AMAZON SEARCH: iPhone 17 Pro results",
+        action: "Amazon search results for iphone 17 pro appear, with the first visible phone listing priced at $1,098.95.",
+        note: "The run later opens phone listings to keep premium-device prices in context."
+      },
+      {
+        time: 82,
+        title: "APPLE PRICE CEILING: MacBook Pro page",
+        action: "The Apple MacBook Pro lineup page is opened as the comparison price ceiling.",
+        note: "The final run records Apple's lowest visible MacBook Pro starting price as $1,699.00."
+      },
+      {
+        time: 86,
+        title: "AMAZON PHONE DETAIL: Deep Blue listing",
+        action: "Amazon opens an Apple iPhone 17 Pro 256GB Deep Blue renewed phone listing at $1,098.95.",
+        note: "This is one of the two phone listings used as price context."
+      },
+      {
+        time: 94,
+        title: "BEST BUY CONDITION CHECK: blue refurbished candidate",
+        action: "Best Buy displays a blue 11-inch iPad A16 refurbished/open-box candidate with a visible $284.99 price.",
+        note: "The final artifact separately verifies Open-Box Good at $302.99 and Open-Box Excellent at $312.99."
+      },
+      {
+        time: 158,
+        title: "BEST BUY SEARCH RESULTS: new and open-box options",
+        action: "Best Buy search results show the new blue iPad and multiple certified refurbished/open-box style options in one view.",
+        note: "This is where the run compares available Best Buy purchase paths."
+      },
+      {
+        time: 160,
+        title: "BEST BUY PRODUCT PAGE: standard blue option",
+        action: "The standard blue 11-inch iPad A16 Wi-Fi 128GB product page is visible again at $329.00.",
+        note: "The run keeps the standard listing open for comparison against condition-based options."
+      },
+      {
+        time: 176,
+        title: "AMAZON PHONE DETAIL: Silver listing",
+        action: "Amazon opens the Apple iPhone 17 Pro 256GB Silver renewed phone listing at $1,119.90.",
+        note: "This completes the two-phone Amazon comparison context."
+      },
+      {
+        time: 183,
+        title: "TASK END: recommendation delivered",
+        action: "The terminal shows the final recommendation: choose iPad Air for budget value, then Best Buy blue Open-Box Good at $302.99; it is $1,396.01 cheaper than the $1,699.00 MacBook Pro baseline.",
+        note: "The final answer also cites the two Amazon iPhone 17 Pro prices: $1,098.95 and $1,119.90."
+      }
+    ];
+
+    const video = document.getElementById("taskVideo");
+    const stepsEl = document.getElementById("steps");
+    const nowTime = document.getElementById("nowTime");
+    const nowTitle = document.getElementById("nowTitle");
+    const nowText = document.getElementById("nowText");
+    const durationLabel = document.getElementById("durationLabel");
+
+    const formatTime = (seconds) => {
+      const safe = Math.max(0, Math.floor(seconds || 0));
+      const m = String(Math.floor(safe / 60)).padStart(2, "0");
+      const s = String(safe % 60).padStart(2, "0");
+      return `${m}:${s}`;
+    };
+
+    const getFrameLabel = (frame) => frame.labelTimeText || formatTime(frame.labelTime ?? frame.time);
+
+    const renderSteps = () => {
+      stepsEl.innerHTML = keyframes.map((frame, index) => `
+        <li>
+          <button class="step" type="button" data-index="${index}" data-time="${frame.time}" aria-label="Jump to ${getFrameLabel(frame)} ${frame.title}">
+            <span class="badge">${getFrameLabel(frame)}</span>
+            <span class="step-body">
+              <span class="step-title">${frame.title}</span>
+              <span class="step-action">${frame.action}</span>
+              <span class="step-note">${frame.note}</span>
+            </span>
+          </button>
+        </li>
+      `).join("");
+    };
+
+    const getActiveIndex = () => {
+      const t = video.currentTime || 0;
+      let active = 0;
+      keyframes.forEach((frame, index) => { if (t >= frame.time) active = index; });
+      return active;
+    };
+
+    let lastActive = -1;
+    const setActive = (index) => {
+      const frame = keyframes[index];
+      if (lastActive !== index) {
+        const buttons = document.querySelectorAll(".step");
+        buttons.forEach((node, i) => node.classList.toggle("is-active", i === index));
+        const activeBtn = buttons[index];
+        if (activeBtn) activeBtn.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        lastActive = index;
+      }
+      nowTime.textContent = getFrameLabel(frame);
+      nowTitle.textContent = frame.title;
+      nowText.textContent = frame.action;
+    };
+
+    const jumpTo = (time) => {
+      video.currentTime = time;
+      const playPromise = video.play();
+      if (playPromise && typeof playPromise.catch === "function") {
+        playPromise.catch(() => setActive(getActiveIndex()));
+      }
+      setActive(getActiveIndex());
+    };
+
+    renderSteps();
+    setActive(0);
+
+    stepsEl.addEventListener("click", (event) => {
+      const button = event.target.closest(".step");
+      if (!button) return;
+      jumpTo(Number(button.dataset.time));
+    });
+
+    video.addEventListener("timeupdate", () => {
+      setActive(getActiveIndex());
+    });
+
+    video.addEventListener("loadedmetadata", () => {
+      durationLabel.textContent = formatTime(video.duration);
+    });
+  </script>
+</body>
+</html>
