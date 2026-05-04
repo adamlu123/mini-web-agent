@@ -74,19 +74,13 @@
     .brand-mark {
       display: inline-flex;
       align-items: center;
-      gap: 9px;
       min-width: 0;
-      font-weight: 850;
-      letter-spacing: 0;
     }
 
-    .brand-mark::before {
-      width: 18px;
-      height: 18px;
-      border: 2px solid var(--ink);
-      border-radius: 5px;
-      background: linear-gradient(135deg, var(--accent), var(--green));
-      content: "";
+    .brand-logo {
+      display: block;
+      width: 168px;
+      height: auto;
     }
 
     .nav-links {
@@ -792,7 +786,9 @@
 </head>
 <body>
   <header class="site-header">
-    <a class="brand-mark" href="#top" aria-label="Webwright home">Webwright</a>
+    <a class="brand-mark" href="#top" aria-label="Webwright home">
+      <img class="brand-logo" src="showcase/logo.png" alt="Webwright">
+    </a>
     <nav class="nav-links" aria-label="Primary navigation">
       <a href="#approach">Idea</a>
       <a href="#showcase">Showcase</a>
