@@ -3,10 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Ticketmaster Skill · Task Replay</title>
+  <title>Ticketmaster Skill · Showcase</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./video_bumper.css">
   <style>
     :root {
       color-scheme: light;
@@ -461,14 +462,14 @@
 </head>
 <body>
   <main class="app">
-    <aside class="panel sidebar" aria-label="Task replay sidebar">
+    <aside class="panel sidebar" aria-label="Showcase sidebar">
       <header class="sidebar-header">
         <div class="brand">
           <span class="brand-dot" aria-hidden="true"></span>
-          <span>Codex · Skill Replay</span>
+          <span>Webwright · Skill Workflow</span>
         </div>
         <h1 class="task-title">Compare Ticketmaster classical concerts near Seattle for May Day weekend and recommend the best ticket.</h1>
-        <p class="task-desc">Driven by the <code>ticketmaster-classical-tickets</code> skill on a local CDP browser.</p>
+        <p class="task-desc">A skill-guided Ticketmaster workflow that compares live classical concert options near Seattle under $200 per person.</p>
         <div class="meta-row">
           <span class="chip accent">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9V7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4Z"/><path d="M13 5v2M13 11v2M13 17v2"/></svg>
@@ -485,8 +486,7 @@
       </div>
 
       <footer class="panel-footer">
-        <span><span class="dot"></span>Replay ready</span>
-        <span id="durationLabel">--:--</span>
+        <span><span class="dot"></span>Showcase ready</span>
       </footer>
     </aside>
 
@@ -500,7 +500,7 @@
 
       <div class="stage-body">
         <div class="video-wrap">
-          <video id="taskVideo" controls preload="metadata" playsinline>
+          <video id="taskVideo" controls preload="metadata" playsinline data-logo-src="./logo.png">
             <source src="./ticket_with.mp4" type="video/mp4">
             <div class="video-fallback">
               Could not load <code>ticket_with.mp4</code>. Make sure the video file sits next to this page, or update the source path above.
@@ -519,20 +519,21 @@
     </section>
   </main>
 
+  <script src="./video_bumper.js"></script>
   <script>
     const keyframes = [
       {
         time: 0,
         labelTime: 0,
         title: "TASK START: Ticketmaster skill request",
-        action: "Codex receives a $ticketmaster-classical-tickets prompt: find a classical concert near Seattle or Redmond on May Day weekend 2026, compare at least three Ticketmaster options under $200/person, and do not purchase.",
+        action: "The agent receives the request to find a classical concert near Seattle or Redmond on May Day weekend 2026, compare at least three Ticketmaster options under $200/person, and do not purchase.",
         note: "This is the user task handoff before browser automation begins."
       },
       {
         time: 8,
         labelTime: 14,
         title: "SKILL PLAN: use live Ticketmaster data",
-        action: "Codex explicitly chooses the browser-backed Ticketmaster CLI and keeps the search scoped to May 1-3 with a $200/person ceiling.",
+        action: "The agent uses the Ticketmaster skill and keeps the search scoped to May 1-3 with a $200/person ceiling.",
         note: "The skill sets the Ticketmaster scope before the browser opens."
       },
       {
@@ -581,7 +582,7 @@
         time: 44,
         labelTime: 78,
         title: "TASK END: recommendation delivered",
-        action: "Codex recommends Seattle Symphony: Xian Conducts Mozart on Sun May 3 2026 at 2:00 PM, Sec ORCH REAR R Row QQ, $110.90/person.",
+        action: "The agent recommends Seattle Symphony: Xian Conducts Mozart on Sun May 3 2026 at 2:00 PM, Sec ORCH REAR R Row QQ, $110.90/person.",
         note: "The final answer compares the $110.90 option against multiple May 2 options."
       }
     ];
@@ -591,7 +592,6 @@
     const nowTime = document.getElementById("nowTime");
     const nowTitle = document.getElementById("nowTitle");
     const nowText = document.getElementById("nowText");
-    const durationLabel = document.getElementById("durationLabel");
 
     const formatTime = (seconds) => {
       const safe = Math.max(0, Math.floor(seconds || 0));
@@ -631,7 +631,7 @@
         const buttons = document.querySelectorAll(".step");
         buttons.forEach((node, i) => node.classList.toggle("is-active", i === index));
         const activeBtn = buttons[index];
-        if (activeBtn) {
+        if (activeBtn && lastActive !== -1) {
           activeBtn.scrollIntoView({ block: "nearest", behavior: "smooth" });
         }
         lastActive = index;
@@ -663,9 +663,6 @@
       setActive(getActiveIndex());
     });
 
-    video.addEventListener("loadedmetadata", () => {
-      durationLabel.textContent = formatTime(video.duration);
-    });
   </script>
 </body>
 </html>

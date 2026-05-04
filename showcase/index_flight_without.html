@@ -3,10 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Local CDP Flights · Task Replay</title>
+  <title>Google Flights Baseline · Showcase</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./video_bumper.css">
   <style>
     :root {
       color-scheme: light;
@@ -460,18 +461,18 @@
 </head>
 <body>
   <main class="app">
-    <aside class="panel sidebar" aria-label="Task replay sidebar">
+    <aside class="panel sidebar" aria-label="Showcase sidebar">
       <header class="sidebar-header">
         <div class="brand">
           <span class="brand-dot" aria-hidden="true"></span>
-          <span>Codex · Baseline Replay</span>
+          <span>Webwright · Baseline Workflow</span>
         </div>
         <h1 class="task-title">Compare HKG ⇄ Jeju round-trip flights and recommend the best itinerary.</h1>
-        <p class="task-desc">Run directly on a local CDP browser — no skill assist.</p>
+        <p class="task-desc">A baseline browser workflow without a dedicated flight skill; the run discovers and compares the Google Flights options directly.</p>
         <div class="meta-row">
           <span class="chip warn">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4m0 4h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/></svg>
-            no skill · raw CDP
+            no skill · baseline
           </span>
           <span class="chip">HKG ⇄ CJU</span>
           <span class="chip">Aug 8 – Aug 14, 2026</span>
@@ -484,8 +485,7 @@
       </div>
 
       <footer class="panel-footer">
-        <span><span class="dot"></span>Replay ready</span>
-        <span id="durationLabel">--:--</span>
+        <span><span class="dot"></span>Showcase ready</span>
       </footer>
     </aside>
 
@@ -499,7 +499,7 @@
 
       <div class="stage-body">
         <div class="video-wrap">
-          <video id="taskVideo" controls preload="metadata" playsinline>
+          <video id="taskVideo" controls preload="metadata" playsinline data-logo-src="./logo.png" data-target-duration="60" data-source-duration="289">
             <source src="./flight_without.mp4" type="video/mp4">
             <div class="video-fallback">
               Could not load <code>flight_without.mp4</code>. Make sure the video file sits next to this page, or update the source path above.
@@ -518,21 +518,22 @@
     </section>
   </main>
 
+  <script src="./video_bumper.js"></script>
   <script>
     const keyframes = [
       {
         time: 0,
         labelTime: 0,
-        title: "TASK START: raw browser flight request",
-        action: "Codex receives a $local-cdp-browser prompt for HKG ⇄ Jeju, fixed dates, economy class, HK$20,000 budget, and at least three options.",
-        note: "No flight-specific skill is used, so Codex must discover the browser workflow manually."
+        title: "TASK START: baseline flight request",
+        action: "The agent receives the HKG ⇄ Jeju prompt with fixed dates, economy class, HK$20,000 budget, and at least three options.",
+        note: "No flight-specific skill is used, so the workflow discovers the browser path manually."
       },
       {
         time: 20,
         labelTime: 50,
-        title: "SETUP: attach to raw CDP",
-        action: "Codex spends time validating the existing browser profile, CDP endpoint, and Playwright access before it can search.",
-        note: "This setup is shown explicitly in the raw browser run."
+        title: "SETUP: prepare browser workflow",
+        action: "The run spends time validating the browser state and automation access before it can search.",
+        note: "This setup is shown explicitly in the baseline run."
       },
       {
         time: 40,
@@ -545,7 +546,7 @@
         time: 55,
         labelTime: 130,
         title: "MANUAL STEP: select origin HKG",
-        action: "Codex opens the origin autocomplete and selects Hong Kong International Airport.",
+        action: "The agent opens the origin autocomplete and selects Hong Kong International Airport.",
         note: "This is a visible field-entry step in the raw browser run."
       },
       {
@@ -559,7 +560,7 @@
         time: 135,
         labelTime: 380,
         title: "MANUAL STEP: resolve Jeju destination",
-        action: "Codex enters Jeju and resolves the destination to Jeju-si / CJU.",
+        action: "The agent enters Jeju and resolves the destination to Jeju-si / CJU.",
         note: "The route is now set to the requested destination."
       },
       {
@@ -587,7 +588,7 @@
         time: 220,
         labelTime: 630,
         title: "COMPARISON: mixed-carrier option",
-        action: "Codex inspects a Jeju Air / Jin Air mix around HK$3,172, which is pricier and operationally more complex.",
+        action: "The agent inspects a Jeju Air / Jin Air mix around HK$3,172, which is pricier and operationally more complex.",
         note: "This provides a comparison point against the nonstop options."
       },
       {
@@ -608,7 +609,7 @@
         time: 265,
         labelTime: 740,
         title: "VALIDATION: re-check cheapest nonstop",
-        action: "Codex reopens the HK Express details and confirms both legs are nonstop with 6h 10m total flying time.",
+        action: "The agent reopens the HK Express details and confirms both legs are nonstop with 6h 10m total flying time.",
         note: "A validation step after checking alternate itineraries."
       },
       {
@@ -622,7 +623,7 @@
         time: 289,
         labelTime: 896,
         title: "TASK END: recommendation delivered",
-        action: "Codex recommends the HK$2,340 HK Express nonstop as cheapest, while noting the 08:35 HK Express alternative if the 02:30 departure is too early.",
+        action: "The agent recommends the HK$2,340 HK Express nonstop as cheapest, while noting the 08:35 HK Express alternative if the 02:30 departure is too early.",
         note: "The final answer includes the manual setup, alternate itinerary checks, and the selected recommendation."
       }
     ];
@@ -632,7 +633,6 @@
     const nowTime = document.getElementById("nowTime");
     const nowTitle = document.getElementById("nowTitle");
     const nowText = document.getElementById("nowText");
-    const durationLabel = document.getElementById("durationLabel");
 
     const formatTime = (seconds) => {
       const safe = Math.max(0, Math.floor(seconds || 0));
@@ -672,7 +672,7 @@
         const buttons = document.querySelectorAll(".step");
         buttons.forEach((node, i) => node.classList.toggle("is-active", i === index));
         const activeBtn = buttons[index];
-        if (activeBtn) {
+        if (activeBtn && lastActive !== -1) {
           activeBtn.scrollIntoView({ block: "nearest", behavior: "smooth" });
         }
         lastActive = index;
@@ -704,9 +704,6 @@
       setActive(getActiveIndex());
     });
 
-    video.addEventListener("loadedmetadata", () => {
-      durationLabel.textContent = formatTime(video.duration);
-    });
   </script>
 </body>
 </html>

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Gift Package Trace Replay</title>
+  <title>Gift Package Trace Showcase</title>
   <style>
     :root {
       color-scheme: light;
@@ -168,7 +168,7 @@
 
     .main {
       display: grid;
-      grid-template-columns: 330px minmax(0, 1fr);
+      grid-template-columns: 280px minmax(0, 1fr);
       gap: 12px;
       min-height: 0;
     }
@@ -318,7 +318,7 @@
     }
 
     .evolution {
-      grid-template-columns: minmax(280px, 0.85fr) minmax(0, 1.15fr);
+      grid-template-columns: minmax(250px, 0.72fr) minmax(0, 1.28fr);
       gap: 12px;
     }
 
@@ -402,11 +402,19 @@
       grid-template-columns: 54px minmax(0, 1fr);
       gap: 8px;
       align-items: start;
+      min-width: 0;
       padding: 6px 8px;
       border-radius: var(--radius);
       font-family: var(--mono);
       font-size: 11px;
       line-height: 1.45;
+      overflow-wrap: anywhere;
+    }
+
+    .change-row span {
+      min-width: 0;
+      overflow-wrap: anywhere;
+      word-break: break-word;
     }
 
     .change-row.added {
@@ -461,6 +469,26 @@
       display: grid;
       gap: 10px;
       min-height: 0;
+    }
+
+    .scroll-body.detail-grid {
+      padding-bottom: 34px;
+    }
+
+    .scroll-body.detail-grid.terminal-detail-body {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      overflow: hidden;
+      padding-bottom: 12px;
+    }
+
+    .terminal-detail-body .scrollable-block {
+      flex: 0 0 auto;
+    }
+
+    .terminal-detail-body .thought {
+      max-height: clamp(120px, 16vh, 190px);
     }
 
     .detail-block {
@@ -545,6 +573,251 @@
       color: var(--terminal-ink);
     }
 
+    .trace-terminal {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      flex: 1 1 clamp(430px, 54vh, 680px);
+      min-width: 0;
+      min-height: 0;
+      overflow: hidden;
+      border-color: #182338;
+      background: #0b1020;
+      color: var(--terminal-ink);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    }
+
+    .terminal-chrome {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+      min-height: 46px;
+      padding: 7px 12px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+      background:
+        linear-gradient(180deg, rgba(30, 41, 59, 0.9), rgba(15, 23, 42, 0.96)),
+        #111827;
+      color: #93a4bd;
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .terminal-controls {
+      display: inline-flex;
+      gap: 5px;
+    }
+
+    .terminal-control {
+      width: 9px;
+      height: 9px;
+      border-radius: 999px;
+      background: #64748b;
+    }
+
+    .terminal-control.red {
+      background: #f87171;
+    }
+
+    .terminal-control.amber {
+      background: #fbbf24;
+    }
+
+    .terminal-control.green {
+      background: #34d399;
+    }
+
+    .terminal-title {
+      display: grid;
+      gap: 2px;
+      overflow: hidden;
+      line-height: 1.25;
+    }
+
+    .terminal-title b,
+    .terminal-title span,
+    .terminal-run-label {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .terminal-title b {
+      color: #e5edf8;
+      font-size: 11.5px;
+    }
+
+    .terminal-title span {
+      color: #8ea2bd;
+      font-size: 10px;
+      text-transform: uppercase;
+    }
+
+    .terminal-run-label {
+      justify-self: end;
+      padding: 4px 7px;
+      border: 1px solid rgba(110, 231, 183, 0.26);
+      border-radius: 6px;
+      background: rgba(6, 78, 59, 0.28);
+      color: #6ee7b7;
+    }
+
+    .terminal-screen {
+      display: block;
+      height: 100%;
+      min-height: 0;
+      padding: 14px;
+      overflow: auto;
+      background:
+        linear-gradient(180deg, rgba(36, 95, 206, 0.12), rgba(15, 118, 110, 0.04) 46%, transparent),
+        #0d1117;
+      color: var(--terminal-ink);
+      font-family: var(--mono);
+      font-size: 11.5px;
+      line-height: 1.58;
+    }
+
+    .terminal-stream {
+      display: grid;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .terminal-stream::after {
+      display: block;
+      height: 24px;
+      content: "";
+    }
+
+    .terminal-group {
+      overflow: hidden;
+      border: 1px solid rgba(148, 163, 184, 0.16);
+      border-radius: 7px;
+      background: rgba(2, 6, 23, 0.48);
+    }
+
+    .terminal-group:last-child {
+      border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+    }
+
+    .terminal-label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      min-height: 32px;
+      padding: 0 11px;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+      background: rgba(15, 23, 42, 0.86);
+      color: #9fb0c9;
+      font-size: 10.5px;
+      font-weight: 850;
+    }
+
+    .terminal-label span:first-child {
+      color: #e2e8f0;
+    }
+
+    .terminal-label span:last-child {
+      color: #7f91ac;
+      font-size: 10px;
+    }
+
+    .terminal-command-block {
+      display: grid;
+      gap: 8px;
+      align-items: start;
+      padding: 12px;
+      background: rgba(15, 23, 42, 0.26);
+    }
+
+    .terminal-prompt {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      min-height: 22px;
+      padding: 1px 7px;
+      border: 1px solid rgba(110, 231, 183, 0.18);
+      border-radius: 6px;
+      background: rgba(6, 78, 59, 0.22);
+      color: #6ee7b7;
+      white-space: nowrap;
+      width: max-content;
+      max-width: 100%;
+    }
+
+    .terminal-path {
+      color: #93c5fd;
+    }
+
+    .terminal-symbol {
+      color: #facc15;
+    }
+
+    .terminal-code,
+    .terminal-output {
+      margin: 0;
+      min-width: 0;
+      max-width: 100%;
+      overflow: visible;
+      white-space: pre-wrap;
+      tab-size: 2;
+      overflow-wrap: anywhere;
+    }
+
+    .terminal-code {
+      color: #e5edf8;
+    }
+
+    .terminal-output {
+      padding: 12px;
+      background: rgba(15, 23, 42, 0.28);
+      color: #cbd5e1;
+    }
+
+    .terminal-code code,
+    .terminal-output code {
+      font: inherit;
+      white-space: inherit;
+    }
+
+    .syntax-command {
+      color: #f8fafc;
+      font-weight: 850;
+    }
+
+    .syntax-keyword {
+      color: #c4b5fd;
+      font-weight: 800;
+    }
+
+    .syntax-flag,
+    .syntax-json-key {
+      color: #93c5fd;
+    }
+
+    .syntax-string {
+      color: #a7f3d0;
+    }
+
+    .syntax-path {
+      color: #facc15;
+    }
+
+    .syntax-comment {
+      color: #7f91ac;
+      font-style: italic;
+    }
+
+    .syntax-json-value {
+      color: #fbbf24;
+    }
+
+    .terminal-empty {
+      color: #94a3b8;
+      font-style: italic;
+    }
+
     .pill {
       display: inline-flex;
       align-items: center;
@@ -570,27 +843,6 @@
 
     .status-pill {
       text-transform: uppercase;
-    }
-
-    .step-shot {
-      position: relative;
-      display: grid;
-      place-items: center;
-      height: clamp(190px, 24vh, 300px);
-      min-height: 190px;
-      overflow: auto;
-      background: #111827;
-    }
-
-    .step-shot.is-empty {
-      overflow: hidden;
-    }
-
-    .step-shot img {
-      display: block;
-      max-width: 100%;
-      height: auto;
-      object-fit: contain;
     }
 
     .final-run {
@@ -711,6 +963,7 @@
     }
 
     .judge-summary {
+      min-width: 0;
       margin: 0;
       padding: 10px 12px;
       border-bottom: 1px solid var(--line);
@@ -720,6 +973,8 @@
       font-size: 12px;
       font-weight: 800;
       line-height: 1.55;
+      overflow-wrap: anywhere;
+      word-break: break-word;
     }
 
     .judge-summary.empty {
@@ -787,6 +1042,7 @@
       font-size: 12.5px;
       line-height: 1.45;
       overflow-wrap: anywhere;
+      word-break: break-word;
     }
 
     .action-list b,
@@ -864,6 +1120,16 @@
       .thumbs {
         grid-template-columns: 1fr;
       }
+
+      .terminal-chrome {
+        grid-template-columns: auto minmax(0, 1fr);
+      }
+
+      .terminal-run-label {
+        grid-column: 2;
+        justify-self: start;
+      }
+
     }
   </style>
 </head>
@@ -871,11 +1137,12 @@
   <main class="app">
     <header class="topbar">
       <div>
-        <p class="eyebrow">Mini Web Agent Showcase</p>
-        <h1>Gift Package Trace Replay</h1>
+        <p class="eyebrow">Webwright Showcase</p>
+        <h1>Gift Package Trace Showcase</h1>
+        <p class="subtitle">The browser is disposable; the workspace is the agent's memory. Each step shows files created while the agent solves the web task through terminal commands.</p>
       </div>
 
-      <div class="toolbar" aria-label="Replay controls">
+      <div class="toolbar" aria-label="Showcase controls">
         <div class="segmented" aria-label="Showcase section">
           <button id="modeEvolution" type="button" aria-pressed="true">Part 1: evolution</button>
           <button id="modeFinal" type="button" aria-pressed="false">Part 2: final run</button>
@@ -929,7 +1196,7 @@
               <h2>Thought, command, output</h2>
               <span class="pill status-pill" id="stepStatus">status: --</span>
             </header>
-            <div class="scroll-body detail-grid">
+            <div class="scroll-body detail-grid terminal-detail-body">
               <div class="detail-block scrollable-block">
                 <h3>LLM Thought</h3>
                 <p class="thought scrollable-content" id="thoughtText"></p>
@@ -940,21 +1207,20 @@
                 <p class="thought scrollable-content" id="stepFinalText"></p>
               </div>
 
-              <div class="detail-block">
-                <h3>Step Screenshot</h3>
-                <div class="step-shot" id="stepShotFrame">
-                  <img id="stepShotImg" alt="Current step screenshot">
+              <div class="detail-block trace-terminal">
+                <div class="terminal-chrome">
+                  <span class="terminal-controls" aria-hidden="true">
+                    <span class="terminal-control red"></span>
+                    <span class="terminal-control amber"></span>
+                    <span class="terminal-control green"></span>
+                  </span>
+                  <span class="terminal-title">
+                    <b>Command transcript</b>
+                    <span>generated command -> command_output</span>
+                  </span>
+                  <span class="terminal-run-label" id="terminalRunLabel">step --</span>
                 </div>
-              </div>
-
-              <div class="detail-block scrollable-block">
-                <h3>Generated Code</h3>
-                <pre class="command scrollable-content" id="commandText"></pre>
-              </div>
-
-              <div class="detail-block scrollable-block">
-                <h3>command_output</h3>
-                <pre class="terminal scrollable-content" id="terminalOutput"></pre>
+                <div class="terminal-screen scrollable-content" id="terminalSession"></div>
               </div>
 
             </div>
@@ -982,7 +1248,7 @@
               <span>
                 <a class="link" id="logLink" href="#" target="_blank" rel="noreferrer">open log</a>
                 <span class="small"> · </span>
-                <a class="link" id="judgeLink" href="#" target="_blank" rel="noreferrer">open judge</a>
+                <a class="link" id="judgeLink" href="#" target="_blank" rel="noreferrer">open self-reflection</a>
               </span>
             </header>
             <div class="evidence-scroll">
@@ -1004,16 +1270,10 @@
                 </div>
               </section>
               <section class="evidence-section scrollable-section" id="judgeSection">
-                <h3>Judge Verdict</h3>
+                <h3>Self-Reflection Response</h3>
                 <div class="evidence-body scrollable-content">
                   <p class="judge-summary empty" id="judgeSummary"></p>
                   <ol class="judge-list" id="judgeChecks"></ol>
-                </div>
-              </section>
-              <section class="evidence-section scrollable-section" id="imageJudgeSection">
-                <h3>Image Judge Scores</h3>
-                <div class="evidence-body scrollable-content">
-                  <ol class="judge-list" id="imageJudgeList"></ol>
                 </div>
               </section>
             </div>
@@ -1055,12 +1315,10 @@
       workspaceTree: document.getElementById("workspaceTree"),
       stepStatus: document.getElementById("stepStatus"),
       thoughtText: document.getElementById("thoughtText"),
-      stepShotFrame: document.getElementById("stepShotFrame"),
-      stepShotImg: document.getElementById("stepShotImg"),
       stepFinalBlock: document.getElementById("stepFinalBlock"),
       stepFinalText: document.getElementById("stepFinalText"),
-      commandText: document.getElementById("commandText"),
-      terminalOutput: document.getElementById("terminalOutput"),
+      terminalSession: document.getElementById("terminalSession"),
+      terminalRunLabel: document.getElementById("terminalRunLabel"),
       runSwitcher: document.getElementById("runSwitcher"),
       mainShot: document.getElementById("mainShot"),
       thumbs: document.getElementById("thumbs"),
@@ -1074,8 +1332,6 @@
       judgeSection: document.getElementById("judgeSection"),
       judgeSummary: document.getElementById("judgeSummary"),
       judgeChecks: document.getElementById("judgeChecks"),
-      imageJudgeSection: document.getElementById("imageJudgeSection"),
-      imageJudgeList: document.getElementById("imageJudgeList"),
       judgeLink: document.getElementById("judgeLink")
     };
 
@@ -1085,6 +1341,49 @@
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;");
+    }
+
+    function highlightBash(value) {
+      const commandWords = "cd|ls|cat|echo|python|python3|node|npm|npx|mkdir|touch|cp|mv|rm|sed|awk|rg|grep|curl|wget|playwright|pytest|true|false";
+      const shellKeywords = "if|then|else|elif|fi|for|while|do|done|case|esac|in|export|function";
+      const tokenPattern = new RegExp(
+        `(&quot;[^\\n]*?&quot;|'[^\\n]*?'|#[^\\n]*|--?[\\w-]+|\\b(?:${commandWords})\\b|\\b(?:${shellKeywords})\\b|(?:\\.\\.?/|RELEASE_WORKSPACE|[\\w.-]+/)[^\\s;&|()]+)`,
+        "g"
+      );
+
+      return escapeHtml(value).replace(tokenPattern, (token) => {
+        if (token.startsWith("#")) return `<span class="syntax-comment">${token}</span>`;
+        if (token.startsWith("&quot;") || token.startsWith("'")) return `<span class="syntax-string">${token}</span>`;
+        if (/^--?[\w-]+$/.test(token)) return `<span class="syntax-flag">${token}</span>`;
+        if (new RegExp(`^(?:${commandWords})$`).test(token)) return `<span class="syntax-command">${token}</span>`;
+        if (new RegExp(`^(?:${shellKeywords})$`).test(token)) return `<span class="syntax-keyword">${token}</span>`;
+        return `<span class="syntax-path">${token}</span>`;
+      });
+    }
+
+    function highlightJson(value) {
+      return escapeHtml(value).replace(/(&quot;[^&]*?&quot;)(\s*:)?|\b(true|false|null)\b|-?\b\d+(?:\.\d+)?\b/g, (match, stringToken, colon) => {
+        if (stringToken) {
+          const cls = colon ? "syntax-json-key" : "syntax-string";
+          return `<span class="${cls}">${stringToken}</span>${colon || ""}`;
+        }
+        return `<span class="syntax-json-value">${match}</span>`;
+      });
+    }
+
+    function renderCommandCode(value) {
+      return highlightBash(value);
+    }
+
+    function renderTerminalOutput(value) {
+      const text = String(value || "").trim();
+      if (!text) return escapeHtml(value);
+
+      try {
+        return highlightJson(JSON.stringify(JSON.parse(text), null, 2));
+      } catch (error) {
+        return escapeHtml(value).replace(/(^|\n)(---[^\n]+---)/g, `$1<span class="syntax-keyword">$2</span>`);
+      }
     }
 
     function compact(value, fallback = "--") {
@@ -1196,6 +1495,62 @@
       return { text: "not recorded", cls: "warn" };
     }
 
+    function terminalCommandBlocks(step) {
+      const generated = String(step.generatedCode || step.commandText || "").trim();
+      const command = String(step.command || step.bashCommand || "").trim();
+      const blocks = [];
+      if (generated) {
+        blocks.push({ label: "Generated Command", value: generated });
+      }
+      if (command && command !== generated) {
+        blocks.push({ label: "bash command", value: command });
+      }
+      if (!blocks.length) {
+        blocks.push({
+          label: "Generated Command",
+          value: "No generated command was recorded for this final declaration step.",
+          empty: true
+        });
+      }
+      return blocks;
+    }
+
+    function renderTerminalSession(step) {
+      const rawBlocks = terminalCommandBlocks(step);
+      const outputText = compact(step.commandOutput, "No command_output was captured for this step.");
+      const outputEmpty = !String(step.commandOutput || "").trim();
+      const commandBlocks = rawBlocks.map((block) => {
+        const blockMeta = block.label === "Generated Command" ? "model action" : "executed in workspace";
+        return `
+        <div class="terminal-group">
+          <div class="terminal-label">
+            <span>${escapeHtml(block.label)}</span>
+            <span>${escapeHtml(block.empty ? "empty" : blockMeta)}</span>
+          </div>
+          <div class="terminal-command-block">
+            ${block.empty ? "" : `<span class="terminal-prompt">
+              <span>agent</span><span class="terminal-path">RELEASE_WORKSPACE</span><span class="terminal-symbol">$</span>
+            </span>`}
+            <pre class="terminal-code${block.empty ? " terminal-empty" : ""}"><code>${block.empty ? escapeHtml(block.value) : renderCommandCode(block.value)}</code></pre>
+          </div>
+        </div>
+      `;
+      }).join("");
+
+      return `
+        <div class="terminal-stream">
+          ${commandBlocks}
+          <div class="terminal-group">
+            <div class="terminal-label">
+              <span>command_output</span>
+              <span>${escapeHtml(outputEmpty ? "empty" : "stdout / stderr")}</span>
+            </div>
+            <pre class="terminal-output${outputEmpty ? " terminal-empty" : ""}"><code>${outputEmpty ? escapeHtml(outputText) : renderTerminalOutput(outputText)}</code></pre>
+          </div>
+        </div>
+      `;
+    }
+
     function setStep(index) {
       activeIndex = Math.max(0, Math.min(index, steps.length - 1));
       const step = steps[activeIndex];
@@ -1216,21 +1571,11 @@
       const hasStepFinal = Boolean((step.finalResponse || "").trim());
       els.stepFinalBlock.style.display = hasStepFinal ? "block" : "none";
       els.stepFinalText.textContent = compact(step.finalResponse, "");
-      els.commandText.textContent = compact(step.generatedCode || step.command, "No generated code was recorded for this final declaration step.");
-      els.terminalOutput.textContent = compact(step.commandOutput, "No command_output was captured for this step.");
+      els.terminalSession.innerHTML = renderTerminalSession(step);
+      els.terminalSession.scrollTop = 0;
+      els.terminalSession.scrollLeft = 0;
+      els.terminalRunLabel.textContent = `step ${step.step}`;
       els.activeStepLabel.textContent = `Step ${step.step} / ${steps[steps.length - 1].step}`;
-
-      const shot = step.screenshotSrc || (step.recentScreenshots || []).find((item) => item.src)?.src || "";
-      els.stepShotFrame.scrollTop = 0;
-      els.stepShotFrame.scrollLeft = 0;
-      els.stepShotFrame.classList.toggle("is-empty", !shot);
-      if (shot) {
-        els.stepShotImg.src = shot;
-        els.stepShotImg.style.display = "block";
-      } else {
-        els.stepShotImg.removeAttribute("src");
-        els.stepShotImg.style.display = "none";
-      }
 
       els.stepsList.querySelectorAll(".step-button").forEach((button, i) => {
         button.classList.toggle("is-active", i === activeIndex);
@@ -1288,16 +1633,14 @@
           model: judge.model || "",
           predictedLabel: judge.predicted_label,
           status,
-          checks,
-          imageRecords: judge.image_records || []
+          checks
         };
       } catch (error) {
         return {
           model: "",
           predictedLabel: run.judgePredictedLabel,
           status: run.judgeStatus || "unknown",
-          checks: ["Judge result exists but could not be parsed as JSON."],
-          imageRecords: []
+          checks: ["Self-reflection result exists but could not be parsed as JSON."]
         };
       }
     }
@@ -1349,7 +1692,6 @@
 
       els.imageQaSection.style.display = imageQa ? "grid" : "none";
       els.judgeSection.style.display = hasJudge ? "grid" : "none";
-      els.imageJudgeSection.style.display = hasJudge ? "grid" : "none";
 
       if (imageQa) {
         const confidence = imageQa.confidence === undefined ? "--" : imageQa.confidence;
@@ -1375,20 +1717,11 @@
         els.judgeSummary.classList.remove("empty");
         els.judgeChecks.innerHTML = judge.checks.length
           ? judge.checks.map((check) => `<li>${escapeHtml(check)}</li>`).join("")
-          : '<li>No judge verdict checks are available for this run.</li>';
-        els.imageJudgeList.innerHTML = judge.imageRecords.length
-          ? judge.imageRecords.map((record, index) => `
-            <li>
-              <b>image ${index + 1} · score ${escapeHtml(record.Score ?? "--")}</b>
-              ${escapeHtml(record.Reasoning || "No image reasoning captured.")}
-            </li>
-          `).join("")
-          : '<li>No per-image judge records are available for this run.</li>';
+          : '<li>No self-reflection response checks are available for this run.</li>';
       } else {
         els.judgeSummary.textContent = "";
         els.judgeSummary.classList.add("empty");
         els.judgeChecks.innerHTML = "";
-        els.imageJudgeList.innerHTML = "";
       }
 
       els.judgeLink.href = hasJudge ? run.judgeResultHref : "#";

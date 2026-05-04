@@ -3,10 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Ticketmaster Local CDP · Task Replay</title>
+  <title>Ticketmaster Baseline · Showcase</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./video_bumper.css">
   <style>
     :root {
       color-scheme: light;
@@ -462,18 +463,18 @@
 </head>
 <body>
   <main class="app">
-    <aside class="panel sidebar" aria-label="Task replay sidebar">
+    <aside class="panel sidebar" aria-label="Showcase sidebar">
       <header class="sidebar-header">
         <div class="brand">
           <span class="brand-dot" aria-hidden="true"></span>
-          <span>Codex · Ticketmaster Baseline</span>
+          <span>Webwright · Baseline Workflow</span>
         </div>
         <h1 class="task-title">Compare Ticketmaster classical concerts near Seattle for May Day weekend and recommend the best ticket.</h1>
-        <p class="task-desc">Run directly on a local CDP browser — no skill assist.</p>
+        <p class="task-desc">A baseline browser workflow without a dedicated Ticketmaster skill; the run builds the event search and comparison manually.</p>
         <div class="meta-row">
           <span class="chip warn">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4m0 4h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/></svg>
-            no skill · raw CDP
+            no skill · baseline
           </span>
           <span class="chip">Seattle Symphony</span>
           <span class="chip">May 1 – May 3, 2026</span>
@@ -486,8 +487,7 @@
       </div>
 
       <footer class="panel-footer">
-        <span><span class="dot"></span>Replay ready</span>
-        <span id="durationLabel">--:--</span>
+        <span><span class="dot"></span>Showcase ready</span>
       </footer>
     </aside>
 
@@ -501,7 +501,7 @@
 
       <div class="stage-body">
         <div class="video-wrap">
-          <video id="taskVideo" controls preload="metadata" playsinline>
+          <video id="taskVideo" controls preload="metadata" playsinline data-logo-src="./logo.png">
             <source src="./ticket_without.mp4" type="video/mp4">
             <div class="video-fallback">
               Could not load <code>ticket_without.mp4</code>. Make sure the video file sits next to this page, or update the source path above.
@@ -520,21 +520,22 @@
     </section>
   </main>
 
+  <script src="./video_bumper.js"></script>
   <script>
     const keyframes = [
       {
         time: 0,
         labelTime: 0,
-        title: "TASK START: raw Ticketmaster request",
-        action: "Codex receives a $local-cdp-browser prompt to find classical concerts near Seattle or Redmond for May Day weekend 2026, compare at least three Ticketmaster options, stay under $200/person, and do not purchase.",
+        title: "TASK START: baseline Ticketmaster request",
+        action: "The agent receives the request to find classical concerts near Seattle or Redmond for May Day weekend 2026, compare at least three Ticketmaster options, stay under $200/person, and do not purchase.",
         note: "No Ticketmaster-specific skill is used, so the browser strategy must be assembled manually."
       },
       {
         time: 5,
         labelTime: 11,
-        title: "SETUP: choose raw CDP path",
-        action: "Codex explains it will use the local CDP browser directly to inspect live Ticketmaster availability and pricing.",
-        note: "This establishes the raw browser path for the task."
+        title: "SETUP: choose baseline browser path",
+        action: "The run proceeds with direct browser inspection of live Ticketmaster availability and pricing.",
+        note: "This establishes the baseline browser path for the task."
       },
       {
         time: 21,
@@ -582,15 +583,15 @@
         time: 76,
         labelTime: 252,
         title: "SUMMARY DRAFT: compare discovered dates",
-        action: "Codex summarizes that it found May 2 and May 3 in-window shows plus the Apr 30 nearby show.",
+        action: "The agent summarizes that it found May 2 and May 3 in-window shows plus the Apr 30 nearby show.",
         note: "The baseline run now has data for the in-window shows plus the nearby Apr 30 show."
       },
       {
         time: 82,
         labelTime: 259,
         title: "TASK END: recommendation delivered",
-        action: "Codex recommends Seattle Symphony: Xian Conducts Mozart on Sat May 2 2026 at 8:00 PM, Orchestra Center Row HH, $149.06.",
-        note: "The final answer reflects the raw CDP path, including setup steps and the out-of-window date check."
+        action: "The agent recommends Seattle Symphony: Xian Conducts Mozart on Sat May 2 2026 at 8:00 PM, Orchestra Center Row HH, $149.06.",
+        note: "The final answer reflects the baseline workflow, including setup steps and the out-of-window date check."
       }
     ];
 
@@ -599,7 +600,6 @@
     const nowTime = document.getElementById("nowTime");
     const nowTitle = document.getElementById("nowTitle");
     const nowText = document.getElementById("nowText");
-    const durationLabel = document.getElementById("durationLabel");
 
     const formatTime = (seconds) => {
       const safe = Math.max(0, Math.floor(seconds || 0));
@@ -639,7 +639,7 @@
         const buttons = document.querySelectorAll(".step");
         buttons.forEach((node, i) => node.classList.toggle("is-active", i === index));
         const activeBtn = buttons[index];
-        if (activeBtn) {
+        if (activeBtn && lastActive !== -1) {
           activeBtn.scrollIntoView({ block: "nearest", behavior: "smooth" });
         }
         lastActive = index;
@@ -671,9 +671,6 @@
       setActive(getActiveIndex());
     });
 
-    video.addEventListener("loadedmetadata", () => {
-      durationLabel.textContent = formatTime(video.duration);
-    });
   </script>
 </body>
 </html>

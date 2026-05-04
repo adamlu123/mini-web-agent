@@ -3,10 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Apple iPad Budget Comparison · Task Replay</title>
+  <title>Apple iPad Budget Comparison · Showcase</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./video_bumper.css">
   <style>
     :root {
       color-scheme: light;
@@ -460,16 +461,15 @@
 </head>
 <body>
   <main class="app">
-    <aside class="panel sidebar" aria-label="Task replay sidebar">
+    <aside class="panel sidebar" aria-label="Showcase sidebar">
       <header class="sidebar-header">
         <div class="brand">
           <span class="brand-dot" aria-hidden="true"></span>
-          <span>Codex / Browser Replay</span>
+          <span>Webwright · Product Comparison</span>
         </div>
         <h1 class="task-title">Compare iPad Pro, iPad Air, Best Buy iPad options, MacBook Pro pricing, and Amazon iPhone listings.</h1>
-        <p class="task-desc">Recorded from <code>apple_ipad_budget_browser_comparison</code> on a local CDP browser.</p>
+        <p class="task-desc">A budget-focused shopping task that verifies live Apple, Best Buy, and Amazon pages before recommending the cheapest acceptable iPad option.</p>
         <div class="meta-row">
-          <span class="chip accent">local browser</span>
           <span class="chip">Apple</span>
           <span class="chip">Best Buy</span>
           <span class="chip">Amazon</span>
@@ -481,8 +481,7 @@
       </div>
 
       <footer class="panel-footer">
-        <span><span class="dot"></span>Replay ready</span>
-        <span id="durationLabel">--:--</span>
+        <span><span class="dot"></span>Showcase ready</span>
       </footer>
     </aside>
 
@@ -496,7 +495,7 @@
 
       <div class="stage-body">
         <div class="video-wrap">
-          <video id="taskVideo" controls preload="metadata" playsinline>
+          <video id="taskVideo" controls preload="metadata" playsinline data-logo-src="./logo.png" data-target-duration="60" data-source-duration="183">
             <source src="./ipad_comparison.mp4" type="video/mp4">
             <div class="video-fallback">
               Could not load <code>ipad_comparison.mp4</code>. Make sure the video file sits next to this page, or update the source path above.
@@ -515,12 +514,13 @@
     </section>
   </main>
 
+  <script src="./video_bumper.js"></script>
   <script>
     const keyframes = [
       {
         time: 0,
         title: "TASK START: iPad budget comparison request",
-        action: "The run starts from Cursor with the apple_ipad_budget_browser_comparison task file and local CDP browser configuration.",
+        action: "The showcase starts with a budget-conscious Apple shopping request: compare iPad Pro and iPad Air, verify Best Buy iPad options, check Apple's MacBook Pro floor, and use Amazon iPhone listings as price context.",
         note: "This is the user task handoff before browser evidence collection."
       },
       {
@@ -602,7 +602,6 @@
     const nowTime = document.getElementById("nowTime");
     const nowTitle = document.getElementById("nowTitle");
     const nowText = document.getElementById("nowText");
-    const durationLabel = document.getElementById("durationLabel");
 
     const formatTime = (seconds) => {
       const safe = Math.max(0, Math.floor(seconds || 0));
@@ -642,7 +641,7 @@
         const buttons = document.querySelectorAll(".step");
         buttons.forEach((node, i) => node.classList.toggle("is-active", i === index));
         const activeBtn = buttons[index];
-        if (activeBtn) activeBtn.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        if (activeBtn && lastActive !== -1) activeBtn.scrollIntoView({ block: "nearest", behavior: "smooth" });
         lastActive = index;
       }
       nowTime.textContent = getFrameLabel(frame);
@@ -672,9 +671,6 @@
       setActive(getActiveIndex());
     });
 
-    video.addEventListener("loadedmetadata", () => {
-      durationLabel.textContent = formatTime(video.duration);
-    });
   </script>
 </body>
 </html>

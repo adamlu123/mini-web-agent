@@ -3,10 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Google Flights Skill · Task Replay</title>
+  <title>Google Flights Skill · Showcase</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./video_bumper.css">
   <style>
     :root {
       color-scheme: light;
@@ -461,14 +462,14 @@
 </head>
 <body>
   <main class="app">
-    <aside class="panel sidebar" aria-label="Task replay sidebar">
+    <aside class="panel sidebar" aria-label="Showcase sidebar">
       <header class="sidebar-header">
         <div class="brand">
           <span class="brand-dot" aria-hidden="true"></span>
-          <span>Codex · Skill Replay</span>
+          <span>Webwright · Skill Workflow</span>
         </div>
         <h1 class="task-title">Compare HKG ⇄ Jeju round-trip flights and recommend the best itinerary.</h1>
-        <p class="task-desc">Driven by the <code>google-flights-comparison</code> skill on a local CDP browser.</p>
+        <p class="task-desc">A skill-guided browser workflow that compares live Google Flights options and recommends a practical itinerary.</p>
         <div class="meta-row">
           <span class="chip accent">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 6v6c0 5 3.4 9.3 8 10 4.6-.7 8-5 8-10V6l-8-4Z"/></svg>
@@ -485,8 +486,7 @@
       </div>
 
       <footer class="panel-footer">
-        <span><span class="dot"></span>Replay ready</span>
-        <span id="durationLabel">--:--</span>
+        <span><span class="dot"></span>Showcase ready</span>
       </footer>
     </aside>
 
@@ -500,7 +500,7 @@
 
       <div class="stage-body">
         <div class="video-wrap">
-          <video id="taskVideo" controls preload="metadata" playsinline>
+          <video id="taskVideo" controls preload="metadata" playsinline data-logo-src="./logo.png">
             <source src="./flight_with.mp4" type="video/mp4">
             <div class="video-fallback">
               Could not load <code>flight_with.mp4</code>. Make sure the video file sits next to this page, or update the source path above.
@@ -519,20 +519,21 @@
     </section>
   </main>
 
+  <script src="./video_bumper.js"></script>
   <script>
     const keyframes = [
       {
         time: 0,
         labelTime: 0,
         title: "TASK START: flight comparison request",
-        action: "Codex receives the HKG ⇄ Jeju prompt with fixed dates, economy class, one passenger, HK$20,000 budget, and a requirement to compare at least three options.",
+        action: "The agent receives the HKG ⇄ Jeju prompt with fixed dates, economy class, one passenger, HK$20,000 budget, and a requirement to compare at least three options.",
         note: "This is the user task handoff before any browser work begins."
       },
       {
         time: 5,
         labelTime: 60,
         title: "SETUP: load Google Flights skill",
-        action: "Codex selects the google-flights-comparison skill to run the browser-backed comparison workflow.",
+        action: "The agent selects the google-flights-comparison skill to run the browser-backed comparison workflow.",
         note: "The skill provides the planned Google Flights search and comparison path."
       },
       {
@@ -567,7 +568,7 @@
         time: 65,
         labelTime: 248,
         title: "BALANCED OPTION: avoid the 02:30 departure",
-        action: "Codex identifies HK Express UO 08:35 - 12:35 at HK$2,721, a more practical nonstop option for only HK$381 more.",
+        action: "The workflow identifies HK Express UO 08:35 - 12:35 at HK$2,721, a more practical nonstop option for only HK$381 more.",
         note: "This is the key judgment step: cheapest is not automatically best."
       },
       {
@@ -588,7 +589,7 @@
         time: 84,
         labelTime: 356,
         title: "TASK END: recommendation delivered",
-        action: "Codex recommends the HK$2,721 HK Express / Agoda itinerary because it stays nonstop, remains far under budget, and avoids the very early outbound flight.",
+        action: "The agent recommends the HK$2,721 HK Express / Agoda itinerary because it stays nonstop, remains far under budget, and avoids the very early outbound flight.",
         note: "The final summary compares the practical recommendation against the cheapest and alternate options."
       }
     ];
@@ -598,7 +599,6 @@
     const nowTime = document.getElementById("nowTime");
     const nowTitle = document.getElementById("nowTitle");
     const nowText = document.getElementById("nowText");
-    const durationLabel = document.getElementById("durationLabel");
 
     const formatTime = (seconds) => {
       const safe = Math.max(0, Math.floor(seconds || 0));
@@ -638,7 +638,7 @@
         const buttons = document.querySelectorAll(".step");
         buttons.forEach((node, i) => node.classList.toggle("is-active", i === index));
         const activeBtn = buttons[index];
-        if (activeBtn) {
+        if (activeBtn && lastActive !== -1) {
           activeBtn.scrollIntoView({ block: "nearest", behavior: "smooth" });
         }
         lastActive = index;
@@ -670,9 +670,6 @@
       setActive(getActiveIndex());
     });
 
-    video.addEventListener("loadedmetadata", () => {
-      durationLabel.textContent = formatTime(video.duration);
-    });
   </script>
 </body>
 </html>
