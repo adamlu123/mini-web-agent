@@ -31,6 +31,18 @@ own native abilities**: you read PNGs with `Read` and verify success against
   it later with different arguments. Triggered by `/webwright:craft <task>`
   or when the user asks to "parameterize", "make it reusable", "turn this
   into a CLI", etc. See `reference/cli_tool_mode.md`.
+- **App/feed mode.** `final_script.py` is a dual-use Python script for
+  multisite information feeds: `python final_script.py --run-once` runs the
+  reusable Webwright collection task, writes `app/feed.json`, and prints JSON;
+  `python final_script.py` starts a local HTTP server whose browser page calls
+  `/run`, and `/run` executes the same collection task before rendering a
+  read-only feed UI with source status, metadata, links, and errors. This mode
+  still uses Webwright's normal browser/source exploration for the user's
+  concrete task; the app is the final presentation layer, not a substitute for
+  task-relevant browser evidence. Triggered by
+  `/webwright:app <multisite information feed task>` or when the user asks
+  for a local app/feed that refreshes on open. See
+  `reference/app_feed_mode.md`.
 
 ## Prerequisites (one-time)
 
@@ -149,6 +161,12 @@ Mirror what `base.yaml`'s `instance_template` requires:
 - `reference/cli_tool_mode.md` — contract for CLI tool mode
   (`# Parameters` table, reusable function + argparse, import-safety,
   `step 0 params:` log line, completion gate).
+- `reference/app_feed_mode.md` — contract for app/feed mode
+  (local PWA files, `/run`, `feed.json` schema, import-safety, app screenshots,
+  completion gate).
+- `reference/app_feed_template.py` — canonical app/feed `final_script.py`
+  skeleton. In app/feed mode, copy this structure and replace only the
+  task-specific source configuration, fetchers, sorting, and metadata.
 
 ## Slash Commands
 
@@ -156,6 +174,7 @@ Optional shortcuts under `commands/`:
 
 - `/webwright:run <task>` — default one-shot mode.
 - `/webwright:craft <task>` — CLI tool mode.
+- `/webwright:app <task>` — app/feed mode for multisite local PWA information feeds.
 
 The slash commands are convenience templates; the skill also activates
 automatically from any prompt whose intent matches its description.

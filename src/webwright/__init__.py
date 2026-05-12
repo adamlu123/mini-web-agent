@@ -21,12 +21,51 @@ except ModuleNotFoundError:
 __version__ = "0.1.0"
 
 package_dir = Path(__file__).resolve().parent
+project_config_file = package_dir.parent.parent / ".env"
 global_config_dir = Path(
     os.getenv("MSWEBA_GLOBAL_CONFIG_DIR") or user_config_dir("mini-swe-webagent")
 )
 global_config_dir.mkdir(parents=True, exist_ok=True)
 global_config_file = global_config_dir / ".env"
+dotenv.load_dotenv(dotenv_path=project_config_file)
 dotenv.load_dotenv(dotenv_path=global_config_file)
+
+
+def _socksio_available() -> bool:
+    try:
+        import socksio  # noqa: F401
+    except ModuleNotFoundError:
+        return False
+    return True
+
+
+def _is_socks_proxy(value: str) -> bool:
+    return value.strip().lower().startswith(("socks://", "socks4://", "socks5://"))
+
+
+def _normalize_httpx_proxy_env() -> None:
+    """Prefer ClashX's HTTP proxy when httpx cannot use SOCKS proxies."""
+
+    if _socksio_available():
+        return
+
+    http_proxy = (
+        os.environ.get("HTTPS_PROXY")
+        or os.environ.get("https_proxy")
+        or os.environ.get("HTTP_PROXY")
+        or os.environ.get("http_proxy")
+        or ""
+    )
+    if not http_proxy or _is_socks_proxy(http_proxy):
+        return
+
+    for key in ("ALL_PROXY", "all_proxy"):
+        value = os.environ.get(key, "")
+        if value and _is_socks_proxy(value):
+            os.environ[key] = http_proxy
+
+
+_normalize_httpx_proxy_env()
 
 
 class Model(Protocol):

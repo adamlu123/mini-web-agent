@@ -139,6 +139,16 @@ python -m webwright.run.cli \
     -o outputs/default
 ```
 
+Use the app/feed prompt overlay for multisite local PWA information feeds:
+
+```bash
+python -m webwright.run.cli \
+    -c base.yaml -c model_openai.yaml -c app_feed.yaml \
+    -t "Build a local feed app that compares current Apple Mac laptop prices across Apple, Best Buy, and B&H. Use browser evidence from the product/listing pages, and show each model with source, price, configuration, availability if visible, original link, and visible source errors." \
+    --task-id mac_price_feed \
+    -o outputs/default
+```
+
 ### 🚩 Flags
 
 | Flag | Description |
@@ -193,12 +203,14 @@ You can either ask Claude Code in plain English (the skill auto-activates from i
 ```
 /webwright:run search Google Flights for flights from SEA to JFK on 2026-08-15 to 2026-08-20
 /webwright:craft search a ticket on Google Flights from LAX to SFO depart June 7 return June 14
+/webwright:app build a local feed app that compares current Apple Mac laptop prices across Apple, Best Buy, and B&H. Use browser evidence from the product/listing pages, and show each model with source, price, configuration, availability if visible, original link, and visible source errors.
 ```
 
 - `/webwright:run` (or any plain prompt) produces a **one-shot** `final_script.py` for the literal task values.
 - `/webwright:craft` produces a **reusable CLI tool**: `final_script.py` becomes one parameterized function with a Google-style `Args:` docstring and an `argparse` wrapper whose flags default to the concrete task values, so you can rerun it later with different arguments — e.g. `python final_script.py --origin JFK --destination LAX --depart-date 2026-07-01`.
+- `/webwright:app` produces a **dual-use local PWA feed script** for multisite information aggregation tasks: `final_script.py` follows [`reference/app_feed_template.py`](skills/webwright/reference/app_feed_template.py), `python final_script.py --run-once` runs the reusable collection task and writes/prints `app/feed.json`, while `python final_script.py` starts a localhost server, shows cached `app/feed.json` immediately, refreshes via `/run`, and renders a read-only feed with source status, feed items, links, metadata, and visible error or empty states. It still performs normal Webwright source exploration for the actual task; for browser-mediated tasks such as product comparison, the screenshots must show the source pages/results that produced the UI data.
 
-In both modes Claude Code scaffolds a workspace with `plan.md`, runs instrumented Playwright scripts under `final_runs/run_<id>/`, and visually self-verifies each critical point against the saved screenshots.
+In all modes Claude Code scaffolds a workspace with `plan.md`, runs instrumented artifacts under `final_runs/run_<id>/`, and visually self-verifies each critical point against the saved screenshots.
 
 </details>
 
@@ -232,6 +244,7 @@ In a new Codex thread, either ask in plain English (the skill auto-activates fro
 
 ```
 @webwright search Google Flights for flights from SEA to JFK on 2026-08-15 to 2026-08-20
+@webwright /webwright:app build a local feed app that compares current Apple Mac laptop prices across Apple, Best Buy, and B&H. Use browser evidence from the product/listing pages, and show each model with source, price, configuration, availability if visible, original link, and visible source errors.
 ```
 
 Codex scaffolds a workspace with `plan.md`, runs instrumented Playwright scripts under `final_runs/run_<id>/`, and visually self-verifies each critical point against the saved screenshots.
@@ -285,7 +298,7 @@ No Hermes-specific manifest is needed; only `SKILL.md` is loaded.
 
 Start Hermes (`hermes`) and ask it to drive a web task in natural language — the skill auto-activates from its description. You can also invoke it explicitly with `/webwright`.
 
-Note: the named subcommands shipped under [`skills/webwright/commands/`](skills/webwright/commands/) (`/webwright:run`, `/webwright:craft`) are a Claude Code / Codex convention and are inert in Hermes; the skill itself still works end-to-end.
+Note: the named subcommands shipped under [`skills/webwright/commands/`](skills/webwright/commands/) (`/webwright:run`, `/webwright:craft`, `/webwright:app`) are a Claude Code / Codex convention and are inert in Hermes; the skill itself still works end-to-end.
 
 </details>
 
