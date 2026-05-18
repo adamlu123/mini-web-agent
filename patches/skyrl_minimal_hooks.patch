@@ -1,0 +1,336 @@
+diff --git a/skyrl/backends/skyrl_train/inference_engines/base.py b/skyrl/backends/skyrl_train/inference_engines/base.py
+index 1ec593aa..4a79b312 100644
+--- a/skyrl/backends/skyrl_train/inference_engines/base.py
++++ b/skyrl/backends/skyrl_train/inference_engines/base.py
+@@ -1,5 +1,10 @@
+ from abc import ABC, abstractmethod
+-from typing import TYPE_CHECKING, Any, Dict, Hashable, List, Optional, TypedDict
++from typing import TYPE_CHECKING, Any, Dict, Hashable, List, Optional, TypedDict
++
++try:
++    from typing import NotRequired
++except ImportError:
++    from typing_extensions import NotRequired
+
+ if TYPE_CHECKING:
+     from skyrl.backends.skyrl_train.weight_sync import WeightUpdateRequest
+@@ -29,6 +34,9 @@ class InferenceEngineInput(TypedDict):
+     sampling_params: Optional[Dict[str, Any]]
+     session_ids: Optional[List[Hashable]]
+     mm_features: Optional[List[MultiModalFeatures]]
++    # Token-only callers can skip response detokenization in inference clients
++    # that otherwise perform an additional decode round trip.
++    skip_detokenize: NotRequired[bool]
+
+
+ class InferenceEngineOutput(TypedDict):
+@@ -39,6 +47,9 @@ class InferenceEngineOutput(TypedDict):
+     # represent the same text with tokens. Therefore, for multi-turn generation,
+     # please use token-in-token-out to ensure correctness.
+     # `skip_special_tokens=True` is needed because string responses do not include EOS tokens like `<|im_end|>`
++    # Token-only callers may set `skip_detokenize` in `InferenceEngineInput`;
++    # in that case `responses` may contain empty strings while `response_ids`
++    # remains populated.
+     responses: List[str]
+     response_ids: List[List[int]]
+     stop_reasons: List[str]
+diff --git a/skyrl/backends/skyrl_train/inference_servers/remote_inference_client.py b/skyrl/backends/skyrl_train/inference_servers/remote_inference_client.py
+index f07fb794..7aed2e97 100644
+--- a/skyrl/backends/skyrl_train/inference_servers/remote_inference_client.py
++++ b/skyrl/backends/skyrl_train/inference_servers/remote_inference_client.py
+@@ -384,6 +384,7 @@ class RemoteInferenceClient:
+
+         session_ids = input_batch.get("session_ids")
+         mm_features = input_batch.get("mm_features")
++        skip_detokenize = bool(input_batch.get("skip_detokenize", False))
+         get_logprobs = sampling_params.get("logprobs") is not None
+
+         # Two semaphores decouple the generate and detokenize stages:
+@@ -425,7 +426,10 @@ class RemoteInferenceClient:
+                 return (await self.detokenize([token_ids]))[0]
+
+         raw_results = await asyncio.gather(*[_throttled_generate(idx) for idx in range(batch_size)])
+-        responses = await asyncio.gather(*[_throttled_detokenize(r["response_ids"]) for r in raw_results])
++        if skip_detokenize:
++            responses = [""] * len(raw_results)
++        else:
++            responses = await asyncio.gather(*[_throttled_detokenize(r["response_ids"]) for r in raw_results])
+
+         rollout_expert_indices = [r.get("routed_experts") for r in raw_results]
+         has_routed_experts = any(x is not None for x in rollout_expert_indices)
+diff --git a/skyrl/backends/skyrl_train/training_batch.py b/skyrl/backends/skyrl_train/training_batch.py
+index 9fba75d5..480a5fd2 100644
+--- a/skyrl/backends/skyrl_train/training_batch.py
++++ b/skyrl/backends/skyrl_train/training_batch.py
+@@ -502,6 +502,8 @@ def pad_training_input_batch(unpadded_batch: TrainingInputBatch, pad_size: int)
+         unpadded_batch.metadata["pad_size"] = 0
+         return unpadded_batch
+
++    zero_pad_keys = set((unpadded_batch.metadata or {}).get("zero_pad_keys", []))
++
+     # Pad each tensor depending on its type.
+     new_tensors = {}
+     for key, tensor in unpadded_batch.items():
+@@ -513,8 +515,8 @@ def pad_training_input_batch(unpadded_batch: TrainingInputBatch, pad_size: int)
+             assert len(tensor) > 0, f"Cannot pad empty TensorList field {key!r}"
+             padding = TensorList([tensor[0].clone() for _ in range(pad_size)])
+             new_tensors[key] = TensorList.cat([tensor, padding])
+-        elif key == "loss_mask":
+-            # Ensures that padding tensors don't count towards the loss
++        elif key == "loss_mask" or key in zero_pad_keys:
++            # Ensures that padding tensors don't count towards losses.
+             additional_dims = tensor.shape[1:]
+             padding_tensor = torch.zeros(pad_size, *additional_dims, dtype=tensor.dtype, device=tensor.device)
+             new_tensors[key] = torch.cat([tensor, padding_tensor], dim=0)
+diff --git a/skyrl/backends/skyrl_train/workers/worker.py b/skyrl/backends/skyrl_train/workers/worker.py
+index 43a73fc2..ce3eec24 100644
+--- a/skyrl/backends/skyrl_train/workers/worker.py
++++ b/skyrl/backends/skyrl_train/workers/worker.py
+@@ -718,10 +718,16 @@ class PolicyWorkerBase(Worker):
+         all_metrics = defaultdict(list)
+         all_loss_fn_outputs = []  # Handle separately from scalar metrics
+
++        aux_policy_loss_context = self.get_aux_policy_loss_context(data)
++
+         for micro_batch in BatchIterator(data, micro_batch_size, drop_last=False):
+             microbatch_weight = micro_batch_size / len(data)
+             metrics = self._forward_backward_micro(
+-                micro_batch, microbatch_weight, loss_fn=loss_fn, loss_fn_config=loss_fn_config
++                micro_batch,
++                microbatch_weight,
++                loss_fn=loss_fn,
++                loss_fn_config=loss_fn_config,
++                aux_policy_loss_context=aux_policy_loss_context,
+             )
+
+             # Extract loss_fn_outputs before reduce_metrics (it's not a scalar metric)
+@@ -748,12 +754,29 @@ class PolicyWorkerBase(Worker):
+
+         return result
+
++    def get_aux_policy_loss_context(self, data: TrainingInputBatch) -> Dict[str, Any]:
++        return {}
++
++    def compute_aux_policy_loss(
++        self,
++        *,
++        action_log_probs: torch.Tensor,
++        policy_loss: torch.Tensor,
++        experience: Experience,
++        loss_config: Any,
++        microbatch_weight: float,
++        grad_sum_correction_factor: float,
++        aux_policy_loss_context: Optional[Dict[str, Any]] = None,
++    ) -> tuple[Optional[torch.Tensor], Dict[str, Any]]:
++        return None, {}
++
+     def _forward_backward_micro(
+         self,
+         experience: Experience,
+         microbatch_weight: float,
+         loss_fn: Optional[str] = None,
+         loss_fn_config: Optional[Dict[str, Any]] = None,
++        aux_policy_loss_context: Optional[Dict[str, Any]] = None,
+     ) -> Dict[str, float]:
+         """
+         Perform forward and backward pass for one micro batch.
+@@ -906,6 +929,17 @@ class PolicyWorkerBase(Worker):
+             # NOTE: The KL and entropy loss terms are not pre-scaled,
+             # so we just average them across microbatches and DP workers.
+             loss = policy_loss * grad_sum_correction_factor + (kl_loss_term - entropy_loss_term) * microbatch_weight
++            aux_policy_loss, aux_policy_metrics = self.compute_aux_policy_loss(
++                action_log_probs=action_log_probs,
++                policy_loss=policy_loss,
++                experience=experience,
++                loss_config=loss_config,
++                microbatch_weight=microbatch_weight,
++                grad_sum_correction_factor=grad_sum_correction_factor,
++                aux_policy_loss_context=aux_policy_loss_context,
++            )
++            if aux_policy_loss is not None:
++                loss = loss + aux_policy_loss
+             unscaled_loss = loss / grad_sum_correction_factor
+             self.strategy.backward(loss, self.model, self.optimizer)
+
+@@ -939,6 +973,14 @@ class PolicyWorkerBase(Worker):
+             }
+             for k, v in loss_metrics.items():
+                 status["loss_metrics/" + k] = v
++            for k, v in aux_policy_metrics.items():
++                if v is None:
++                    continue
++                status_key = k[len("status/") :] if k.startswith("status/") else "loss_metrics/" + k
++                if hasattr(v, "detach"):
++                    status[status_key] = v.detach().item()
++                else:
++                    status[status_key] = v
+             if self.cfg.algorithm.use_kl_loss:
+                 status["policy_kl"] = kl_loss.item()
+
+diff --git a/skyrl/backends/skyrl_train/workers/worker_utils.py b/skyrl/backends/skyrl_train/workers/worker_utils.py
+index cecaccc1..a88e0b0f 100644
+--- a/skyrl/backends/skyrl_train/workers/worker_utils.py
++++ b/skyrl/backends/skyrl_train/workers/worker_utils.py
+@@ -102,8 +102,26 @@ class BatchIterator:
+
+     @staticmethod
+     def batch_to_experience(batch: TrainingInputBatch):
+-        # TODO (sumanthrh): other keys are not permitted right now, can go into info
+-        # TODO: this conversion is hidden right now, might need to be surfaced in worker explicitly.
++        # Preserve integration-provided tensor fields without requiring SkyRL core
++        # to know each auxiliary objective by name.
++        known_fields = {
++            "sequences",
++            "action_log_probs",
++            "base_action_log_probs",
++            "values",
++            "returns",
++            "advantages",
++            "attention_mask",
++            "loss_mask",
++            "response_mask",
++            "rollout_logprobs",
++            "rollout_expert_indices",
++            "pixel_values",
++            "image_grid_thw",
++            "rewards",
++            "kl",
++        }
++        extras = {key: value for key, value in batch.items() if key not in known_fields and value is not None}
+         exp = Experience(
+             sequences=batch["sequences"],
+             action_log_probs=batch.get("action_log_probs"),
+@@ -125,5 +143,6 @@ class BatchIterator:
+             # Multi-modal vision fields (may be absent for text-only)
+             pixel_values=batch.get("pixel_values"),
+             image_grid_thw=batch.get("image_grid_thw"),
++            extras=extras,
+         )
+         return exp
+diff --git a/skyrl/train/dataset/replay_buffer.py b/skyrl/train/dataset/replay_buffer.py
+index c1d50ad9..6b35d941 100644
+--- a/skyrl/train/dataset/replay_buffer.py
++++ b/skyrl/train/dataset/replay_buffer.py
+@@ -74,6 +74,7 @@ class Experience:
+     metadata: Optional[Dict[str, Any]] = None
+     pixel_values: Optional[TensorList] = None
+     image_grid_thw: Optional[TensorList] = None
++    extras: Optional[Dict[str, Any]] = None
+
+     @torch.no_grad()
+     def to_device(self, device: torch.device) -> None:
+@@ -102,6 +103,8 @@ class Experience:
+             self.pixel_values = self.pixel_values.to(device)
+         if self.image_grid_thw is not None:
+             self.image_grid_thw = self.image_grid_thw.to(device)
++        if self.extras is not None:
++            self.extras = {key: to(value, device) for key, value in self.extras.items()}
+
+     def pin_memory(self):
+         self.sequences = pin_memory(self.sequences)
+diff --git a/skyrl/train/utils/trainer_utils.py b/skyrl/train/utils/trainer_utils.py
+index 23b53b28..0641502e 100644
+--- a/skyrl/train/utils/trainer_utils.py
++++ b/skyrl/train/utils/trainer_utils.py
+@@ -276,7 +276,6 @@ def dump_per_dataset_eval_results(
+                     "score": concat_generator_outputs["rewards"][i],
+                     "stop_reason": concat_generator_outputs.get("stop_reasons", [None] * len(input_prompts))[i],
+                     "env_class": concat_all_envs[i],
+-                    "env_extras": concat_env_extras[i],
+                     "data_source": data_source,
+                 }
+                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+@@ -550,20 +549,13 @@ def get_bad_sample_replacements(good_uids: List[str], bad_uids: List[str]) -> Li
+
+ def filter_generator_output(output: GeneratorOutput, kept_indices: List[int]) -> GeneratorOutput:
+     """Filter GeneratorOutput based on kept indices."""
+-    filtered = {
+-        "prompt_token_ids": [output["prompt_token_ids"][i] for i in kept_indices],
+-        "response_ids": [output["response_ids"][i] for i in kept_indices],
+-        "rewards": [output["rewards"][i] for i in kept_indices],
+-        "loss_masks": [output["loss_masks"][i] for i in kept_indices],
+-        "stop_reasons": None,
+-        "rollout_metrics": output.get("rollout_metrics"),
+-        "rollout_logprobs": (
+-            [output["rollout_logprobs"][i] for i in kept_indices] if output["rollout_logprobs"] else None
+-        ),
+-    }
+-
+-    if output.get("stop_reasons"):
+-        filtered["stop_reasons"] = [output["stop_reasons"][i] for i in kept_indices]
+-
++    filtered = {}
++    for key, value in output.items():
++        if key == "rollout_metrics":
++            filtered[key] = value
++        elif isinstance(value, list):
++            filtered[key] = [value[i] for i in kept_indices]
++        else:
++            filtered[key] = value
+     return filtered
+
+diff --git a/skyrl/train/entrypoints/main_base.py b/skyrl/train/entrypoints/main_base.py
+index 847ce5e8..804fe8b4 100644
+--- a/skyrl/train/entrypoints/main_base.py
++++ b/skyrl/train/entrypoints/main_base.py
+@@ -140,7 +140,7 @@ class BasePPOExp:
+         """
+         self.cfg = cfg
+         self.tokenizer = get_tokenizer(
+-            self.cfg.trainer.policy.model.path,
++            self.get_tokenizer_path(),
+             trust_remote_code=True,
+             use_fast=not self.cfg.trainer.disable_fast_tokenizer,
+             padding_side="left",
+@@ -155,6 +155,9 @@ class BasePPOExp:
+         self._decode_server_groups = None
+         self._inference_router = None
+
++    def get_tokenizer_path(self) -> str:
++        return self.cfg.trainer.policy.model.path
++
+     @staticmethod
+     def get_cfg_as_str(cfg: SkyRLTrainConfig) -> str:
+         return get_config_as_yaml_str(cfg)
+@@ -342,18 +345,7 @@ class BasePPOExp:
+
+         return client
+
+-    def _setup_trainer(self):
+-        """Setup and return the trainer.
+-
+-        Instantiates the trainer and all the associated models for training.
+-
+-        Returns:
+-            RayPPOTrainer: The trainer.
+-        """
+-        logger.info(self.get_cfg_as_str(self.cfg))
+-        os.makedirs(self.cfg.trainer.export_path, exist_ok=True)
+-        os.makedirs(self.cfg.trainer.ckpt_path, exist_ok=True)
+-
++    def get_worker_classes(self):
+         if self.cfg.trainer.strategy in ("fsdp", "fsdp2"):
+             from skyrl.backends.skyrl_train.workers.fsdp.fsdp_worker import (
+                 CriticWorker,
+@@ -368,6 +360,21 @@ class BasePPOExp:
+             )
+         else:
+             raise ValueError(f"Unknown strategy type: {self.cfg.trainer.strategy}")
++        return PolicyWorker, CriticWorker, RefWorker
++
++    def _setup_trainer(self):
++        """Setup and return the trainer.
++
++        Instantiates the trainer and all the associated models for training.
++
++        Returns:
++            RayPPOTrainer: The trainer.
++        """
++        logger.info(self.get_cfg_as_str(self.cfg))
++        os.makedirs(self.cfg.trainer.export_path, exist_ok=True)
++        os.makedirs(self.cfg.trainer.ckpt_path, exist_ok=True)
++
++        PolicyWorker, CriticWorker, RefWorker = self.get_worker_classes()
+
+         # NOTE (sumanthrh): Instantiate tracker before trainer init.
+         # We have custom validation before this step to give better error messages.
