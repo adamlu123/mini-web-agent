@@ -7,6 +7,10 @@ from miniswewebagent import Model
 
 _MODEL_MAPPING = {
     "phyagi": "miniswewebagent.models.phyagi_model.PhyagiModel",
+    "azure_responses": "miniswewebagent.models.azure_responses_model.AzureResponsesModel",
+    "openrouter": "miniswewebagent.models.openrouter_model.OpenRouterModel",
+    "anthropic": "miniswewebagent.models.anthropic_model.AnthropicModel",
+    "trapi_kimi": "miniswewebagent.models.trapi_kimi_model.TrapiKimiModel",
 }
 
 

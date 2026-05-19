@@ -467,7 +467,7 @@ def _save_judge_result(artifacts: RoundArtifacts) -> None:
 
 
 def _read_tool_judge_result(*, artifacts: RoundArtifacts) -> JudgeResult:
-    """Read the agent-produced ``judge_result.json`` written by ``two_stage_judge``.
+    """Read the agent-produced ``judge_result.json`` written by ``self_reflection``.
 
     Expected shape: {"predicted_label": 1|0|null, "final_response": str,
     "image_records": [...], ...}. We treat ``predicted_label == 1`` as success.

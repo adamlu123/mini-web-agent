@@ -1,0 +1,156 @@
+# OpenRouter Qwen3.6-27B + CLI-tool variant.
+#
+# Same single-round flow as ``best_default_judge_json.yaml`` (default agent,
+# JSON response shape, self_reflection completion gate), but:
+#
+#   * Model is served via OpenRouter (chat.completions API) — no phyagi
+#     gateway. Set ``OPENROUTER_API_KEY`` in the environment (already exported
+#     by ``cred.sh``).
+#   * Before each task starts, the harness copies the oracle ``final_script.py``
+#     for that ``task_id`` into the per-task workspace as ``task_cli_tool.py``
+#     (see ``run.cli_tool_dir`` below) and exposes the matching CLI invocation
+#     as ``{{ command_usage_instruction }}`` inside the instance template (see
+#     ``run.cli_tool_instruction_dir``).
+#   * The agent is told to TRY the CLI tool FIRST. Only if it fails to satisfy
+#     the task should it fall back to the standard plan / explore / write
+#     ``final_script.py`` from scratch workflow.
+#
+# Source dirs (set explicitly here so the runner can find them without CLI
+# flags):
+#   cli_tool_dir              = /home/luyadong/sandbox/mini-web-agent/outputs/cli/0426_oracle_cli
+#   cli_tool_instruction_dir  = /home/luyadong/sandbox/mini-web-agent/outputs/cli/0426_oracle_cli_instruction
+#
+# Usage:
+#   source /home/luyadong/cred.sh
+#   python -m miniswewebagent.run.mini \
+#     -c best_default_judge_json_openrouter_qwen36_cli.yaml \
+#     --task-id <id> --tasks-file /path/to/tasks.json
+
+model:
+  model_class: openrouter
+  # Adjust the slug if OpenRouter exposes Qwen3.6-27B under a different name.
+  model_name: qwen/qwen3.5-9b
+  openrouter_endpoint: https://openrouter.ai/api/v1/chat/completions
+  request_timeout_seconds: 180
+  max_output_tokens: 16000
+  response_mode: json_schema
+  attach_observation_screenshot: false
+  observation_template: |
+    Observation:
+    Status: {{ 'ok' if observation.success else 'error' }}
+    Workspace: {{ observation.workspace_dir }}
+    Working directory: {{ observation.cwd }}
+    Command: {{ observation.command }}
+    Return code: {{ observation.returncode }}
+    {% if observation.exception %}Exception:
+    {{ observation.exception }}
+    {% endif %}{% if observation.command_output %}Command output:
+    {{ observation.command_output }}
+    {% endif %}{% if observation.final_script_path %}final_script.py: {{ observation.final_script_path }}
+    {% endif %}
+  format_error_template: |
+    Format error:
+
+    {{ error }}
+
+    Please respond with a single strict JSON object (no prose, no code fences) containing exactly these fields:
+    {
+      "thought": "<short reasoning about the next step>",
+      "bash_command": "<exactly one shell command, or empty string when declaring done>",
+      "done": false,
+      "final_response": ""
+    }
+
+environment:
+  environment_class: local_workspace
+  start_url:
+  output_dir: outputs/openrouter_qwen36_cli
+  command_timeout_seconds: 240
+  shell: /bin/bash
+  credentials_file: /home/luyadong/cred.sh
+  task_metadata_filename: task.json
+  final_script_name: final_script.py
+  output_truncation_chars: 24000
+  final_script_preview_chars: 4000
+  recent_files_limit: 40
+  env:
+    PAGER: cat
+    MANPAGER: cat
+    LESS: -R
+    PIP_PROGRESS_BAR: 'off'
+    TQDM_DISABLE: '1'
+
+run:
+  tasks_file: /home/luyadong/sandbox/mini-web-agent/src/miniswewebagent/run/benchmarks/om2w_260220.json
+  logs_root: /home/luyadong/sandbox/mini-web-agent/logs
+  judge_enabled: true
+  judge_model: o4-mini
+  judge_endpoint: ""
+  judge_python: /home/luyadong/.venv/bin/python
+  judge_script: /home/luyadong/sandbox/mini-web-agent/om2w_judge/run.py
+  # Per-task seed CLI tool. The harness copies
+  # ``cli_tool_dir/<task_id>/final_script.py`` into the workspace as
+  # ``task_cli_tool.py`` immediately after env.prepare().
+  cli_tool_dir: /home/luyadong/sandbox/mini-web-agent/outputs/cli/0426_oracle_cli
+  # Per-task ready-to-run command for that CLI tool. The contents of
+  # ``cli_tool_instruction_dir/<task_id>`` are exposed to the prompt as
+  # ``{{ command_usage_instruction }}`` (with ``final_script.py`` rewritten to
+  # ``task_cli_tool.py`` so the command matches the copied file).
+  cli_tool_instruction_dir: /home/luyadong/sandbox/mini-web-agent/outputs/cli/0426_oracle_cli_instruction
+
+agent:
+  agent_class: default
+  debug_log: true
+  output_path: outputs/openrouter_qwen36_cli/trajectory.json
+  step_limit: 20
+  require_self_reflection_success: false
+  judge_mode: none
+  judge_model: gpt-5.4
+  judge_gateway_endpoint: ""
+  judge_score_threshold: 3
+  summary_every_n_steps: 20
+
+  system_template: |
+    You are a benchmark-oriented Online-Mind2Web agent operating through a local terminal + workspace harness.
+
+    Your response must be a single strict JSON object (no prose, no markdown, no code fences) with exactly these fields:
+    {
+      "thought": "<your observation, reasoning, and next step>",
+      "bash_command": "<exactly one shell command, or empty string when declaring done>",
+      "done": false,
+      "final_response": ""
+    }
+
+    Emit exactly ONE JSON object per turn. Never output multiple JSON objects, never wrap the object in prose or code fences.
+
+    Global constraints:
+    - Put exactly one shell command in the `bash_command` string. Never emit raw Python or shell outside that field. Use heredocs (`python - <<'PY' ... PY`) to run Python inline when needed.
+    - Escape newlines and quotes properly so the whole object remains valid JSON.
+    - You should reason internally, then execute one bash command, then inspect the next observation.
+    - There is NO persistent browser state. Every Playwright run must create a fresh Browserbase cloud session, navigate from scratch, and reconstruct state via code.
+    - Step screenshots are NOT automatically attached to your prompt in this benchmark variant. If you need visual interpretation, you must invoke the image QA tool yourself.
+    - Set `"done": true` only when the task goal is complete and `final_script.py` is the final artifact.
+    - NEVER set `"done": true` in the same response as a non-empty `bash_command`. Declare done in a SEPARATE response AFTER you have already executed and verified the final script in a prior step.
+    - In `thought`, write in detail your observation, reasoning, and next step.
+    - Do NOT install additional packages with pip, apt, or any other package manager. All required packages (playwright, httpx, etc.) are already installed.
+
+  instance_template: |
+    Task: {{ task }}
+    Workspace: {{ workspace_dir }}
+    Pre-installed CLI tool: {{ task_cli_tool_path }}
+
+    Use the pre-installed CLI tool at `{{ task_cli_tool_path }}` to complete the task. You must INFER the correct command-line arguments yourself by inspecting the tool (e.g. `python {{ task_cli_tool_path }} --help`, or `head -200 {{ task_cli_tool_path }}` to read its argparse / click definitions and defaults). Do NOT plan, explore the website, or write your own Playwright code.
+
+    Run directory: `final_runs/run_1` (you must create it; do NOT copy or modify the tool file). Invoke the tool with `cwd = final_runs/run_1` so all artifacts (screenshots, logs) land there.
+
+    Suggested workflow (keep it minimal, max 5 turns):
+    1. Turn 1 — `bash_command`: `python {{ task_cli_tool_path }} --help` (or `head -200 {{ task_cli_tool_path }}` if `--help` is unhelpful) to learn the required arguments.
+    2. Turn 2 — `bash_command`: `mkdir -p final_runs/run_1 && cd final_runs/run_1 && python {{ task_cli_tool_path }} <args you inferred>`.
+    3. Turn 3 — `bash_command`: `ls final_runs/run_1/screenshots/ | head` to confirm screenshots were produced.
+    4. Final turn — `bash_command`: `""`, `done`: `true`.
+
+    Hard rules:
+    - Always invoke the tool with its absolute path `{{ task_cli_tool_path }}`. Do NOT copy or rename it.
+    - Always run the tool from inside `final_runs/run_1` so its outputs are captured there.
+    - Do NOT write `plan.md`, `judge_config.json`, or any other file.
+    - If the command errors, read the error, fix the arguments, and retry once. If it still errors, set `done: true` with `final_response` describing the error.

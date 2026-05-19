@@ -68,6 +68,23 @@ def resolve_latest_final_run_dir(task_dir: str | Path) -> Path | None:
         return None
 
     candidates.sort(key=lambda item: (item[0], item[1]))
+
+    def _has_real_artifacts(run_path: Path) -> bool:
+        log_path = run_path / "final_script_log.txt"
+        log_ok = log_path.is_file() and log_path.stat().st_size > 0
+        screenshots_dir = run_path / "screenshots"
+        screenshots_ok = False
+        if screenshots_dir.is_dir():
+            for name in os.listdir(screenshots_dir):
+                if re.fullmatch(r"final_execution_.*\.png", name):
+                    screenshots_ok = True
+                    break
+        return log_ok and screenshots_ok
+
+    for _, _, candidate_path in reversed(candidates):
+        if _has_real_artifacts(candidate_path):
+            return candidate_path
+
     return candidates[-1][2]
 
 
@@ -161,7 +178,7 @@ def auto_eval(args, task_subset, final_predicted_labels, lock, model):
             if "action_history" in result:
                 action_history = result["action_history"]
             if "thoughts" in result:
-                action_history = result["thoughts"]
+                thoughts = result["thoughts"]
             if "final_result_response" in result:
                 final_result_response = result["final_result_response"]
             if "input_image_paths" in result:

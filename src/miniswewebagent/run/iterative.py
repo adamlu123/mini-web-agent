@@ -114,7 +114,14 @@ def run_one(
     agent_config.pop("agent_class", None)  # IterativeRunner creates agents directly
     iterative_config = dict(config.get("iterative", {}))
 
-    runner = IterativeRunner(
+    runner_class_name = str(iterative_config.pop("runner_class", "default")).lower()
+    if runner_class_name == "strict":
+        from miniswewebagent.agents.iterative_strict import StrictIterativeRunner
+        runner_cls = StrictIterativeRunner
+    else:
+        runner_cls = IterativeRunner
+
+    runner = runner_cls(
         model,
         env,
         agent_config=agent_config,

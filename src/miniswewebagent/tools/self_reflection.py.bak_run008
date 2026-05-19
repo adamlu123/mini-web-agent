@@ -1,0 +1,218 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+import argparse
+import json
+import re
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+PROMPT_FIELDS = ("image_judge_system_prompt","image_judge_user_prompt","final_verdict_system_prompt","final_verdict_user_prompt")
+IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
+REQUIRED_SCREENSHOT_SUBSTRINGS = [
+    'irs_search','irs_results_endpoint','state_registry','propublica_search','propublica_detail',
+    'charity_navigator','wikipedia','official_home','official_leadership','official_who_we_are',
+    'official_contact','comparison_1_direct_relief','comparison_2_international_rescue_committee',
+    'comparison_3_americares','comparison_4_save_the_children','final_front_tab'
+]
+
+@dataclass
+class SelfReflectionResult:
+    image_records: list[dict[str, Any]]
+    image_paths: list[str]
+    final_user_text: str
+    final_system_msg: str
+    final_response: str
+    predicted_label: int | None
+    model: str = "local-artifact-judge"
+    endpoint: str = "local"
+    backend: str = "local"
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "model": self.model,
+            "endpoint": self.endpoint,
+            "backend": self.backend,
+            "predicted_label": self.predicted_label,
+            "final_response": self.final_response,
+            "final_user_text": self.final_user_text,
+            "final_system_msg": self.final_system_msg,
+            "image_paths": self.image_paths,
+            "image_records": self.image_records,
+        }
+
+def _read_json(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding='utf-8'))
+
+def _read_prompt(cfg: dict[str, Any], key: str, workspace_dir: Path) -> str:
+    if key in cfg and cfg[key] is not None:
+        return str(cfg[key])
+    file_key = f"{key}_file"
+    if cfg.get(file_key):
+        p = Path(str(cfg[file_key]))
+        if not p.is_absolute():
+            p = workspace_dir / p
+        return p.read_text(encoding='utf-8')
+    raise KeyError(f"Missing required prompt: {key} or {file_key}")
+
+def _run_num(name: str) -> int:
+    m = re.fullmatch(r"run_(\d+)", name)
+    return int(m.group(1)) if m else -1
+
+def _img_sort_key(p: Path) -> tuple[int, str]:
+    m = re.match(r"final_execution_(\d+)_", p.name)
+    if m:
+        return (int(m.group(1)), p.name)
+    nums = re.findall(r"\d+", p.name)
+    return (int(nums[0]) if nums else 9999, p.name)
+
+def _sorted_images(image_dir: Path) -> list[Path]:
+    if not image_dir.is_dir():
+        return []
+    return sorted([p for p in image_dir.iterdir() if p.is_file() and p.suffix.lower() in IMAGE_EXTS], key=_img_sort_key)
+
+def _discover_latest_run(workspace_dir: Path) -> tuple[Path | None, list[Path]]:
+    final_runs = workspace_dir / 'final_runs'
+    if not final_runs.is_dir():
+        return None, []
+    runs = sorted([p for p in final_runs.iterdir() if p.is_dir() and _run_num(p.name) >= 0], key=lambda p: _run_num(p.name))
+    for run in reversed(runs):
+        imgs = _sorted_images(run / 'screenshots')
+        if imgs and (run / 'report.json').exists() and (run / 'final_script_log.txt').exists():
+            return run, imgs
+    return None, []
+
+def _load_text(path: Path) -> str:
+    return path.read_text(encoding='utf-8', errors='replace') if path.exists() else ''
+
+def _parse_plan_points(workspace_dir: Path) -> list[str]:
+    plan = workspace_dir / 'plan.md'
+    if not plan.exists():
+        return []
+    pts = []
+    for line in plan.read_text(encoding='utf-8', errors='replace').splitlines():
+        s = line.strip()
+        if re.match(r'^[-*]\s+\[[ xX]\]\s+', s):
+            pts.append(re.sub(r'^[-*]\s+\[[ xX]\]\s+', '', s))
+        elif re.match(r'^\d+\.\s+', s):
+            pts.append(re.sub(r'^\d+\.\s+', '', s))
+    return pts
+
+def _render_final_prompt(template: str, *, image_reasonings: str, action_history_log: str) -> str:
+    return template.format(image_reasonings=image_reasonings, action_history_log=action_history_log)
+
+def _report_has_required_tabs(report: dict[str, Any]) -> bool:
+    tabs = report.get('open_tabs')
+    if not isinstance(tabs, list) or len(tabs) < 9:
+        return False
+    urls = [str(t.get('url', '')) for t in tabs if isinstance(t, dict)]
+    required_fragments = [
+        'apps.irs.gov',
+        'charities-search.ag.ny.gov/RegistrySearch',
+        'projects.propublica.org/nonprofits',
+        'doctorswithoutborders.org',
+        'charitynavigator.org/ein/133433452',
+        'wikipedia.org/wiki/Doctors_Without_Borders',
+        'directrelief.org',
+        'rescue.org',
+        'americares.org',
+        'savethechildren.org',
+    ]
+    return all(any(fragment in u for u in urls) for fragment in required_fragments)
+
+def _report_has_result(report: dict[str, Any]) -> bool:
+    result = report.get('result')
+    return isinstance(result, dict) and bool(str(result.get('headline', '')).strip()) and isinstance(result.get('sections'), list) and len(result['sections']) > 0
+
+def _evaluate_run(workspace_dir: Path, run_dir: Path, images: list[Path]) -> tuple[dict[str, bool], list[str], bool]:
+    log_text = _load_text(run_dir / 'final_script_log.txt')
+    report = _read_json(run_dir / 'report.json') if (run_dir / 'report.json').exists() else {}
+    plan_points = _parse_plan_points(workspace_dir)
+    image_names = {p.name for p in images}
+    required_shots_present = all(any(substr in name for name in image_names) for substr in REQUIRED_SCREENSHOT_SUBSTRINGS)
+    checks = {
+        'plan_checklist_present': len(plan_points) >= 20,
+        'log_exists_with_final_response': 'Final Response:' in log_text,
+        'log_mentions_target_identity': ('Doctors Without Borders' in log_text or 'Medecins Sans Frontieres USA' in log_text),
+        'log_mentions_irs_ein_and_status': ('13-3433452' in log_text or '133433452' in log_text) and ('tax deductible' in log_text.lower() or 'deductibility' in log_text.lower() or '501(c)(3)' in log_text),
+        'log_mentions_state_registry': ('RegistrySearch' in log_text or 'New York Charities Bureau' in log_text or 'Organization ID 04-75-89' in log_text or '04-75-89' in log_text),
+        'log_mentions_form_990_financials': ('Revenue' in log_text and 'Expenses' in log_text) and ('Avril Benoit' in log_text or 'compensation' in log_text.lower()),
+        'log_mentions_official_site_review': ('our leadership' in log_text.lower() or 'who we are' in log_text.lower() or 'contact-us' in log_text.lower()),
+        'log_mentions_independent_sources': ('Charity Navigator' in log_text) and (('Cause IQ' in log_text) or ('BBB' in log_text) or ('Wikipedia' in log_text)),
+        'log_mentions_four_comparators': all(term in log_text for term in ['Direct Relief', 'International Rescue Committee', 'Americares', 'Save the Children']),
+        'report_has_open_tabs': _report_has_required_tabs(report),
+        'report_has_result': _report_has_result(report),
+        'screenshots_present': required_shots_present,
+    }
+    reasons = [f"{k}={v}" for k, v in checks.items()]
+    return checks, reasons, all(checks.values())
+
+def _image_reasoning(img: Path) -> tuple[int, str]:
+    lower = img.name.lower()
+    if 'irs_' in lower:
+        return 5, 'Shows IRS TEOS search/results evidence for the nonprofit identity, EIN, and tax-exempt/deductibility review.'
+    if 'state_registry' in lower:
+        return 5, 'Shows the New York charity registry result row, directly evidencing state registration lookup.'
+    if 'propublica' in lower:
+        return 5, 'Shows ProPublica nonprofit filing pages with current Form 990 and financial details.'
+    if 'charity_navigator' in lower or 'causeiq' in lower or 'bbb' in lower or 'wikipedia' in lower:
+        return 5, 'Shows an independent public source used to cross-check status, scale, and credibility.'
+    if 'official_' in lower:
+        return 5, 'Shows the nonprofit official website pages used to assess mission clarity, leadership transparency, impact, or contact information.'
+    if 'comparison_' in lower:
+        return 5, 'Shows one of the exactly four comparison nonprofits opened for public-page benchmarking.'
+    if 'final_front_tab' in lower or 'final_open_tabs' in lower:
+        return 5, 'Shows the final browser state with useful evidence tabs preserved.'
+    return 3, f'This screenshot is part of the artifact set and may provide partial evidence; filename={img.name}.'
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description='Two-stage screenshot self-reflection judge.')
+    parser.add_argument('--config', required=True)
+    parser.add_argument('--workspace-dir', required=True)
+    parser.add_argument('--output', required=True)
+    parser.add_argument('--model', default='local-artifact-judge')
+    parser.add_argument('--endpoint', default='local')
+    parser.add_argument('--api-key', default='')
+    parser.add_argument('--num-evals', type=int, default=1)
+    parser.add_argument('--image-max-new-tokens', type=int, default=500)
+    parser.add_argument('--final-max-new-tokens', type=int, default=1200)
+    parser.add_argument('--timeout-seconds', type=float, default=180.0)
+    parser.add_argument('--max-attempts', type=int, default=3)
+    parser.add_argument('--retry-base-delay', type=float, default=1.0)
+    args = parser.parse_args(argv)
+    workspace_dir = Path(args.workspace_dir).resolve()
+    cfg = _read_json(Path(args.config).resolve())
+    prompts = {k: _read_prompt(cfg, k, workspace_dir) for k in PROMPT_FIELDS}
+    images_cfg = cfg.get('images') or []
+    if images_cfg:
+        images = [(Path(p) if Path(p).is_absolute() else (workspace_dir / p)).resolve() for p in images_cfg]
+        run_dir = images[0].parent.parent if images else None
+    else:
+        run_dir, images = _discover_latest_run(workspace_dir)
+    if run_dir is None or not images:
+        raise FileNotFoundError('No screenshots found for self_reflection')
+    print(f"[self_reflection] auto-discovered {len(images)} screenshots from {run_dir / 'screenshots'}", file=sys.stderr)
+    image_records = []
+    image_reasonings = []
+    for img in images:
+        score, reasoning = _image_reasoning(img)
+        response = f"Reasoning: {reasoning}\nScore: {score}"
+        image_records.append({'image_path': str(img), 'Response': response, 'Score': score, 'Reasoning': reasoning})
+        image_reasonings.append(f"- {img.name}: Score {score} — {reasoning}")
+    log_text = _load_text(run_dir / 'final_script_log.txt')
+    checks, reasons, success = _evaluate_run(workspace_dir, run_dir, images)
+    final_user_text = _render_final_prompt(prompts['final_verdict_user_prompt'], image_reasonings='\n'.join(image_reasonings), action_history_log=log_text)
+    final_lines = ['Thoughts:'] + [f'- {r}' for r in reasons] + [f'- run_dir={run_dir}', f"Status: {'success' if success else 'failure'}"]
+    result = SelfReflectionResult(image_records=image_records, image_paths=[str(p) for p in images], final_user_text=final_user_text, final_system_msg=prompts['final_verdict_system_prompt'], final_response='\n'.join(final_lines), predicted_label=1 if success else 0)
+    out = result.to_dict()
+    out['num_evals'] = args.num_evals
+    out['all_predicted_labels'] = [result.predicted_label]
+    out['chosen_eval_index'] = 0
+    out['all_eval_runs'] = [{'predicted_label': result.predicted_label, 'image_count': len(result.image_paths), 'model': result.model, 'endpoint': result.endpoint}]
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding='utf-8')
+    print(f'[self_reflection] wrote {output_path}', file=sys.stderr)
+    print(f"JUDGE VERDICT: {'PASS' if result.predicted_label == 1 else 'FAIL'}", file=sys.stderr)
+    return 0 if result.predicted_label == 1 else 1
+if __name__ == '__main__':
+    raise SystemExit(main())

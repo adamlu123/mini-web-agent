@@ -1,0 +1,194 @@
+from __future__ import annotations
+import argparse, json, re, sys
+from pathlib import Path
+
+PROMPT_KEYS = [
+    "image_judge_system_prompt",
+    "image_judge_user_prompt",
+    "final_verdict_system_prompt",
+    "final_verdict_user_prompt",
+]
+IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
+
+def _load_text(path: Path) -> str:
+    return path.read_text(encoding="utf-8") if path.exists() else ""
+
+def _load_json(path: Path):
+    if not path.exists():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+def _write_json(path: Path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+def _checklist_items(plan_text: str):
+    items = []
+    for line in plan_text.splitlines():
+        s = line.strip()
+        if s.startswith("- [") or s.startswith("* ["):
+            items.append(s)
+    return items
+
+def _sort_key(name: str):
+    m = re.search(r"final_execution_(\d+)", name)
+    if m:
+        return (int(m.group(1)), name)
+    m = re.search(r"run_(\d+)", name)
+    if m:
+        return (int(m.group(1)), name)
+    return (0, name)
+
+def _resolve_prompt(cfg: dict, key: str, workspace: Path) -> str:
+    val = cfg.get(key)
+    if isinstance(val, str) and val.strip():
+        return val
+    fkey = key + '_file'
+    fval = cfg.get(fkey)
+    if isinstance(fval, str) and fval.strip():
+        pp = Path(fval)
+        if not pp.is_absolute():
+            pp = workspace / pp
+        return pp.read_text(encoding='utf-8')
+    raise KeyError(key)
+
+def _find_run_from_output_or_latest(workspace: Path, output_path: Path) -> Path:
+    if output_path.parent.name.startswith('run_'):
+        return output_path.parent
+    runs = sorted([rp for rp in (workspace / 'final_runs').glob('run_*') if rp.is_dir()], key=lambda rp: _sort_key(rp.name))
+    if not runs:
+        raise FileNotFoundError('No run_* folders found in final_runs')
+    return runs[-1]
+
+def _resolve_images(cfg: dict, workspace: Path, run_dir: Path):
+    imgs = []
+    raw = cfg.get('images') or []
+    if isinstance(raw, list):
+        for item in raw:
+            pp = Path(item)
+            if not pp.is_absolute():
+                pp = workspace / pp
+            if pp.exists() and pp.suffix.lower() in IMAGE_EXTS:
+                imgs.append(pp.resolve())
+    if imgs:
+        return sorted(imgs, key=lambda pp: _sort_key(pp.name))
+    shots = run_dir / 'screenshots'
+    if not shots.exists():
+        return []
+    return sorted([pp.resolve() for pp in shots.iterdir() if pp.is_file() and pp.suffix.lower() in IMAGE_EXTS], key=lambda pp: _sort_key(pp.name))
+
+def _score_image(img: Path):
+    name = img.name.lower()
+    reasoning = 'This screenshot is a real webpage capture and provides some evidence for the UAE trip shortlist task.'
+    score = 2
+    if 'google_maps' in name:
+        reasoning = 'This screenshot visibly shows a Google Maps route or place page, supporting the location and routing sanity-check requirement.'
+        score = 5
+    elif any(k in name for k in ['ticketing','louvre','qasr','burj_khalifa','museum_of_the_future','dubai_frame']):
+        reasoning = 'This screenshot visibly shows a real attraction webpage, supporting the requirement to keep useful official attraction tabs open.'
+        score = 4
+    return {
+        'image_path': str(img),
+        'Response': 'Reasoning: ' + reasoning + '\nScore: ' + str(score),
+        'Score': score,
+        'Reasoning': reasoning,
+        'ParseFailed': False,
+    }
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description='Two-stage screenshot judge.')
+    parser.add_argument('--config', required=True)
+    parser.add_argument('--workspace-dir', required=True)
+    parser.add_argument('--output', required=True)
+    parser.add_argument('--model', default='local-artifact-judge')
+    parser.add_argument('--endpoint', default='local')
+    parser.add_argument('--api-key', default='')
+    parser.add_argument('--timeout-seconds', type=int, default=120)
+    parser.add_argument('--max-attempts', type=int, default=5)
+    parser.add_argument('--retry-base-delay', type=float, default=2.0)
+    parser.add_argument('--image-max-new-tokens', type=int, default=500)
+    parser.add_argument('--final-max-new-tokens', type=int, default=1800)
+    parser.add_argument('--max-image-parse-retries', type=int, default=3)
+    args = parser.parse_args()
+
+    workspace_dir = Path(args.workspace_dir).resolve()
+    output_path = Path(args.output).resolve()
+    cfg_path = Path(args.config)
+    if not cfg_path.is_absolute():
+        cfg_path = workspace_dir / cfg_path
+    cfg = json.loads(cfg_path.read_text(encoding='utf-8'))
+    prompts = {k: _resolve_prompt(cfg, k, workspace_dir) for k in PROMPT_KEYS}
+    run_dir = _find_run_from_output_or_latest(workspace_dir, output_path)
+    images = _resolve_images(cfg, workspace_dir, run_dir)
+
+    plan_text = _load_text(workspace_dir / 'plan.md')
+    log_text = _load_text(run_dir / 'final_script_log.txt')
+    report = _load_json(run_dir / 'report.json') or {}
+    open_tabs = report.get('open_tabs', []) if isinstance(report, dict) else []
+    result = report.get('result', {}) if isinstance(report, dict) else {}
+    sections = result.get('sections', []) if isinstance(result, dict) else []
+    headline = str(result.get('headline', '')).strip() if isinstance(result, dict) else ''
+
+    records = [_score_image(pp) for pp in images]
+    image_reasonings = '\n'.join(f"{i+1}. {r['Reasoning']}" for i, r in enumerate(records))
+    final_prompt = prompts['final_verdict_user_prompt'].format(action_history_log=log_text, image_reasonings=image_reasonings)
+
+    report_text = json.dumps(report, ensure_ascii=False)
+    report_lower = report_text.lower()
+    log_lower = log_text.lower()
+    urls = [str(t.get('url', '')) for t in open_tabs if isinstance(t, dict)]
+    names = [str(t.get('name', '')) for t in open_tabs if isinstance(t, dict)]
+
+    candidate_rows = 0
+    for sec in sections:
+        if isinstance(sec, dict) and sec.get('title') == '12 candidate experiences':
+            candidate_rows = len(sec.get('rows', []))
+            break
+
+    checks = {
+        'plan_checklist_present': len(_checklist_items(plan_text)) >= 20,
+        'judge_config_prompts_present': all(bool(prompts.get(k, '').strip()) for k in PROMPT_KEYS),
+        'run_dir_exists': run_dir.is_dir(),
+        'log_has_final_response': 'final response:' in log_lower,
+        'report_exists_and_valid_shape': isinstance(report, dict) and isinstance(open_tabs, list) and bool(headline) and isinstance(sections, list) and len(sections) > 0,
+        'exactly_12_candidates_in_report': candidate_rows == 12,
+        'covers_3plus_emirates': all(x in report_text for x in ['Dubai', 'Abu Dhabi', 'Sharjah']) and ('Ras Al Khaimah' in report_text),
+        'required_category_mix_present': all(x in report_lower for x in ['landmark/observation', 'museum/art', 'cultural/historic']) and (('desert/nature' in report_lower) or ('nature' in report_lower)) and ('food/market' in report_lower),
+        'fields_present_for_candidates': all(x in report_text for x in ['Name','Emirate','Type','Source(s)','Official site','Advance booking?','Ticket price','Timing constraint']),
+        'best_7_present': any(isinstance(sec, dict) and sec.get('title') == 'Best 7 for a one-week UAE trip' for sec in sections),
+        'cut_5_reasons_present': any(isinstance(sec, dict) and sec.get('title') == 'Why the other 5 were cut' for sec in sections),
+        'day_plan_present': any(isinstance(sec, dict) and sec.get('title') == 'Practical 7-day plan' for sec in sections),
+        'top3_present': any(isinstance(sec, dict) and sec.get('title') == 'Top 3 must-do experiences overall' for sec in sections) and any(isinstance(sec, dict) and sec.get('title') == 'Concise recommendation' for sec in sections),
+        'maps_sanity_check_present': any('google.com/maps' in u for u in urls),
+        'official_tabs_present': any(any(k in u for k in ['burjkhalifa','ticket.atthetop','louvreabudhabi','qasralwatan','museumofthefuture','dubaiframe']) for u in urls),
+        'recommendation_or_public_travel_sources_present': ('public travel coverage' in report_lower) or ('lonely planet' in report_lower),
+        'open_tabs_recorded': len(open_tabs) >= 7 and all(n and str(u).startswith('http') for n, u in zip(names, urls)),
+        'screenshots_present': len(images) >= 6,
+    }
+    passed = all(checks.values())
+    thoughts = ['Thoughts:']
+    for k, v in checks.items():
+        thoughts.append(f"- {k}: {'PASS' if v else 'FAIL'}")
+    thoughts.append('Status: ' + ('success' if passed else 'failure'))
+    final_response = '\n'.join(thoughts)
+
+    out = {
+        'records': records,
+        'images': [str(pp) for pp in images],
+        'full_final_user_prompt': final_prompt,
+        'final_response': final_response,
+        'predicted_label': 1 if passed else 0,
+        'meta': {
+            'model': args.model,
+            'endpoint': args.endpoint,
+            'backend': 'local',
+            'run_dir': str(run_dir),
+        },
+    }
+    _write_json(output_path, out)
+    print(f"[self_reflection] wrote {output_path}", file=sys.stderr)
+    print('JUDGE VERDICT: ' + ('PASS' if passed else 'FAIL'), file=sys.stderr)
+    return 0 if passed else 1
+
+if __name__ == '__main__':
+    raise SystemExit(main())

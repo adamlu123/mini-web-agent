@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,88 @@ def _load_final_script(scripts_dir: Path, task_id: str) -> str:
     if not script_path.exists():
         return ""
     return script_path.read_text(encoding="utf-8")
+
+
+def _copy_task_cli_tool(
+    cli_tool_dir: Path, task_id: str, workspace_dir: Path, dest_name: str = "task_cli_tool.py"
+) -> str:
+    """Copy `cli_tool_dir/<task_id>/final_script.py` into the workspace.
+
+    Returns the destination path as a string (suitable for a template var) or
+    "" when no source script is available.
+    """
+    if not task_id:
+        return ""
+    src = cli_tool_dir / task_id / "final_script.py"
+    if not src.is_file():
+        return ""
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    dest = workspace_dir / dest_name
+    shutil.copy2(src, dest)
+    return str(dest)
+
+
+def _copy_task_cli_tools_multi(
+    cli_tool_dir: Path,
+    by_website_file: Path,
+    task_id: str,
+    workspace_dir: Path,
+) -> list[str]:
+    """Copy every oracle CLI belonging to the same website as ``task_id``.
+
+    Looks up ``task_id`` in the by-website index file (a list of records
+    ``{"website": ..., "tasks": [{"task_id": ...}, ...]}``), gathers all
+    sibling task_ids, and copies each one's
+    ``cli_tool_dir/<sibling>/final_script.py`` into ``workspace_dir`` under an
+    anonymized name (``cli_tool_1.py``, ``cli_tool_2.py``, ...). The order is
+    deterministic (alphabetical by sibling task_id) but the filenames do NOT
+    encode which CLI was authored for which task — the agent must inspect each
+    one to pick the right tool.
+
+    Returns the list of destination paths (absolute, as strings) in the
+    assigned order; empty list when no siblings or sources are found.
+    """
+    if not task_id:
+        return []
+    if not by_website_file.is_file():
+        return []
+    records = json.loads(by_website_file.read_text(encoding="utf-8"))
+    sibling_ids: list[str] | None = None
+    for record in records:
+        ids = [t.get("task_id", "") for t in record.get("tasks", [])]
+        if task_id in ids:
+            sibling_ids = sorted(i for i in ids if i)
+            break
+    if not sibling_ids:
+        return []
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    paths: list[str] = []
+    for idx, sid in enumerate(sibling_ids, start=1):
+        src = cli_tool_dir / sid / "final_script.py"
+        if not src.is_file():
+            continue
+        dest = workspace_dir / f"cli_tool_{idx}.py"
+        shutil.copy2(src, dest)
+        paths.append(str(dest))
+    return paths
+
+
+def _load_command_usage_instruction(instruction_dir: Path, task_id: str) -> str:
+    """Load the textual CLI usage instruction for a task.
+
+    The instruction file lives at ``instruction_dir/<task_id>`` (no extension)
+    and is expected to be a single-line ``python final_script.py --flag value
+    ...`` invocation. The original ``final_script.py`` filename is rewritten to
+    ``task_cli_tool.py`` so the instruction matches the file copied into the
+    workspace.
+    """
+    if not task_id:
+        return ""
+    path = instruction_dir / task_id
+    if not path.is_file():
+        return ""
+    text = path.read_text(encoding="utf-8").strip()
+    return text.replace("final_script.py", "task_cli_tool.py")
 
 
 def _load_explore_history(explore_dir: Path, task_id: str) -> str:
@@ -142,6 +225,35 @@ def run_one(
             start_url=resolved_start_url,
             task_record=task_record,
         )
+        cli_tool_path = (
+            _copy_task_cli_tool(
+                Path(run_config["cli_tool_dir"]),
+                resolved_task_id or "",
+                resolved_output_dir,
+            )
+            if run_config.get("cli_tool_dir") and resolved_task_id
+            else ""
+        )
+        command_usage_instruction = (
+            _load_command_usage_instruction(
+                Path(run_config["cli_tool_instruction_dir"]), resolved_task_id or ""
+            )
+            if run_config.get("cli_tool_instruction_dir") and resolved_task_id
+            else ""
+        )
+        available_cli_tools_list = (
+            _copy_task_cli_tools_multi(
+                Path(run_config["cli_tool_dir"]),
+                Path(run_config["cli_tool_by_website_file"]),
+                resolved_task_id or "",
+                resolved_output_dir,
+            )
+            if run_config.get("cli_tool_by_website_file")
+            and run_config.get("cli_tool_dir")
+            and resolved_task_id
+            else []
+        )
+        available_cli_tools = "\n".join(available_cli_tools_list)
         result = agent.run(
             resolved_task,
             task_id=resolved_task_id or "",
@@ -152,6 +264,10 @@ def run_one(
             final_script=_load_final_script(
                 Path(run_config["final_script_dir"]), resolved_task_id
             ) if run_config.get("final_script_dir") and resolved_task_id else "",
+            task_cli_tool_path=cli_tool_path,
+            command_usage_instruction=command_usage_instruction,
+            available_cli_tools=available_cli_tools,
+            available_cli_tools_list=available_cli_tools_list,
         )
     except Exception as exc:
         run_exception = exc

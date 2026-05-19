@@ -53,7 +53,12 @@ async def _judge_image_with_retry(task, image_path, key_points, model):
     last_response = ""
     last_error = None
     for attempt in range(1, IMAGE_PARSE_MAX_RETRIES + 1):
-        last_response = await judge_image(task, image_path, key_points, model)
+        try:
+            last_response = await judge_image(task, image_path, key_points, model)
+        except Exception as exc:
+            last_error = exc
+            print(f"Error loading/judging image on attempt {attempt}/{IMAGE_PARSE_MAX_RETRIES} for {image_path}: {exc}")
+            continue
         try:
             reasoning, score = _parse_image_judge_response(last_response)
             return {
@@ -250,7 +255,11 @@ Trajectory Thoughts:
         )
 
         if score >= score_threshold:
-            jpg_base64_str = encode_image(Image.open(image_path))
+            try:
+                jpg_base64_str = encode_image(Image.open(image_path))
+            except Exception as exc:
+                print(f"Skipping unreadable image {image_path}: {exc}")
+                continue
             whole_content_img.append(
                 {
                     "type": "image_url",

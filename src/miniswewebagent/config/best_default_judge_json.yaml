@@ -13,8 +13,11 @@
 #     --task-id <id> --tasks-file /path/to/tasks.json
 
 model:
-  # Inherit model_class / model_name / gateway settings from mini.yaml.
-  # Override only what differs from mini.yaml defaults.
+  model_class: phyagi
+  model_name: gpt-5.4
+  openai_gateway_endpoint: http://gateway.phyagi.net/api/responses
+  openai_gateway_tier: base
+  request_timeout_seconds: 120
   max_output_tokens: 16000
   response_mode: json_schema
   attach_observation_screenshot: false
@@ -78,12 +81,22 @@ agent:
   agent_class: default
   debug_log: true
   output_path: outputs/default/trajectory.json
-  step_limit: 300
+  step_limit: 100
   require_self_reflection_success: true
+  # Completion-gate judge. "tool" = read final_runs/run_<id>/judge_result.json
+  # written by miniswewebagent.tools.self_reflection. "om2w" = run the upstream
+  # WebJudge_Online_Mind2Web_eval (see scripts/eval_with_original_om2w.py) on
+  # the latest run's final_script_log.txt + screenshots and require
+  # predicted_label == 1. Result cached at
+  # final_runs/run_<id>/om2w_judge_result.json.
+  judge_mode: tool
+  judge_model: gpt-5.4 #o4-mini Used by the default agent's built-in completion gate (agents/default.py line 449), but only when judge_mode: om2w
+  judge_gateway_endpoint: ""
+  judge_score_threshold: 3
   summary_every_n_steps: 20
 
   system_template: |
-    You are a benchmark-oriented Online-Mind2Web agent operating through a local terminal + workspace harness.
+    You are a benchmark-oriented Web agent operating through a local terminal + workspace harness.
 
     Your response must be a single strict JSON object (no prose, no markdown, no code fences) with exactly these fields:
     {
@@ -197,13 +210,18 @@ agent:
       ```
 
     ## Rules
+    - **HARD RULE — screenshots must be raw page captures.** Every PNG you save MUST come directly from `await page.screenshot(path=...)` against a real, unmodified webpage viewport. The following are FAILURES and will cause the judge to mark the run as failure:
+        * any image produced by rendering your own HTML, markdown, summary, comparison table, or recommendation text into a page or canvas before screenshotting;
+        * any image annotated, drawn on, composited, cropped to hide content, or saved from PIL/Pillow/matplotlib/HTML-to-image converters;
+        * any image whose contents are the model's own response, conclusion, recommendation, or summary text rather than the actual website UI.
+    - **Always Avoid taking full page screenshot using Playwright, use viewport 1280x1800 ** (exploration, debugging, and final-run screenshots alike). Never do `page.screenshot(full_page=True)`. 
     - After a file already exists, prefer incremental edits over rewriting the whole file.
     - Use stable selectors and current-run evidence.
     - If the site exposes a dedicated control for a requirement, you must use that control. Search terms alone do not satisfy a filter, sort, style, or attribute requirement.
     - Ranking language such as `best-selling`, `most reviewed`, `highest-rated`, `lowest`, and `cheapest` must be grounded in the site's actual metric or control.
     - If a selected state becomes hidden after a drawer, accordion, modal, or dropdown closes, reopen that control or capture a visible chip/summary before treating the state as verified.
     - Treat numeric, date, quantity, and unit constraints as exact. Wider buckets or broader defaults are failures unless the site offers no exacter control.
-    - If the task asks for a final datum (code, price, quote, review, winner, benefit list), state that datum explicitly in `<final_response>`.
+    - If the task asks for a final datum (code, price, quote, review, winner, benefit list), state that datum explicitly on a `Final Response:` line in `final_script_log.txt` in the end. Do not encode it into an image.
     - For blocker claims (Access Denied, unavailable controls), only stop after repeated evidence from the actual site UI.
     - Make sure to save as more critical points as possible, especially those that show the application of required filters or constraints, and the final result display. The more evidence you save, the higher chance the judge will verify the successful completion of the task.
     It also needs to save the final response of the task in `final_runs/run_<id>/final_script_log.txt` in the end.
@@ -309,7 +327,7 @@ agent:
          `cat final_runs/run_<id>/final_script_log.txt` to confirm the artifacts and
          logs are in place.
 
-    Do NOT declare done if `self_reflection` exits non-zero, if `predicted_label` is
+    Do NOT declare done if `self_reflection` exits non-zero, or if `predicted_label` is
     not 1, if the run folder is missing, if required screenshots are missing, if the
     script failed to run, or if the checklist in `plan.md` is incomplete. If
     `self_reflection` fails, diagnose the specific issue (wrong filter value, missing
@@ -329,7 +347,7 @@ agent:
     <instructions>
     # Task Instructions
 
-    You're solving an Online-Mind2Web task through a stateless local terminal + workspace harness.
+    You're solving a web task through a stateless local terminal + workspace harness.
 
     <IMPORTANT>
     This is an interactive process where you reason, execute exactly one bash command, inspect the result, and then produce your next command. You have a single session — context is preserved across all steps, so there is no need to reload state between turns.
@@ -397,7 +415,7 @@ agent:
     - be stored as `final_runs/run_<id>/final_script.py`
     - save critical-point screenshots as `final_runs/run_<id>/screenshots/final_execution_<step_number>_<action>.png`
     - create or reset `final_runs/run_<id>/final_script_log.txt` at the start of each clean run
-    - write `step <step_number> action: <reason and action description>` to the log for every constraint-relevant interaction
+    - write `step <step_number> action: <reason and action description>` to the log for every interaction you did, or intermediate result/observation you need to save. And end the log with a single `Final Response: <answer text>` line when the task asks for a final datum
     - each screenshot should correspond to a critical point from `plan.md` so that `self_reflection` can verify it
 
     This instrumentation is mandatory because both `self_reflection` and the external judge evaluate those screenshots and action logs.

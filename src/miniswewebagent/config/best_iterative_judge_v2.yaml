@@ -210,9 +210,9 @@ agent:
          via `{image_reasonings}`, attach EVERY screenshot (no filtering), and make ONE
          aggregated call that must end with `Status: success` or `Status: failure`.
 
-    Your job is to AUTHOR the four prompts and point the tool at the right screenshots.
-    The tool handles parallel per-image scoring, final aggregation, and verdict parsing.
-    Default model is `gpt-5.4` via the phyagi gateway.
+    Your job is to AUTHOR the four prompts ONCE in round 1 and reuse them unchanged
+    for every later round. The tool handles parallel per-image scoring, final
+    aggregation, and verdict parsing.
 
     **CLI interface:**
     ```
@@ -225,16 +225,12 @@ agent:
     Exit code is 0 on PASS, 1 on FAIL / unparsed. The `--output` file is a JSON document
     containing per-image records (`Score`, `Reasoning`, `Response`), the image path
     list, the full final-stage prompt, the model's final response, and
-    `predicted_label` (1=success, 0=failure, null=unparsed).
+    `predicted_label` (1=success, 0=failure, null=unparsed). You MUST run self_reflection before
+    declaring done.
 
-    **judge_config.json schema (you write this each round):**
+    **judge_config.json schema (authored once, prompts only):**
     ```json
     {
-      "images": [
-        "final_runs/run_<id>/screenshots/final_execution_1_apply_constraint.png",
-        "final_runs/run_<id>/screenshots/final_execution_2_sort.png",
-        "final_runs/run_<id>/screenshots/final_execution_3_final_state.png"
-      ],
       "image_judge_system_prompt":   "...see below...",
       "image_judge_user_prompt":     "...see below...",
       "final_verdict_system_prompt": "...see below...",
@@ -257,19 +253,20 @@ agent:
       ```
       Do NOT ask for JSON. The tool parses the labelled lines directly.
 
-    - `image_judge_user_prompt`: embed the task description, the full numbered critical-
-      point list from `plan.md`, and the exact `final_script_log.txt` content. Tell the
-      model to consider ALL critical points when scoring this single image and to be
-      harsh when evidence is ambiguous or partially occluded.
+    - `image_judge_user_prompt`: embed the task description and the full numbered
+      critical-point list from `plan.md`. Tell the model to consider ALL critical
+      points when scoring this single image and to be harsh when evidence is
+      ambiguous or partially occluded. This prompt is reused across rounds with different runs.
 
     - `final_verdict_system_prompt`: instruct the model to be a harsh aggregated judge
       and to end its reply with EXACTLY `Status: success` or `Status: failure` on its
       own line. Require a `Thoughts:` block before that line that evaluates every
       critical point. The tool extracts the verdict from the trailing `Status:` line.
 
-    - `final_verdict_user_prompt`: embed the task description, the numbered critical-
-      point list, the `final_script_log.txt` action history, and include the literal
-      token `{image_reasonings}` where you want the per-image reasonings injected. The
+    - `final_verdict_user_prompt`: embed the task description and the numbered
+      critical-point list, and include the literal token `{image_reasonings}` where
+      you want the per-image reasonings injected. Do NOT hard-code a specific run's
+      `final_script_log.txt`. The
       tool renders that token as a numbered Python str.format substitution of every
       screenshot's reasoning, so any other literal curly braces in this string MUST
       be doubled (write {% raw %}`{{`{% endraw %} and {% raw %}`}}`{% endraw %} in the
@@ -282,33 +279,6 @@ agent:
     **Robustness:** per-image parse failures are retried up to 3 times and then
     recorded with `Score: 0, ParseFailed: true` without failing the whole run. Gateway
     HTTP errors are retried with exponential backoff.
-
-    **Example invocation and output (end-to-end):**
-    ```
-    $ cat judge_config.json | jq '.images'
-    [
-      "final_runs/run_001/screenshots/final_execution_1_set_location.png",
-      "final_runs/run_001/screenshots/final_execution_2_apply_beds.png",
-      "final_runs/run_001/screenshots/final_execution_3_apply_price.png"
-    ]
-    $ python -m miniswewebagent.tools.self_reflection \
-        --config judge_config.json \
-        --workspace-dir "{{ workspace_dir }}" \
-        --output final_runs/run_001/judge_result.json
-    $ jq '{predicted_label, images: (.image_paths|length), records: (.image_records|map({f: .image_path, s: .Score}))}' \
-        final_runs/run_001/judge_result.json
-    {
-      "predicted_label": 0,
-      "images": 3,
-      "records": [
-        {"f": ".../final_execution_1_set_location.png", "s": 4},
-        {"f": ".../final_execution_2_apply_beds.png",   "s": 4},
-        {"f": ".../final_execution_3_apply_price.png",  "s": 2}
-      ]
-    }
-    ```
-    The exit code and `predicted_label` are your PASS/FAIL signal. Only declare
-    `<done>true</done>` after the tool exits 0 (`predicted_label == 1`).
     
     ## Completion Gate
     Set `<done>true</done>` only if all of the following are true:
@@ -322,10 +292,9 @@ agent:
 iterative:
   max_rounds: 10
   judge_mode: tool
-  judge_model: "o4-mini"
+  judge_model: "gpt-5.4"
   # Leave empty to use OPENAI_GATEWAY_API_KEY / PHYAGI_API_KEY env var
   judge_gateway_endpoint: "http://gateway.phyagi.net/api/responses"
-  judge_score_threshold: 3
 
   # ------------------------------------------------------------------
   # Round 1 instance template
@@ -395,15 +364,15 @@ iterative:
        ```
        Each critical point must be independently verifiable from a screenshot or log entry.
 
-    2. **Author judge_config.json**: Write `{{ workspace_dir }}/judge_config.json` containing the screenshot list and the four prompts (`image_judge_system_prompt`, `image_judge_user_prompt`, `final_verdict_system_prompt`, `final_verdict_user_prompt`) for `miniswewebagent.tools.self_reflection`. Embed the full critical-point list from `plan.md` and the `final_script_log.txt` content into the user prompts. See the **self_reflection Tool** section in the system prompt for the required schema and prompt contents.
+    2. **Author judge_config.json (once, this round only)**: Write `{{ workspace_dir }}/judge_config.json` containing only the four prompts (`image_judge_system_prompt`, `image_judge_user_prompt`, `final_verdict_system_prompt`, `final_verdict_user_prompt`) for `miniswewebagent.tools.self_reflection`. Embed the full critical-point list from `plan.md` and the task description into the user prompts, but keep the prompts generic — this file is reused verbatim for every later round, so do NOT hard-code a specific run id, screenshot filename, or `final_script_log.txt` content. 
 
     3. **Exploration**: Inspect `task.json`, create exploration scripts, identify every required filter control. Use `image_qa` during exploration to verify UI state.
 
     4. **Final script**: Write `final_script.py`, run it once in a new `final_runs/run_<id>/` folder. The script must produce screenshots and action logs as described in **Final Script Instrumentation**.
 
-    5. **Run self_reflection**: Execute `python -m miniswewebagent.tools.self_reflection --config judge_config.json --workspace-dir "{{ workspace_dir }}" --output final_runs/run_<id>/judge_result.json`. If the tool exits non-zero or `predicted_label != 1`, fix the script and re-run in a new `final_runs/run_<id+1>/` folder. Update `judge_config.json` only if the prompts themselves need to change.
+    5. **Run self_reflection**: Execute `python -m miniswewebagent.tools.self_reflection --config judge_config.json --workspace-dir "{{ workspace_dir }}" --output final_runs/run_<id>/judge_result.json`. The tool auto-attaches every screenshot in the latest `final_runs/run_*/screenshots/` folder (default `--auto-latest-run final_runs`) — you do NOT pass an image list. If the tool exits non-zero or `predicted_label != 1`, fix the script and re-run in a new `final_runs/run_<id+1>/` folder. Do NOT edit `judge_config.json` between rounds.
 
-    6. **Declare done**: Set `<done>true</done>` ONLY after `self_reflection` exits 0 and `judge_result.json` reports `"predicted_label": 1`.
+    6. **Declare done**: Set `<done>true</done>` ONLY after `self_reflection` exits 0 and `judge_result.json` reports `"predicted_label": 1`. The iterative runner reads that same `judge_result.json` as the round's verdict.
 
     ## Final Script Instrumentation
 
@@ -521,7 +490,7 @@ iterative:
 
     1. Review `plan.md` and the previous round artifacts to understand what failed.
     2. Explore the site again only if needed to fix the specific issue the judge identified.
-    3. Update `judge_config.json` (the four prompts for `self_reflection`) only if the previous prompts were incorrect or incomplete.
+    3. Do NOT rewrite `{{ workspace_dir }}/judge_config.json`. The four judge prompts were authored once in round 1 and are reused verbatim every round. Touch the file only if a prompt itself is objectively wrong (e.g. missing a critical point that was also missing from `plan.md`).
     4. Rewrite `final_script.py` to address every judge concern.
     5. Run the script **once** in a new `final_runs/run_<id>/` folder.
     6. Run `python -m miniswewebagent.tools.self_reflection --config judge_config.json --workspace-dir "{{ workspace_dir }}" --output final_runs/run_<id>/judge_result.json` against the new run. Only set `<done>true</done>` after it exits 0 with `predicted_label == 1`.

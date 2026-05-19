@@ -63,7 +63,7 @@ import httpx
 
 from miniswewebagent.models.phyagi_model import _extract_response_text, text_part
 
-DEFAULT_MODEL = "gpt-5.4"
+DEFAULT_MODEL = "gpt-4.1"
 DEFAULT_ENDPOINT = "http://gateway.phyagi.net/api/responses"
 DEFAULT_IMAGE_PARSE_MAX_RETRIES = 3
 
@@ -323,22 +323,49 @@ def _call_gateway(
     retry_base_delay: float,
     tag: str,
 ) -> str:
-    payload: dict[str, Any] = {
-        "model": model,
-        "input": [
-            {
-                "type": "message",
-                "role": "developer",
-                "content": [text_part(system_prompt)],
-            },
-            {
-                "type": "message",
-                "role": "user",
-                "content": user_content,
-            },
-        ],
-        "max_output_tokens": max_new_tokens,
-    }
+    is_chat_completions = "/chat/completions" in endpoint
+
+    if is_chat_completions:
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": system_prompt},
+        ]
+        # Convert user_content list of parts into multimodal content array
+        chat_content: list[dict[str, Any]] = []
+        for part in user_content:
+            ptype = part.get("type")
+            if ptype == "input_text":
+                chat_content.append({"type": "text", "text": part.get("text", "")})
+            elif ptype == "input_image":
+                chat_content.append({"type": "image_url", "image_url": {"url": part.get("image_url", "")}})
+            else:
+                # Fallback: if there is text, emit text; if image_url, emit image_url
+                if isinstance(part.get("text"), str):
+                    chat_content.append({"type": "text", "text": part["text"]})
+                elif isinstance(part.get("image_url"), str):
+                    chat_content.append({"type": "image_url", "image_url": {"url": part["image_url"]}})
+        messages.append({"role": "user", "content": chat_content})
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "max_completion_tokens": max_new_tokens,
+        }
+    else:
+        payload = {
+            "model": model,
+            "input": [
+                {
+                    "type": "message",
+                    "role": "system",
+                    "content": [text_part(system_prompt)],
+                },
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": user_content,
+                },
+            ],
+            "max_output_tokens": max_new_tokens,
+        }
 
     with httpx.Client(timeout=timeout_seconds) as client:
         response = _post_with_retry(
@@ -354,6 +381,14 @@ def _call_gateway(
             tag=tag,
         )
         response_payload = response.json()
+
+    if is_chat_completions:
+        choices = response_payload.get("choices", [])
+        if choices:
+            content = choices[0].get("message", {}).get("content", "")
+        else:
+            content = ""
+        return content.strip()
 
     return _extract_response_text(response_payload).strip()
 

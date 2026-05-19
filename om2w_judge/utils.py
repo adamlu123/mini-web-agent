@@ -168,7 +168,7 @@ class OpenaiEngine:
     @backoff.on_exception(
         backoff.expo,
         (APIError, RateLimitError, APIConnectionError, httpx.HTTPError),
-        max_tries=3,
+        max_tries=6,
         on_backoff=log_error,
     )
     def generate(self, messages, max_new_tokens=1024, temperature=0, model=None, **kwargs):

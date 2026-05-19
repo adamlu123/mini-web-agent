@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import copy
 import json
+import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +40,11 @@ class AgentConfig(BaseModel):
     attach_instance_template_after_observation: bool = False
     attach_plan_md_after_observation: bool = False
     require_self_reflection_success: bool = False
+    judge_mode: str = "tool"
+    judge_upstream_src: str = "/home/luyadong/sandbox/Online-Mind2Web/src"
+    judge_model: str = "o4-mini"
+    judge_gateway_endpoint: str = ""
+    judge_score_threshold: int = 3
     summary_every_n_steps: int = 0
     summary_user_prompt: str = DEFAULT_SUMMARY_USER_PROMPT
     output_path: Path | None = None
@@ -74,6 +82,101 @@ def _markdown_code_fence_language(*, bash_command_text: str, python_code_text: s
     if python_code_text:
         return "python"
     return ""
+
+
+# ---------------------------------------------------------------------------
+# om2w judge helpers (upstream WebJudge_Online_Mind2Web_eval, used when
+# AgentConfig.judge_mode == "om2w"). Mirrors scripts/eval_with_original_om2w.py.
+# ---------------------------------------------------------------------------
+
+_OM2W_STEP_ACTION_RE = re.compile(r"^\s*step\s+\d+\s+action\s*:\s*.+\s*$", re.IGNORECASE)
+_OM2W_SHOT_RE = re.compile(r"^final_execution_(\d+).*\.png$", re.IGNORECASE)
+
+
+def _om2w_load_actions(log_path: Path) -> list[str]:
+    if not log_path.exists():
+        return []
+    raw = log_path.read_text(encoding="utf-8", errors="replace").replace("\\n", "\n")
+    out: list[str] = []
+    for line in raw.splitlines():
+        s = line.strip()
+        if s:
+            out.append(s)
+    return out
+
+
+def _om2w_load_screenshots(shots_dir: Path) -> list[Path]:
+    if not shots_dir.is_dir():
+        return []
+    keyed: list[tuple[int, Path]] = []
+    fallback: list[Path] = []
+    for p in shots_dir.iterdir():
+        if not p.is_file() or p.suffix.lower() != ".png":
+            continue
+        m = _OM2W_SHOT_RE.match(p.name)
+        if m:
+            keyed.append((int(m.group(1)), p))
+        else:
+            fallback.append(p)
+    if keyed:
+        keyed.sort(key=lambda t: (t[0], t[1].name))
+        return [p for _, p in keyed]
+    fallback.sort(key=lambda p: p.name)
+    return fallback
+
+
+def _om2w_read_cached_result(result_path: Path) -> dict[str, Any] | None:
+    if not result_path.is_file():
+        return None
+    try:
+        return json.loads(result_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _om2w_run_eval(
+    *,
+    task: str,
+    actions: list[str],
+    screenshot_paths: list[Path],
+    oracle_judge_model: str,
+    judge_gateway_endpoint: str,
+    score_threshold: int,
+    upstream_src: str,
+) -> tuple[Any, str, list[dict[str, Any]], str]:
+    """Run upstream WebJudge_Online_Mind2Web_eval on one run's artifacts.
+
+    Returns ``(predicted_label, response_text, image_judge_record, key_points)``.
+    ``predicted_label`` is whatever ``extract_predication`` returns (typically 1,
+    0, or None for unparseable).
+    """
+    upstream_path = Path(upstream_src)
+    if upstream_path.is_dir() and str(upstream_path) not in sys.path:
+        sys.path.insert(0, str(upstream_path))
+
+    repo_root = Path(__file__).resolve().parent.parent.parent.parent
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+
+    from methods import webjudge_online_mind2web as upstream_webjudge  # type: ignore[import]
+    from om2w_judge.utils import OpenaiEngine, extract_predication  # type: ignore[import]
+
+    model = OpenaiEngine(
+        model=oracle_judge_model,
+        endpoint_target_uri=judge_gateway_endpoint or "",
+    )
+    messages, _text, _system_msg, record, key_points = asyncio.run(
+        upstream_webjudge.WebJudge_Online_Mind2Web_eval(
+            task,
+            list(actions),
+            [str(p) for p in screenshot_paths],
+            model,
+            score_threshold,
+        )
+    )
+    response_text = model.generate(messages, max_new_tokens=8192)[0]
+    predicted_label = extract_predication(response_text, "WebJudge_Online_Mind2Web_eval")
+    return predicted_label, response_text, list(record or []), str(key_points or "")
 
 
 class DefaultAgent:
@@ -196,9 +299,16 @@ class DefaultAgent:
         return self.model.format_message(role="user", content=f"Current plan.md:\n\n{plan_text}")
 
     def _self_reflection_gate_error(self) -> str | None:
-        """Return an error string if done=true should be blocked pending self_reflection success."""
+        """Return an error string if done=true should be blocked pending judge success."""
         if not self.config.require_self_reflection_success:
             return None
+        mode = (self.config.judge_mode or "tool").strip().lower()
+        if mode == "om2w":
+            return self._om2w_gate_error()
+        return self._tool_gate_error()
+
+    def _tool_gate_error(self) -> str | None:
+        """Require final_runs/run_<latest>/judge_result.json with predicted_label == 1."""
         workspace_dir = self.get_template_vars().get("workspace_dir")
         if not workspace_dir:
             return (
@@ -259,6 +369,118 @@ class DefaultAgent:
             )
         return None
 
+    def _om2w_gate_error(self) -> str | None:
+        """Run the upstream WebJudge_Online_Mind2Web_eval on the latest run and gate on it.
+
+        Mirrors scripts/eval_with_original_om2w.py: reads last_actions from
+        final_script_log.txt (matching ``step <N> action: ...``), screenshots from
+        ``screenshots/final_execution_<N>*.png``, then calls the upstream judge.
+        The verdict is cached in ``final_runs/run_<id>/om2w_judge_result.json``.
+        """
+        workspace_dir = self.get_template_vars().get("workspace_dir")
+        if not workspace_dir:
+            return (
+                "Completion blocked: judge_mode=om2w but no workspace_dir available. "
+                "Cannot locate final_runs/run_<id>/ artifacts."
+            )
+        final_runs_dir = Path(workspace_dir) / "final_runs"
+        if not final_runs_dir.is_dir():
+            return (
+                "Completion blocked: no final_runs/ directory exists yet. Run final_script.py "
+                "inside final_runs/run_<id>/ before setting done=true (judge_mode=om2w)."
+            )
+        run_dirs: list[tuple[int, Path]] = []
+        for entry in final_runs_dir.iterdir():
+            if not entry.is_dir() or not entry.name.startswith("run_"):
+                continue
+            try:
+                run_id = int(entry.name[len("run_"):])
+            except ValueError:
+                continue
+            run_dirs.append((run_id, entry))
+        if not run_dirs:
+            return (
+                "Completion blocked: final_runs/ contains no run_<id>/ folders. Create "
+                "final_runs/run_<id>/, execute final_script.py there, then retry done=true."
+            )
+        run_dirs.sort(key=lambda item: item[0])
+        latest_run_id, latest_run_dir = run_dirs[-1]
+
+        result_path = latest_run_dir / "om2w_judge_result.json"
+        cached = _om2w_read_cached_result(result_path)
+        if cached is not None:
+            predicted = cached.get("predicted_label")
+            if predicted == 1:
+                return None
+            return (
+                f"Completion blocked: om2w judge reported predicted_label={predicted!r} for "
+                f"run_{latest_run_id}. See {result_path}. Diagnose the failure, fix "
+                f"final_script.py, re-run it in final_runs/run_{latest_run_id + 1}/, and retry "
+                f"done=true."
+            )
+
+        log_path = latest_run_dir / "final_script_log.txt"
+        shots_dir = latest_run_dir / "screenshots"
+        actions = _om2w_load_actions(log_path)
+        screenshots = _om2w_load_screenshots(shots_dir)
+        if not screenshots:
+            return (
+                f"Completion blocked: no screenshots found under {shots_dir}. "
+                "final_script.py must save final_execution_<N>*.png screenshots before "
+                "done=true with judge_mode=om2w."
+            )
+
+        task = str(
+            self.extra_template_vars.get("task")
+            or self.get_template_vars().get("task")
+            or ""
+        )
+        if not task:
+            return (
+                "Completion blocked: om2w judge requires the task description but none was "
+                "found in template vars."
+            )
+
+        try:
+            predicted_label, response_text, record, key_points = _om2w_run_eval(
+                task=task,
+                actions=actions,
+                screenshot_paths=screenshots,
+                oracle_judge_model=self.config.judge_model,
+                judge_gateway_endpoint=self.config.judge_gateway_endpoint,
+                score_threshold=self.config.judge_score_threshold,
+                upstream_src=self.config.judge_upstream_src,
+            )
+        except Exception as exc:  # noqa: BLE001 — surface error to the agent transcript
+            return (
+                f"Completion blocked: om2w judge failed to run ({exc!r}). Fix the underlying "
+                "issue (missing credentials, import error, etc.) and retry done=true."
+            )
+
+        payload = {
+            "predicted_label": predicted_label,
+            "response": response_text,
+            "key_points": key_points,
+            "image_judge_record": record,
+            "action_history": actions,
+            "screenshots": [str(p) for p in screenshots],
+            "oracle_judge_model": self.config.judge_model,
+            "mode": "WebJudge_Online_Mind2Web_eval",
+        }
+        try:
+            result_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        except OSError:
+            pass
+
+        if predicted_label == 1:
+            return None
+        return (
+            f"Completion blocked: om2w judge reported predicted_label={predicted_label!r} for "
+            f"run_{latest_run_id}. See {result_path} for the full response and per-image "
+            f"reasonings. Diagnose, fix final_script.py, re-run it in "
+            f"final_runs/run_{latest_run_id + 1}/, and retry done=true."
+        )
+
     def add_messages(self, *messages: dict[str, Any]) -> list[dict[str, Any]]:
         self.messages.extend(messages)
         return list(messages)
@@ -285,14 +507,18 @@ class DefaultAgent:
             response = self.model.query(summary_messages)
         except Exception:  # noqa: BLE001 - never fail the run due to compaction
             return
+        # Count the compaction LLM call as one step toward api_calls / step_limit.
+        self.n_calls += 1
         summary_text = (response.get("content") or "").strip()
         if not summary_text:
             extra = response.get("extra", {})
             summary_text = (extra.get("final_response") or "").strip() or "(empty summary)"
+        original_task = str(self.extra_template_vars.get("task") or "").strip()
         summary_message = self.model.format_message(
             role="user",
             content=(
                 "## Compacted History Summary\n"
+                f"Original task: {original_task}\n"
                 f"(context was compacted after step {self.n_calls}; earlier turns have been replaced "
                 "by the summary below)\n\n"
                 f"{summary_text}\n\n## End of Compacted Summary"
