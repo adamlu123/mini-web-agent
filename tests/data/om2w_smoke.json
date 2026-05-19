@@ -1,0 +1,11 @@
+{
+  "tasks": [
+    {
+      "id": "smoke-001",
+      "task": "Open example.com and verify the title contains 'Example'.",
+      "website_url": "https://example.com",
+      "level": "easy",
+      "reference_length": 1
+    }
+  ]
+}
