@@ -101,7 +101,36 @@ class WebAgentGenerator(TerminalAgentGenerator):
         env_overrides = dict(getattr(generator_cfg, "env_overrides", {}) or {})
         if "workspace_root" in env_overrides:
             env_overrides["workspace_root"] = Path(env_overrides["workspace_root"])
+        # Pull the policy's HTTP endpoint off SkyRL's inference client so
+        # tools that need to call the current policy (image_qa,
+        # self_reflection) can route through it.
+        self._policy_endpoint_url, self._policy_model_name = self._resolve_policy_endpoint(
+            inference_engine_client, generator_cfg
+        )
+        if self._policy_endpoint_url and "policy_endpoint_url" not in env_overrides:
+            env_overrides["policy_endpoint_url"] = self._policy_endpoint_url
+        if self._policy_model_name and "policy_model_name" not in env_overrides:
+            env_overrides["policy_model_name"] = self._policy_model_name
         self._env_overrides = env_overrides
+
+    @staticmethod
+    def _resolve_policy_endpoint(inference_engine_client, generator_cfg) -> tuple[str, str]:
+        infer_cfg = getattr(generator_cfg, "inference_engine", None)
+        enable_http = bool(getattr(infer_cfg, "enable_http_endpoint", False)) if infer_cfg else False
+        host = str(getattr(infer_cfg, "http_endpoint_host", "127.0.0.1") or "127.0.0.1")
+        port = int(getattr(infer_cfg, "http_endpoint_port", 8000) or 8000)
+        # Some HTTP endpoint impls expose attributes on the client directly.
+        host = (
+            getattr(inference_engine_client, "http_endpoint_host", host) or host
+        )
+        port = int(getattr(inference_engine_client, "http_endpoint_port", port) or port)
+        if not enable_http:
+            return "", ""
+        url = f"http://{host}:{port}/chat/completions"
+        # Best-effort: scrape the model id from the engine init kwargs if set.
+        engine_kwargs = getattr(infer_cfg, "engine_init_kwargs", {}) or {}
+        model_name = str(engine_kwargs.get("model") or engine_kwargs.get("tokenizer") or "")
+        return url, model_name
 
     async def generate(self, input_batch, disable_tqdm: bool = False):
         # Re-implement the outer scaffolding because the parent constructs a
@@ -191,7 +220,7 @@ class WebAgentGenerator(TerminalAgentGenerator):
             self._mark_failure(interaction, stop_reason, exc)
 
         # Override the in-env verifier with the modular reward function.
-        reward_result = await self._compute_reward(environment, env_extra, interaction)
+        reward_result = await self._score_via_reward_fn(environment, env_extra, interaction)
         interaction.reward = reward_result.reward
         interaction.correct = reward_result.correct
         if reward_result.error:
@@ -229,7 +258,7 @@ class WebAgentGenerator(TerminalAgentGenerator):
             metadata=dict(interaction.metadata),
         )
 
-    async def _compute_reward(
+    async def _score_via_reward_fn(
         self,
         environment: WebAgentEnvironment | None,
         env_extra: dict[str, Any],

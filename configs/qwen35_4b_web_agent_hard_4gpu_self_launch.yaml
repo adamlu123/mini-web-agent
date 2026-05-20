@@ -1,0 +1,150 @@
+# Web-agent RL on Qwen3.5-4B over om2w *hard* tasks, scaled to 4 GPUs,
+# using the "self_launch_persistent_browser" prompt mode where the agent orchestrates
+# Browserbase sessions itself (one persistent + on-demand exploration).
+#
+# Identical to configs/qwen35_4b_web_agent_hard_4gpu.yaml except
+# generator.prompt_mode = self_launch_persistent_browser.
+
+data:
+  train_data:
+    - name: web_agent_om2w_hard_train
+      path: ${oc.env:ECHO_RL_DATA,/home/luyadong/sandbox/echo-rl/.claude/worktrees/web-agent-rl/data/web_agent}/om2w_hard_train.parquet
+  val_data:
+    - name: web_agent_om2w_hard_val
+      path: ${oc.env:ECHO_RL_DATA,/home/luyadong/sandbox/echo-rl/.claude/worktrees/web-agent-rl/data/web_agent}/om2w_hard_val.parquet
+
+tokenizer_path: Qwen/Qwen3.5-4B
+chat_template_path: echo_rl/terminal_agent/chat_templates/qwen3_xml_tool_calling.jinja
+
+trainer:
+  placement:
+    colocate_all: true
+    colocate_policy_ref: true
+    policy_num_nodes: 1
+    policy_num_gpus_per_node: 4
+    ref_num_nodes: 1
+    ref_num_gpus_per_node: 4
+  policy:
+    model:
+      path: Qwen/Qwen3.5-4B
+    optimizer_config:
+      lr: 1.0e-6
+      adam_betas: [0.9, 0.999]
+      weight_decay: 0.01
+      max_grad_norm: 0.2
+      scheduler: constant_with_warmup
+      num_warmup_steps: 20
+  algorithm:
+    max_seq_len: 34096
+    use_kl_loss: false
+    use_kl_in_reward: false
+    kl_loss_coef: 0.0
+    eps_clip_low: 0.2
+    eps_clip_high: 0.2
+    advantage_batch_normalize: false
+    loss_reduction: sequence_mean
+    world_model_coeff: 0.0
+    world_loss_normalization: full_observation_tokens
+  epochs: 2
+  update_epochs_per_batch: 1
+  use_sample_packing: false
+  # See qwen35_4b_web_agent_hard_4gpu.yaml — flash-attn 2.8.1 hits an
+  # illegal memory access on Qwen3.5-4B's varlen path; use sdpa instead.
+  flash_attn: false
+  max_prompt_length: 2048
+  train_batch_size: 16
+  policy_mini_batch_size: 16
+  micro_train_batch_size_per_gpu: 1
+  micro_forward_batch_size_per_gpu: 1
+  eval_batch_size: 16
+  eval_before_train: false
+  eval_interval: 20
+  ckpt_interval: 4
+  max_ckpts_to_keep: 2
+  hf_save_interval: -1
+  ckpt_path: ${oc.env:OUTPUT_DIR}/ckpts
+  export_path: ${oc.env:OUTPUT_DIR}/exports
+  log_path: ${oc.env:OUTPUT_DIR}/skyrl_logs
+  logger: console
+  project_name: world_model
+  run_name: web_agent_qwen35_4b_hard_persistent
+
+generator:
+  n_samples_per_prompt: 16
+  eval_n_samples_per_prompt: 8
+  step_wise_trajectories: false
+  parser_name: qwen35
+  command_selection: first
+  max_turns: 16
+  max_context_tokens: 16384
+  max_tokens_per_generation: 2048
+  max_terminal_output_chars: 50000
+  terminal_output_truncation: start
+  add_format_warn: true
+  world_loss_target: env_only
+  thinking_handling: keep_all
+  verifier_timeout: 120.0
+  length_penalty_coef: 0.0
+  length_penalty_threshold: 20000
+  correct_threshold: 0.5
+  max_total_tokens: 34096
+  docker_memory_mb: 1024
+  docker_cpus: 1
+  base_temp_dir: /tmp/web_agent
+  agent_max_concurrency: 32
+  agent_timeout: 1200.0
+  max_concurrent_builds: 32
+  max_build_retries: 3
+  dataset_num_workers: 4
+  dataset_max_rows: null
+
+  # >>> Mode switch <<<
+  prompt_mode: self_launch_persistent_browser
+
+  reward:
+    name: osw_judge
+    judge_model: o4-mini
+    judge_gateway_endpoint: ${oc.env:OPENAI_GATEWAY_ENDPOINT,http://gateway.phyagi.net/api/responses}
+    score_threshold: 3
+    mini_web_agent_root: /home/luyadong/sandbox/mini-web-agent
+  env_overrides:
+    headless: true
+    nav_timeout_ms: 60000
+    op_timeout_ms: 20000
+    max_snapshot_chars: 6000
+    workspace_root: /tmp/web_agent_rollouts
+    use_browserbase: true
+    browserbase_api_key: ${oc.env:BROWSERBASE_API_KEY,""}
+    browserbase_project_id: ${oc.env:BROWSERBASE_PROJECT_ID,""}
+  stub_env: false
+
+  sampling_params:
+    max_generate_length: 2048
+    temperature: 0.8
+    logprobs: 0
+  eval_sampling_params:
+    max_generate_length: 2048
+    temperature: 0.6
+    logprobs: 0
+  inference_engine:
+    backend: vllm
+    run_engines_locally: true
+    num_engines: 4
+    weight_sync_backend: nccl
+    tensor_parallel_size: 1
+    async_engine: true
+    enforce_eager: false
+    enable_prefix_caching: true
+    enable_chunked_prefill: true
+    gpu_memory_utilization: 0.8
+    max_num_batched_tokens: 262144
+    # Expose an OpenAI-compatible /chat/completions endpoint so the agent's
+    # in-rollout web_agent_image_qa / web_agent_self_reflection CLIs can
+    # call the current policy. Host/port are picked up by WebAgentGenerator
+    # and exported to subprocesses as $WEB_AGENT_POLICY_URL.
+    enable_http_endpoint: true
+    http_endpoint_host: 127.0.0.1
+    http_endpoint_port: 8000
+    engine_init_kwargs:
+      swap_space: 4
+      model: Qwen/Qwen3.5-4B

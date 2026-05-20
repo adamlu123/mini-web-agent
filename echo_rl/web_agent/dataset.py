@@ -96,6 +96,7 @@ class WebAgentTaskDataset:
         max_rows: int | None = None,
         max_rows_per_source: int | None = None,
         add_instruction_prefix: bool = True,
+        prompt_mode: str = "default",
     ) -> None:
         self.data_files = data_files
         self.tokenizer = tokenizer
@@ -108,6 +109,7 @@ class WebAgentTaskDataset:
         self.max_rows = max_rows
         self.max_rows_per_source = max_rows_per_source
         self.add_instruction_prefix = add_instruction_prefix
+        self.prompt_mode = prompt_mode
         self._read_files_and_tokenize()
 
     def _normalize_source(self, source: str | dict[str, Any]) -> tuple[str, str]:
@@ -136,6 +138,7 @@ class WebAgentTaskDataset:
             parser_name=self.parser_name,
             tokenizer=self.tokenizer,
             add_instruction_prefix=self.add_instruction_prefix,
+            mode=self.prompt_mode,
         )
 
     def _read_files_and_tokenize(self) -> None:

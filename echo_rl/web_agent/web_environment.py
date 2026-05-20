@@ -164,6 +164,12 @@ class WebAgentEnvironmentConfig:
     use_browserbase: bool = False
     browserbase_api_key: str = ""
     browserbase_project_id: str = ""
+    # OpenAI-compatible HTTP endpoint of the *current* policy (SkyRL's
+    # InferenceEngineClient HTTP server). When set, the env exports it
+    # to subprocesses as $WEB_AGENT_POLICY_URL so the policy-backed
+    # image_qa / self_reflection CLIs can route through it.
+    policy_endpoint_url: str = ""
+    policy_model_name: str = ""
     stub: bool = False
 
 
@@ -181,6 +187,8 @@ class WebAgentEnvironment:
         self._steps: list[_StepRecord] = []
         self._workspace: Path | None = None
         self._screenshots_dir: Path | None = None
+        self._persistent_connect_url: str = ""
+        self._persistent_session_id: str = ""
 
     # ------------------------------------------------------------------
     # public API mirrors HarborEnvironment
@@ -197,6 +205,21 @@ class WebAgentEnvironment:
         if self.cfg.stub:
             self._page = _StubPage(self.cfg.start_url)
             _attach_stub_locator(self._page)
+            # Stub a persistent-session descriptor so prompt_mode tests don't
+            # have to special-case the offline path.
+            self._persistent_connect_url = "wss://stub.local/cdp"
+            self._persistent_session_id = "stub-session-0001"
+            (self._workspace / ".persistent_session.json").write_text(
+                json.dumps(
+                    {
+                        "id": self._persistent_session_id,
+                        "connectUrl": self._persistent_connect_url,
+                        "projectId": "stub-project",
+                        "keep_alive": True,
+                    },
+                    indent=2,
+                )
+            )
         else:
             await self._start_playwright()
             if self.cfg.start_url:
@@ -215,10 +238,18 @@ class WebAgentEnvironment:
             return ExecResult(stdout="", stderr="empty command", return_code=2)
 
         try:
-            if command.startswith("web "):
-                result = await asyncio.wait_for(self._handle_web(command[4:].strip()), timeout=timeout)
-            elif command == "web":
-                result = ExecResult(stdout=self._web_help(), return_code=0)
+            if command == "web" or command.startswith("web "):
+                # The `web` CLI has been removed. Force the agent to drive the
+                # browser through `python -c '...'` (with `page`, `context`,
+                # `browser`, `task` already in scope) or plain shell tools.
+                result = ExecResult(
+                    stderr=(
+                        "Command 'web' is not available. Drive the browser via "
+                        "`python -c '<async code>'` (Playwright `page`, `context`, "
+                        "`browser`, `task` are already in scope; `await` is allowed)."
+                    ),
+                    return_code=127,
+                )
             elif command.startswith("python ") or command.startswith("python3 "):
                 result = await asyncio.wait_for(self._handle_python_cli(command), timeout=timeout)
             else:
@@ -258,9 +289,63 @@ class WebAgentEnvironment:
     async def cleanup(self) -> None:
         if not self.cfg.stub:
             await self._stop_playwright()
+        # Browserbase sessions stay alive after CDP disconnect (we set
+        # keep_alive=True at create time). Explicitly REQUEST_RELEASE the
+        # persistent session and any extra sessions the agent spawned
+        # inside this rollout's workspace, so the project's concurrency
+        # quota gets returned promptly instead of waiting for the
+        # 20-minute timeout. Internally self-guards on creds/use_browserbase
+        # so it's a no-op in stub mode.
+        await self._release_rollout_browserbase_sessions()
         self._is_setup = False
         # Workspace deliberately left on disk so a judge / human reviewer can
         # inspect screenshots and step logs afterwards.
+
+    async def _release_rollout_browserbase_sessions(self) -> None:
+        api_key = self.cfg.browserbase_api_key or ""
+        project_id = self.cfg.browserbase_project_id or ""
+        if not (self.cfg.use_browserbase and api_key and project_id):
+            return
+        session_ids: list[tuple[str, Path | None]] = []
+        if self._persistent_session_id:
+            session_ids.append((self._persistent_session_id, None))
+        if self._workspace is not None and self._workspace.exists():
+            # Pick up any *.json files in the workspace that look like a
+            # Browserbase session descriptor (.persistent_session.json,
+            # .explore_session.json, etc. — the prompt suggests these names
+            # but we accept any json with {id, connectUrl}).
+            seen = {sid for sid, _ in session_ids}
+            for path in sorted(self._workspace.glob("*session*.json")):
+                try:
+                    payload = json.loads(path.read_text())
+                except Exception:
+                    continue
+                sid = str(payload.get("id") or "").strip()
+                connect_url = str(payload.get("connectUrl") or "").strip()
+                if sid and connect_url and sid not in seen:
+                    session_ids.append((sid, path))
+                    seen.add(sid)
+        if not session_ids:
+            return
+        import httpx
+
+        async with httpx.AsyncClient(timeout=15) as client:
+            for sid, _ in session_ids:
+                try:
+                    resp = await client.post(
+                        f"https://api.browserbase.com/v1/sessions/{sid}",
+                        headers={"x-bb-api-key": api_key},
+                        json={"projectId": project_id, "status": "REQUEST_RELEASE"},
+                    )
+                    if resp.status_code >= 400:
+                        logger.warning(
+                            "browserbase release failed for %s: %s %s",
+                            sid, resp.status_code, resp.text[:200],
+                        )
+                except Exception as exc:
+                    logger.warning("browserbase release error for %s: %s", sid, exc)
+        self._persistent_session_id = ""
+        self._persistent_connect_url = ""
 
     # ------------------------------------------------------------------
     # rollout-summary helpers (used by reward + smoke test)
@@ -472,14 +557,29 @@ class WebAgentEnvironment:
         from contextlib import redirect_stdout, redirect_stderr
 
         out_buf, err_buf = io.StringIO(), io.StringIO()
+        import os as _os
+
+        ws = str(self._workspace) if self._workspace is not None else ""
+        # Expose the per-rollout workspace via env so heredoc / multi-line
+        # snippets that `os.environ['WEB_AGENT_WORKSPACE']` can find the
+        # `.persistent_session.json` descriptor.
+        _os.environ["WEB_AGENT_WORKSPACE"] = ws
+        if self.cfg.policy_endpoint_url:
+            _os.environ["WEB_AGENT_POLICY_URL"] = self.cfg.policy_endpoint_url
+        if self.cfg.policy_model_name:
+            _os.environ["WEB_AGENT_POLICY_MODEL"] = self.cfg.policy_model_name
         globals_dict: dict[str, Any] = {
             "asyncio": asyncio,
             "json": json,
+            "os": _os,
             "page": self._page,
             "context": self._context,
             "browser": self._browser,
             "task": self.cfg.task,
             "start_url": self.cfg.start_url,
+            "workspace": ws,
+            "persistent_connect_url": self._persistent_connect_url,
+            "persistent_session_id": self._persistent_session_id,
         }
         locals_dict: dict[str, Any] = {}
         wrapper = "async def __web_step__():\n" + textwrap.indent(code, "    ")
@@ -498,11 +598,22 @@ class WebAgentEnvironment:
         return ExecResult(stdout=out_buf.getvalue(), stderr=err_buf.getvalue(), return_code=0)
 
     async def _handle_shell(self, command: str, timeout: float = 30.0) -> ExecResult:
+        import os as _os
+
+        env = _os.environ.copy()
+        env["WEB_AGENT_WORKSPACE"] = str(self.workspace)
+        env["WEB_AGENT_PERSISTENT_CONNECT_URL"] = self._persistent_connect_url
+        env["WEB_AGENT_PERSISTENT_SESSION_ID"] = self._persistent_session_id
+        if self.cfg.policy_endpoint_url:
+            env["WEB_AGENT_POLICY_URL"] = self.cfg.policy_endpoint_url
+        if self.cfg.policy_model_name:
+            env["WEB_AGENT_POLICY_MODEL"] = self.cfg.policy_model_name
         proc = await asyncio.create_subprocess_shell(
             command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=str(self.workspace),
+            env=env,
         )
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
@@ -610,10 +721,30 @@ class WebAgentEnvironment:
             timeout=1200,
         )
         connect_url = getattr(session, "connect_url", "") or session.get("connectUrl", "")
+        session_id = getattr(session, "id", "") or session.get("id", "")
         browser = await self._playwright.chromium.connect_over_cdp(
             connect_url, timeout=self.cfg.nav_timeout_ms
         )
         context = browser.contexts[0] if browser.contexts else await browser.new_context()
+        self._persistent_connect_url = connect_url
+        self._persistent_session_id = session_id
+        # Drop a session descriptor in the workspace so agents running under
+        # the "self_launch_persistent_browser" prompt mode can re-attach via CDP.
+        if self._workspace is not None:
+            try:
+                (self._workspace / ".persistent_session.json").write_text(
+                    json.dumps(
+                        {
+                            "id": session_id,
+                            "connectUrl": connect_url,
+                            "projectId": project_id,
+                            "keep_alive": True,
+                        },
+                        indent=2,
+                    )
+                )
+            except Exception as exc:
+                logger.warning("failed to write .persistent_session.json: %s", exc)
         return browser, context
 
     async def _stop_playwright(self) -> None:

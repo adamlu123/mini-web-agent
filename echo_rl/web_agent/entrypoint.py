@@ -4,9 +4,11 @@ Mirrors ``echo_rl.terminal_agent.entrypoint`` but swaps the dataset and
 generator. Reuses ``EchoTerminalAgentSkyRLConfig`` so all SkyRL training
 plumbing (FSDP workers, world-model loss hook, optimizer, schedulers) is
 unchanged.
-"""
 
-from __future__ import annotations
+Note: we intentionally do NOT use ``from __future__ import annotations`` here
+because SkyRL's ``build_nested_dataclass`` reads dataclass field types
+directly and cannot resolve stringified annotations.
+"""
 
 import sys
 from dataclasses import dataclass, field
@@ -37,6 +39,12 @@ class WebAgentGeneratorConfig(TerminalAgentGeneratorConfig):
     reward: dict[str, Any] = field(default_factory=lambda: {"name": "osw_judge"})
     env_overrides: dict[str, Any] = field(default_factory=dict)
     stub_env: bool = False
+    # Selects which system-prompt mode to use from
+    # ``echo_rl.web_agent.prompts._INSTRUCTION_PREFIX_REGISTRY``.
+    # Currently: "default" (single persistent tab pre-injected) or
+    # "self_launch_persistent_browser" (agent orchestrates a persistent
+    # Browserbase session plus on-demand exploration sessions itself).
+    prompt_mode: str = "default"
 
 
 @dataclass
@@ -66,6 +74,7 @@ class WebAgentExp(EchoTerminalAgentExp):
             task_binary_key=self.cfg.generator.task_binary_key,
             num_workers=self.cfg.generator.dataset_num_workers,
             max_rows=self.cfg.generator.dataset_max_rows,
+            prompt_mode=self.cfg.generator.prompt_mode,
         )
         assert len(ds) >= self.cfg.trainer.train_batch_size, (
             f"dataset should be at least as large as train_batch_size "
@@ -87,6 +96,7 @@ class WebAgentExp(EchoTerminalAgentExp):
                 num_workers=self.cfg.generator.dataset_num_workers,
                 max_rows=self.cfg.generator.dataset_max_rows,
                 max_rows_per_source=self.cfg.generator.eval_dataset_max_rows_per_source,
+                prompt_mode=self.cfg.generator.prompt_mode,
             )
         return None
 
