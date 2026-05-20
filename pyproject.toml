@@ -19,6 +19,11 @@ dependencies = [
   "typing_extensions",
 ]
 
+[project.scripts]
+image_qa = "echo_rl.web_agent.tools.image_qa:main"
+self_reflection = "echo_rl.web_agent.tools.self_reflection:main"
+web_agent_policy_chat = "echo_rl.web_agent.tools.policy_chat:main"
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["echo_rl", "echo_rl.*"]

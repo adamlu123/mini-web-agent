@@ -66,9 +66,9 @@ def _ensure_om2w_fixture() -> Path:
 
 
 _SCRIPTED_COMMANDS = [
-    "web goto https://example.com",
-    "web title",
-    "web snapshot 800",
+    "python -c \"await page.goto('https://example.com'); print(page.url)\"",
+    "python -c \"print(await page.title())\"",
+    "python -c \"print((await page.locator('body').aria_snapshot())[:800])\"",
     "echo 'answer: page loaded — title contains Example Domain'",
 ]
 
@@ -120,7 +120,7 @@ async def _async_test_dataset_loads_and_renders_prompt() -> None:
     assert len(ds) == 1
     item = ds[0]
     assert item["env_extras"]["task_meta"]["start_url"].startswith("https://example.com")
-    assert any("web goto" in msg["content"] for msg in item["prompt"])
+    assert any("python -c" in msg["content"] for msg in item["prompt"])
 
 
 async def _async_test_environment_runs_scripted_rollout(tmp_path: Path) -> None:
