@@ -157,6 +157,19 @@ async def _async_main(args: argparse.Namespace) -> int:
     stop_reason = "max_turns"
     final_response = ""
     transcript: list[dict[str, Any]] = []
+    transcript_path = Path(args.workspace_root) / f"transcript_{args.task_id}.json"
+    transcript_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def _flush_transcript() -> None:
+        # Write + fsync after each new entry so we can `cat` / `jq` the
+        # transcript live while the rollout is still running.
+        tmp = transcript_path.with_suffix(transcript_path.suffix + ".tmp")
+        with tmp.open("w") as fh:
+            json.dump(transcript, fh, indent=2, default=str)
+            fh.flush()
+            os.fsync(fh.fileno())
+        tmp.replace(transcript_path)
+
     try:
         for turn in range(args.max_turns):
             print(f"\n[turn {turn + 1}] generating...", flush=True)
@@ -168,6 +181,7 @@ async def _async_main(args: argparse.Namespace) -> int:
 
             messages.append({"role": "assistant", "content": response_text})
             transcript.append({"turn": turn + 1, "role": "assistant", "text": response_text, "gen_sec": gen_sec})
+            _flush_transcript()
 
             warnings, violations = check_format_warnings(
                 response_text, tags=parser.format_tags, parser_name="qwen35"
@@ -180,6 +194,7 @@ async def _async_main(args: argparse.Namespace) -> int:
                 )
                 messages.append({"role": "tool", "content": obs})
                 transcript.append({"turn": turn + 1, "role": "tool", "text": obs})
+                _flush_transcript()
                 continue
 
             if parsed.is_done and not parsed.commands:
@@ -194,6 +209,7 @@ async def _async_main(args: argparse.Namespace) -> int:
                 obs = f"Command rejected: {cmd_obj.error or cmd_obj.name}. Only 'bash' is supported."
                 messages.append({"role": "tool", "content": obs})
                 transcript.append({"turn": turn + 1, "role": "tool", "text": obs})
+                _flush_transcript()
                 continue
 
             cmd_str = cmd_obj.arguments.get("command", "").strip()
@@ -209,6 +225,7 @@ async def _async_main(args: argparse.Namespace) -> int:
             print(f"[turn {turn + 1}] obs preview: {obs_preview!r}", flush=True)
             messages.append({"role": "tool", "content": tool_text})
             transcript.append({"turn": turn + 1, "role": "tool", "text": tool_text, "exit_code": result.return_code})
+            _flush_transcript()
             if parsed.is_done:
                 stop_reason = "done"
                 break
@@ -218,10 +235,8 @@ async def _async_main(args: argparse.Namespace) -> int:
         print(f"\n[env] cleaning up Browserbase session...", flush=True)
         await env.cleanup()
 
-    # Save full transcript for inspection.
-    transcript_path = Path(args.workspace_root) / f"transcript_{args.task_id}.json"
-    transcript_path.parent.mkdir(parents=True, exist_ok=True)
-    transcript_path.write_text(json.dumps(transcript, indent=2, default=str))
+    # Final transcript write (paranoia — should already be on disk).
+    _flush_transcript()
     print(f"[transcript] saved {len(transcript)} entries to {transcript_path}", flush=True)
 
     # Real OSW judge call.
