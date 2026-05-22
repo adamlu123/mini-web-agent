@@ -23,8 +23,8 @@ export PATH="$HOME/.krew/bin:$PATH"
 # Job priority. PRIORITY is just a naming label in JOB_NAME; PRIORITY_CLASS_NAME
 # is the actual k8s PriorityClass used by Volcano for scheduling/preemption.
 # Override per invocation: PRIORITY=p0 PRIORITY_CLASS_NAME=p0 bash ...
-export PRIORITY="${PRIORITY:-high}"
-export PRIORITY_CLASS_NAME="${PRIORITY_CLASS_NAME:-high}"
+export PRIORITY="${PRIORITY:-medium}"
+export PRIORITY_CLASS_NAME="${PRIORITY_CLASS_NAME:-medium}"
 
 bash "$SUBMIT" \
     --upload "$MINI_WEB_AGENT_DIR" "$SKYRL_DIR" \
