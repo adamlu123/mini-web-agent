@@ -439,7 +439,9 @@ FodyWeavers.xsd
 # --exclude-vcs-ignores (used by clusters/lambda submit_job.sh) does NOT
 # honor `dir/` style patterns — leaving the slash here causes a 300MB+
 # wheels payload to get tar'd + kubectl-cp'd on every job submit.
-.claude
+# Claude Code: only ignore the per-user override; keep settings.json and
+# skills/ trackable so the team gets the bonete-submit skill on git pull.
+.claude/settings.local.json
 outputs
 docker/wheels
 *.whl
