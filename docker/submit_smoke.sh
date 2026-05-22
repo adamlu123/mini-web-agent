@@ -74,7 +74,7 @@ print(\"echo_rl       \", echo_rl.__file__)
 print(\"skyrl         \", skyrl.__file__)
 print(\"skyrl_gym     \", skyrl_gym.__file__)
 print(\"skyrl_agent   \", skyrl_agent.__file__)
-print(\"playwright    \", md.version('playwright'))
+print(\"playwright    \", md.version(\"playwright\"))
 print(\"torch         \", torch.__version__, \"cuda?\", torch.cuda.is_available(), \"count\", torch.cuda.device_count())
 print(\"vllm          \", vllm.__version__)
 "
