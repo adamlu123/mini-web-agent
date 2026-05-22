@@ -1,0 +1,9 @@
+# Keep the build context tiny: only ship the dockerfile, frozen requirements,
+# and the prebuilt wheels we COPY in to skip CUDA template compilation
+# (causal-conv1d, flash_attn). Everything else (code, data, checkpoints) is
+# uploaded per-job via submit_job.sh, not baked in.
+*
+!docker/Dockerfile
+!docker/requirements.txt
+!docker/wheels
+!docker/wheels/*.whl
