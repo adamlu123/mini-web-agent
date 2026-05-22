@@ -61,6 +61,8 @@ TRAIN_TIMEOUT_SEC=86400 bash docker/submit_real_train_batch.sh
 
 改 config：`CONFIG=echo_configs/<your-yaml> bash docker/submit_real_train_batch.sh`
 
+改优先级：`PRIORITY=p0 PRIORITY_CLASS_NAME=p0 bash docker/submit_real_train_batch.sh`。脚本默认 `p1`。`PRIORITY` 只是 job 名前缀；`PRIORITY_CLASS_NAME` 是真调度优先级（决定能否抢占低优 job），必须填 cluster 已注册的 PriorityClass。
+
 后续看日志：
 
 ```bash

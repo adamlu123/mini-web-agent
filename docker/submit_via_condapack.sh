@@ -31,6 +31,10 @@ done
 
 export PATH="$HOME/.krew/bin:$PATH"
 
+# Job priority. See submit_real_train_batch.sh for explanation.
+export PRIORITY="${PRIORITY:-p1}"
+export PRIORITY_CLASS_NAME="${PRIORITY_CLASS_NAME:-p1}"
+
 bash "$SUBMIT" \
     --upload "$MINI_WEB_AGENT_DIR" "$SKYRL_DIR" \
     --node 1 --gpu-per-node 1 \
