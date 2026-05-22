@@ -33,8 +33,8 @@ done
 export PATH="$HOME/.krew/bin:$PATH"
 
 # Job priority. See submit_real_train_batch.sh for explanation.
-export PRIORITY="${PRIORITY:-p1}"
-export PRIORITY_CLASS_NAME="${PRIORITY_CLASS_NAME:-p1}"
+export PRIORITY="${PRIORITY:-high}"
+export PRIORITY_CLASS_NAME="${PRIORITY_CLASS_NAME:-high}"
 
 # 1 GPU is enough to verify everything resolves; bump --gpu-per-node to 8 for
 # a real run once this passes.
