@@ -436,3 +436,6 @@ FodyWeavers.xsd
 
 # Web-agent RL training artifacts
 outputs/
+# Local cluster / RL artifacts (added 2026-05-22, rl_yifei branch)
+.claude/
+docker/wheels/

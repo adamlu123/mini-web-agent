@@ -35,7 +35,7 @@ _REPO_ROOT = _THIS_FILE.parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from echo_rl.terminal_agent.parsers import Qwen35XMLParser, check_format_warnings  # noqa: E402
+from echo_rl.terminal_agent.parsers import check_format_warnings, get_parser  # noqa: E402
 from echo_rl.web_agent.prompts import format_web_task_prompt  # noqa: E402
 from echo_rl.web_agent.rewards import build_reward_fn  # noqa: E402
 from echo_rl.web_agent.web_environment import (  # noqa: E402
@@ -48,6 +48,54 @@ def _truncate_obs(text: str, max_chars: int) -> str:
     if len(text) <= max_chars:
         return text
     return text[:max_chars] + f"\n[truncated; original {len(text)} chars]"
+
+
+class VLLMHttpPolicy:
+    """OpenAI-compatible client that hits a remote vLLM server (e.g. Qwen3-VL-4B).
+
+    Same ``generate_turn(messages) -> str`` interface as HFModelPolicy, so
+    nothing else in this script changes when you swap policies.
+    """
+
+    def __init__(
+        self,
+        base_url: str,
+        model: str,
+        tokenizer_path: str | None = None,
+        api_key: str = "dummy",
+        max_new_tokens: int = 1024,
+        temperature: float = 0.6,
+    ) -> None:
+        from openai import OpenAI
+        from transformers import AutoTokenizer
+
+        # The tokenizer is only used by format_web_task_prompt() to render the
+        # system block via apply_chat_template; vLLM itself tokenizes server-side.
+        tok_src = tokenizer_path or model
+        print(f"[policy] loading tokenizer {tok_src} (for prompt formatting only)...", flush=True)
+        self.tokenizer = AutoTokenizer.from_pretrained(tok_src)
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
+        self.client = OpenAI(base_url=base_url.rstrip("/"), api_key=api_key)
+        self.model = model
+        self.max_new_tokens = int(max_new_tokens)
+        self.temperature = float(temperature)
+        print(f"[policy] vLLM endpoint ready: {base_url} model={model}", flush=True)
+
+    def generate_turn(self, messages: list[dict[str, Any]]) -> str:
+        resp = self.client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            max_tokens=self.max_new_tokens,
+            temperature=self.temperature,
+        )
+        text = (resp.choices[0].message.content or "").strip()
+        # Parser expects every turn to open with <think>...</think>. Qwen's
+        # chat template auto-opens it on the HF path; here we prepend if the
+        # model didn't emit it (Qwen3-VL may or may not, depending on version).
+        if not text.lstrip().startswith("<think>"):
+            text = "<think>\n" + text
+        return text.replace("<|im_end|>", "").strip()
 
 
 class HFModelPolicy:
@@ -119,29 +167,64 @@ class HFModelPolicy:
 
 
 async def _async_main(args: argparse.Namespace) -> int:
-    policy = HFModelPolicy(
-        model_path=args.model,
-        device=args.device,
-        dtype=args.dtype,
-        max_new_tokens=args.max_new_tokens,
-        temperature=args.temperature,
-    )
-    parser = Qwen35XMLParser()
+    if args.endpoint:
+        policy = VLLMHttpPolicy(
+            base_url=args.endpoint,
+            model=args.model,
+            tokenizer_path=args.tokenizer or args.model,
+            api_key=args.api_key,
+            max_new_tokens=args.max_new_tokens,
+            temperature=args.temperature,
+        )
+    else:
+        policy = HFModelPolicy(
+            model_path=args.model,
+            device=args.device,
+            dtype=args.dtype,
+            max_new_tokens=args.max_new_tokens,
+            temperature=args.temperature,
+        )
+    parser = get_parser(args.parser)
 
-    # Build the qwen35 system + user prompt the same way the dataset does.
-    base_messages = format_web_task_prompt(
+    # Optional parquet mode: iterate over (task_id, task, start_url) rows and
+    # run each one as a fresh rollout. Without --parquet, fall through to the
+    # single-task CLI path.
+    if args.parquet:
+        return await _run_parquet(policy, parser, args)
+
+    return await _run_one_task(
+        policy=policy,
+        parser=parser,
+        task_id=args.task_id,
         task=args.task,
         start_url=args.start_url,
-        parser_name="qwen35",
+        args=args,
+    )
+
+
+async def _run_one_task(
+    *,
+    policy,
+    parser,
+    task_id: str,
+    task: str,
+    start_url: str,
+    args: argparse.Namespace,
+) -> int:
+    # Build the system + user prompt the same way the dataset does.
+    base_messages = format_web_task_prompt(
+        task=task,
+        start_url=start_url,
+        parser_name=args.parser,
         tokenizer=policy.tokenizer,
         add_instruction_prefix=True,
     )
     messages = list(base_messages)
 
     cfg = WebAgentEnvironmentConfig(
-        task_id=args.task_id,
-        task=args.task,
-        start_url=args.start_url,
+        task_id=task_id,
+        task=task,
+        start_url=start_url,
         workspace_root=Path(args.workspace_root),
         headless=True,
         use_browserbase=True,
@@ -150,7 +233,7 @@ async def _async_main(args: argparse.Namespace) -> int:
         stub=False,
     )
     env = WebAgentEnvironment(cfg)
-    print(f"[env] starting Browserbase session for task {args.task_id!r}...", flush=True)
+    print(f"[env] starting Browserbase session for task {task_id!r}...", flush=True)
     await env.setup()
     print(f"[env] ready; workspace={env.workspace}", flush=True)
 
@@ -184,7 +267,7 @@ async def _async_main(args: argparse.Namespace) -> int:
             _flush_transcript()
 
             warnings, violations = check_format_warnings(
-                response_text, tags=parser.format_tags, parser_name="qwen35"
+                response_text, tags=parser.format_tags, parser_name=args.parser
             )
             parsed = parser.parse_response(response_text)
             if parsed.error and not parsed.is_done:
@@ -240,7 +323,7 @@ async def _async_main(args: argparse.Namespace) -> int:
     print(f"[transcript] saved {len(transcript)} entries to {transcript_path}", flush=True)
 
     # Real OSW judge call.
-    print("\n[judge] scoring trajectory with OSWJudgeReward (o4-mini via phyagi)...", flush=True)
+    print(f"\n[judge] scoring trajectory with OSWJudgeReward ({args.judge_model})...", flush=True)
     reward_fn = build_reward_fn(
         {
             "name": "osw_judge",
@@ -252,16 +335,18 @@ async def _async_main(args: argparse.Namespace) -> int:
         }
     )
     result = await reward_fn.score(
-        task=args.task,
-        start_url=args.start_url,
+        task=task,
+        start_url=start_url,
         actions=env.actions_history(),
         thoughts=[],
         screenshot_paths=env.screenshot_paths(),
         final_response=final_response,
-        extra={"task_id": args.task_id},
+        extra={"task_id": task_id},
     )
 
     summary = {
+        "task_id": task_id,
+        "task": task,
         "stop_reason": stop_reason,
         "actions": env.actions_history(),
         "screenshots": env.screenshot_paths(),
@@ -272,7 +357,55 @@ async def _async_main(args: argparse.Namespace) -> int:
         "judge_response_preview": (result.metadata or {}).get("response", "")[:600],
     }
     print("\n[result]\n" + json.dumps(summary, indent=2, default=str), flush=True)
+    # Persist per-task summary so the parquet loop can aggregate later.
+    summary_path = Path(args.workspace_root) / f"summary_{task_id}.json"
+    summary_path.write_text(json.dumps(summary, indent=2, default=str))
     return 0 if not result.error else 2
+
+
+async def _run_parquet(policy, parser, args: argparse.Namespace) -> int:
+    import pandas as pd
+
+    df = pd.read_parquet(args.parquet)
+    required = {"task_id", "task", "start_url"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"parquet {args.parquet} missing required columns: {missing}")
+    if args.limit and args.limit > 0:
+        df = df.head(args.limit)
+    print(f"[parquet] running {len(df)} task(s) from {args.parquet}", flush=True)
+
+    aggregate: list[dict[str, Any]] = []
+    for i, row in enumerate(df.itertuples(index=False), 1):
+        task_id = str(row.task_id)
+        task = str(row.task)
+        start_url = str(row.start_url)
+        print(f"\n========== [{i}/{len(df)}] task_id={task_id} ==========", flush=True)
+        try:
+            await _run_one_task(
+                policy=policy,
+                parser=parser,
+                task_id=task_id,
+                task=task,
+                start_url=start_url,
+                args=args,
+            )
+        except Exception as exc:
+            print(f"[parquet] task {task_id!r} crashed: {exc!r}", flush=True)
+            continue
+        # Read back the per-task summary written by _run_one_task.
+        summary_path = Path(args.workspace_root) / f"summary_{task_id}.json"
+        if summary_path.exists():
+            aggregate.append(json.loads(summary_path.read_text()))
+
+    # Aggregate: pass-rate + per-task table.
+    total = len(aggregate)
+    correct = sum(1 for s in aggregate if s.get("correct"))
+    print(f"\n[parquet] {correct}/{total} correct ({(correct/total*100) if total else 0:.1f}%)", flush=True)
+    agg_path = Path(args.workspace_root) / "aggregate.json"
+    agg_path.write_text(json.dumps({"total": total, "correct": correct, "results": aggregate}, indent=2, default=str))
+    print(f"[parquet] aggregate written to {agg_path}", flush=True)
+    return 0 if total and correct == total else (0 if total else 2)
 
 
 def main() -> None:
@@ -280,7 +413,24 @@ def main() -> None:
     p.add_argument("--task-id", default="smoke-001")
     p.add_argument("--task", default="Open https://example.com and report the page title.")
     p.add_argument("--start-url", default="https://example.com")
-    p.add_argument("--model", default="Qwen/Qwen3.5-4B")
+    p.add_argument("--parquet", default="",
+                   help="Path to a parquet with columns task_id/task/start_url. When set, "
+                        "iterates over all rows instead of using the single --task/--start-url.")
+    p.add_argument("--limit", type=int, default=0,
+                   help="With --parquet, run only the first N rows. 0 = all.")
+    p.add_argument("--parser", default="qwen35", choices=["qwen35", "hermes", "xml"],
+                   help="Tool-call format the policy emits. Use 'hermes' for Qwen3-VL (native "
+                        "Qwen3 chat-template format).")
+    p.add_argument("--model", default="Qwen/Qwen3.5-4B",
+                   help="HF model id (HF path) OR vLLM --served-model-name when --endpoint is set.")
+    p.add_argument("--endpoint", default="",
+                   help="OpenAI-compatible base URL of a remote vLLM server (e.g. http://127.0.0.1:9000/v1). "
+                        "When set, the agent talks HTTP and the local HF model is NOT loaded.")
+    p.add_argument("--api-key", default="dummy",
+                   help="Bearer token for the endpoint; vLLM ignores the value but the client requires non-empty.")
+    p.add_argument("--tokenizer", default="",
+                   help="HF tokenizer id used only for prompt formatting when --endpoint is set; "
+                        "defaults to --model.")
     p.add_argument("--device", default="cuda")
     p.add_argument("--dtype", default="bfloat16", choices=["bfloat16", "float16", "float32"])
     p.add_argument("--max-turns", type=int, default=4)
