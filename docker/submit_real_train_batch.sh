@@ -49,7 +49,9 @@ export MINI_WEB_AGENT_ROOT=\$PVC_MOUNT/\$USER_ALIAS/runs/\$JOB_NAME/mini-web-age
 export ECHO_RL_DATA=\$MINI_WEB_AGENT_ROOT/data/web_agent
 export OUTPUT_DIR=\$PVC_MOUNT/\$USER_ALIAS/outputs/\$JOB_NAME
 mkdir -p \$OUTPUT_DIR
-export WANDB_MODE=offline
+# WandB: submit_job.sh injects API_KEY / BASE_URL / HOST / PROJECT / NAME.
+# Leave WANDB_MODE unset to enable online sync to microsoft-research.wandb.io.
+# (Re-export WANDB_MODE=offline only if the cluster blocks egress to wandb.)
 export TRANSFORMERS_NO_ADVISORY_WARNINGS=1
 echo MINI_WEB_AGENT_ROOT=\$MINI_WEB_AGENT_ROOT
 echo ECHO_RL_DATA=\$ECHO_RL_DATA

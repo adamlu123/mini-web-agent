@@ -435,6 +435,14 @@ FodyWeavers.xsd
 *.msp
 
 # Local cluster / RL artifacts (added 2026-05-22, rl_yifei branch)
-.claude/
-outputs/
-docker/wheels/
+# NOTE: keep these as bare names (no trailing slash). GNU tar's
+# --exclude-vcs-ignores (used by clusters/lambda submit_job.sh) does NOT
+# honor `dir/` style patterns — leaving the slash here causes a 300MB+
+# wheels payload to get tar'd + kubectl-cp'd on every job submit.
+.claude
+outputs
+docker/wheels
+*.whl
+# Docs/banner assets — not needed at training runtime
+echo.gif
+echo.pdf
