@@ -29,10 +29,9 @@ All have defaults; override via env before invocation.
 
 Batch-only:
 
-| Variable             | Default                                          | Purpose                                                   |
-| -------------------- | ------------------------------------------------ | --------------------------------------------------------- |
-| `CONFIG`             | `echo_configs/qwen35_4b_web_agent_hard_4gpu.yaml` | SkyRL training config (relative to `SkyRL/`).             |
-| `TRAIN_TIMEOUT_SEC`  | `1500` (25 min)                                  | Hard kill of `python -m echo_rl.web_agent.entrypoint`.    |
+| Variable | Default                                          | Purpose                                       |
+| -------- | ------------------------------------------------ | --------------------------------------------- |
+| `CONFIG` | `echo_configs/qwen35_4b_web_agent_hard_4gpu.yaml` | SkyRL training config (relative to `SkyRL/`). |
 
 ## Interactive debug (8×B200 pod)
 
@@ -84,21 +83,16 @@ bash docker/submit_real_train_batch.sh
 The script handles everything inside the pod automatically: sources creds, installs editables, sets `MINI_WEB_AGENT_ROOT` / `ECHO_RL_DATA` / `OUTPUT_DIR`, runs `nvidia-smi -L`, then launches:
 
 ```
-timeout --foreground --signal=TERM --kill-after=30 ${TRAIN_TIMEOUT_SEC} \
-    python -m echo_rl.web_agent.entrypoint --config ${CONFIG}
+python -m echo_rl.web_agent.entrypoint --config ${CONFIG}
 ```
 
-Exit code `124` = hit the time cap (treated as ok for a smoke run).
+No in-script time cap — the run finishes when training completes (or you kill the Volcano job manually: `kubectl -n bonete61 delete job.batch.volcano.sh/<job-name>`).
 
 Common overrides:
 
 ```
 # Different config
 CONFIG=echo_configs/qwen35_4b_web_agent.yaml \
-    bash docker/submit_real_train_batch.sh
-
-# Longer cap (e.g. 2 hours)
-TRAIN_TIMEOUT_SEC=7200 \
     bash docker/submit_real_train_batch.sh
 
 # Higher priority
