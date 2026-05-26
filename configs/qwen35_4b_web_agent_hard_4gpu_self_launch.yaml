@@ -106,7 +106,7 @@ generator:
     judge_model: o4-mini
     judge_gateway_endpoint: ${oc.env:OPENAI_GATEWAY_ENDPOINT,http://gateway.phyagi.net/api/responses}
     score_threshold: 3
-    mini_web_agent_root: /home/luyadong/sandbox/mini-web-agent
+    mini_web_agent_root: ${oc.env:MINI_WEB_AGENT_ROOT}
   env_overrides:
     headless: true
     nav_timeout_ms: 60000
