@@ -20,6 +20,12 @@ done
 
 export PATH="$HOME/.krew/bin:$PATH"
 
+# WandB host. submit_job.sh defaults WANDB_HOST to microsoft-research.wandb.io,
+# which 401s our public-wandb WANDB_API_KEY. Force the public host so the
+# host-shell WANDB_API_KEY routes to https://api.wandb.ai. Override at call
+# time if you want MS-internal: WANDB_HOST=https://microsoft-research.wandb.io ...
+export WANDB_HOST="${WANDB_HOST:-https://api.wandb.ai}"
+
 # Job priority. PRIORITY is just a naming label in JOB_NAME; PRIORITY_CLASS_NAME
 # is the actual k8s PriorityClass used by Volcano for scheduling/preemption.
 # Override per invocation: PRIORITY=p0 PRIORITY_CLASS_NAME=p0 bash ...
