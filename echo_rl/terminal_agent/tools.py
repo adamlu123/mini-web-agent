@@ -11,7 +11,6 @@ TOOL_SCHEMAS = [
                 "type": "object",
                 "properties": {
                     "command": {"type": "string", "description": "The bash command to execute"},
-                    "timeout": {"type": "integer", "description": "Timeout in seconds (default 30)"},
                 },
                 "required": ["command"],
             },

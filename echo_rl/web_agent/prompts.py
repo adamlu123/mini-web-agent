@@ -18,9 +18,6 @@ Required tools:
   <parameter=command>
   python -c "await page.goto('https://example.com', wait_until='domcontentloaded'); print(await page.title())"
   </parameter>
-  <parameter=timeout>
-  30
-  </parameter>
   </function>
   </tool_call>
 
@@ -49,7 +46,7 @@ You can use `await` at the top level of the snippet. Anything you `print()` is r
     python -c "await page.fill('input[name=\"q\"]', 'wireless mouse')"
     python -c "await page.keyboard.press('Enter')"
 - Wait for the page to settle:
-    python -c "await page.wait_for_selector('text=Results', timeout=15000)"
+    python -c "await page.wait_for_selector('text=Results')"
 - Evaluate JS / scrape values:
     python -c "print(await page.evaluate('document.querySelectorAll(\"a\").length'))"
     python -c "links = await page.evaluate('Array.from(document.querySelectorAll(\"a\")).slice(0,20).map(a => a.href)'); print('\\n'.join(links))"
@@ -103,9 +100,6 @@ Required tools:
           await browser.close()  # CDP-only close; the Browserbase session keeps running
   PY
   </parameter>
-  <parameter=timeout>
-  60
-  </parameter>
   </function>
   </tool_call>
 
@@ -158,7 +152,6 @@ How to release an exploration session when done with it (one shell command):
       f"https://api.browserbase.com/v1/sessions/{S['id']}",
       headers={'x-bb-api-key': os.environ['BROWSERBASE_API_KEY']},
       json={'projectId': os.environ['BROWSERBASE_PROJECT_ID'], 'status': 'REQUEST_RELEASE'},
-      timeout=30,
   )
   print('release', r.status_code)
   PY
@@ -171,7 +164,7 @@ Choosing where to act:
 Inspection helpers (work in either session):
   await page.locator('body').aria_snapshot()
   page.url ; await page.title() ; (await page.inner_text('body'))[:2000]
-  await page.wait_for_selector('text=Results', timeout=15000)
+  await page.wait_for_selector('text=Results')
   await page.evaluate('document.querySelectorAll("a").length')
 
 Plain shell utilities (cat, ls, grep, jq, head, curl, etc.) run in the workspace directory; the workspace path is exported as `${WEB_AGENT_WORKSPACE}`.
