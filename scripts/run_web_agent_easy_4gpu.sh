@@ -40,7 +40,11 @@ fi
 unset OPENAI_GATEWAY_API_KEY
 
 : "${OPENAI_GATEWAY_ENDPOINT:=http://gateway.phyagi.net/api/responses}"
-: "${MINI_WEB_AGENT_ROOT:=/home/luyadong/sandbox/mini-web-agent}"
+# Point the OSW judge import path at THIS checkout. luyadong's mini-web-agent
+# dir on this host has only stale .pyc files (no .py sources) under
+# om2w_judge/, so importing om2w_judge.methods.webjudge_online_mind2web from
+# there fails and every rollout falls back to failure_reward=0.
+: "${MINI_WEB_AGENT_ROOT:=${WORKTREE_ROOT}}"
 export OPENAI_GATEWAY_ENDPOINT MINI_WEB_AGENT_ROOT
 export OPENAI_API_KEY BROWSERBASE_API_KEY BROWSERBASE_PROJECT_ID HF_TOKEN
 export ECHO_RL_DATA OUTPUT_DIR
