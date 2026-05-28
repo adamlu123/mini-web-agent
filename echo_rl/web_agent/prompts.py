@@ -51,6 +51,134 @@ You can use `await` at the top level of the snippet. Anything you `print()` is r
     python -c "print(await page.evaluate('document.querySelectorAll(\"a\").length'))"
     python -c "links = await page.evaluate('Array.from(document.querySelectorAll(\"a\")).slice(0,20).map(a => a.href)'); print('\\n'.join(links))"
 
+Reading an `aria_snapshot` (do this BEFORE you click or type):
+`await page.locator('body').aria_snapshot()` returns an indented YAML-like tree of accessibility nodes. Each line is `- ROLE "ACCESSIBLE NAME" [state]:` and indented lines below it are that node's children. Real excerpt from nvidia.com:
+
+    - banner:
+      - navigation:
+        - link "Skip to main content":
+            - /url: "#page-content"
+        - link "NVIDIA Home":
+            - /url: https://www.nvidia.com/en-us/
+        - menu "menu":
+          - menuitem "Products"
+          - menuitem "Solutions"
+        - menu "menu":
+          - menuitem "Shop"
+          - menuitem "Drivers"
+    - group:
+      - tabpanel "Slide 1 of 6":
+        - heading "NVIDIA Vera CPU Is 'Packing a Heavy-Hitting Punch'" [level=2]
+        - link "Read the Blog":
+            - /url: https://blogs.nvidia.com/blog/vera-cpu-phoronix/
+      - tablist "Choose a slide to display":
+        - tab "Data Center NVIDIA Vera CPU ..." [selected]
+        - tab "Artificial Intelligence Jensen Huang ..."
+    - region "Cookie banner":
+      - dialog "Privacy":
+        - button "Accept All"
+        - button "Reject Optional"
+
+Map each node directly to a Playwright locator with `get_by_role(role, name=...)` — this matches the snapshot 1:1 and is the most reliable way to avoid strict-mode violations:
+
+    link "Read the Blog"      -> page.get_by_role("link",     name="Read the Blog")
+    button "Accept All"       -> page.get_by_role("button",   name="Accept All")
+    heading "NVIDIA Vera ..." -> page.get_by_role("heading",  name="NVIDIA Vera")    # substring match by default; pass exact=True to require full match
+    tab "Data Center ..."     -> page.get_by_role("tab",      name="Data Center")
+    img "Search icon"         -> page.get_by_role("img",      name="Search icon")
+    menuitem "Products"       -> page.get_by_role("menuitem", name="Products")
+    text: US                  -> page.get_by_text("US", exact=True)
+    /url: https://...         -> the parent link's href; also page.locator('a[href="..."]')
+
+Disambiguating duplicate nodes — the snapshot above has TWO sibling `menu "menu"` nodes, so `page.get_by_role("menu", name="menu")` would raise `strict mode violation: ... resolved to 2 elements`. Pick ONE of these tactics:
+
+    # 1. scope by an ancestor that IS unique
+    await page.get_by_role("navigation").get_by_role("menuitem", name="Products").click()
+    # 2. pick an index
+    await page.get_by_role("menu").nth(1).get_by_role("menuitem", name="Shop").click()
+    # 3. filter by a unique descendant
+    page.get_by_role("menu").filter(has_text="Shop").get_by_role("menuitem", name="Drivers")
+
+State markers in `[...]`: `[selected]` (tab/option), `[checked]` (checkbox/radio), `[expanded]` (disclosure), `[level=N]` (heading), `[disabled]` (button/input). Re-snapshot after every action to confirm the state actually changed.
+
+ALWAYS dismiss cookie / consent dialogs FIRST. If you see `region "Cookie banner"` or `dialog "Privacy"` anywhere in the snapshot, click `Accept All` (or `Reject Optional`) before anything else — otherwise clicks beneath the modal will time out with `Timeout 20000ms exceeded` even though the selector looks valid.
+
+Frequently-hit pitfalls (real errors I have seen — DO NOT do these):
+- `await page.url` / `await page.url()` is WRONG: `page.url` is a property. Use just `page.url`. `await page.title()` IS a coroutine, that one needs await.
+- `print(await page.inner_text('body'))[:300]` slices the `print()` return (None). Wrap the await: `print((await page.inner_text('body'))[:300])`.
+- `page.query_selector_all('a').length` is WRONG: that returns a coroutine, and Python lists have no `.length`. Use `els = await page.query_selector_all('a'); print(len(els))`.
+- Inside `page.evaluate(...)`, `document.querySelectorAll(...)` is a NodeList, not an Array. Wrap with `Array.from(...)` before `.map` / `.slice` / `.filter`.
+- There is NO `placeholder=...` or `aria-label=...` selector engine. Use `page.get_by_placeholder("...")` and `page.get_by_label("...")` instead.
+- DO NOT call `asyncio.run(...)` — you are already inside an event loop. Use top-level `await ...` directly.
+
+Worked example — a real successful trajectory on theweathernetwork.com (commands and outputs are reproduced verbatim from a live run):
+
+  Task        : Look up the current temperature for zip code 10019.
+  Starting URL: https://www.theweathernetwork.com/
+
+  Turn 1 — open the page and read its accessibility tree:
+    python -c "await page.goto('https://www.theweathernetwork.com', wait_until='domcontentloaded'); print(await page.locator('body').aria_snapshot())"
+  Observation (URL: https://www.theweathernetwork.com/en  TITLE: 'The Weather Network: Weather forecasts, maps, news and videos'):
+    - banner:
+      - link "The Weather Network":
+          - /url: /
+      - navigation "Site":
+        - list:
+          - listitem:
+            - link "Weather": ...
+      - button "Search":
+          - img
+      - link "Welcome": ...
+    - main:
+      - heading "Be informed and safe in any weather" [level=1]
+      ... [tree continues, ~12k chars total]
+  The home page does not yet show a labeled "zip code" input — the search field is hidden behind the "Search" button OR somewhere lower in the tree. Enumerate inputs directly to find it.
+
+  Turn 2 — enumerate id / name / placeholder / aria-label of every input via JS (NodeList -> Array.from -> .map):
+    python -c "result = await page.evaluate('Array.from(document.querySelectorAll(\"input\")).map(i => ({id: i.id, name: i.name, placeholder: i.placeholder, ariaLabel: i.getAttribute(\"aria-label\")}))'); print(result)"
+  Observation:
+    [{'id': 'InputField', 'name': 'search', 'placeholder': 'Enter location', 'ariaLabel': None}]
+  Exactly one input on the page: `#InputField`, name="search", placeholder="Enter location". That is our target.
+
+  Turn 3 — type the zip code and submit:
+    python -c "await page.fill('#InputField', '10019'); await page.keyboard.press('Enter')"
+  Observation: (no stdout — action only; URL unchanged because the site shows an autocomplete dropdown rather than navigating on Enter).
+
+  Turn 4 — wait for the autocomplete dropdown to render, then re-snapshot to see the suggestions:
+    python -c "await page.wait_for_timeout(2000); print(await page.locator('body').aria_snapshot())"
+  Observation (relevant excerpt):
+    - textbox "Enter location": "10019"
+    - status: 1 result for 10019
+        - link "Manhattan, New York":
+          - text: Manhattan, New York
+  One result, so click it.
+
+  Turn 5 — click the matching suggestion:
+    python -c "await page.click('text=Manhattan, New York')"
+  Observation (URL: https://www.theweathernetwork.com/en/city/us/new-york/manhattan/current  TITLE: 'Manhattan, NY Current Weather - The Weather Network'). URL change confirms the navigation landed on the correct city page.
+
+  Turn 6 — snapshot the result page to locate the temperature node:
+    python -c "print(await page.locator('body').aria_snapshot())"
+  Observation (relevant excerpt):
+    - text: "Manhattan, NY Updated 7 minutes ago 27 ° C Clear Feels 28 H: 29° L: 19°"
+    - heading "Hourly" [level=2]:
+        - text: 27° Feels 28
+        - text: 26° Feels 26
+        - text: 25° Feels 25
+  The current temperature is in a free-text node, not its own role — so use a regex over the page text to extract just the number + unit.
+
+  Turn 7 — extract the temperature value and call done:
+    python -c "import re; t = await page.locator('main').inner_text(); m = re.search(r'(-?\\d{1,3})\\s*°\\s*([CF])?', t); print(m.group(0) if m else 'not found')"
+  Observation:
+    27 ° C
+  Then emit <tool_call><function=done></function></tool_call>.
+
+  Lessons from this trace:
+  - Open with `aria_snapshot` to map the page; if the input you need is not labelled in the snapshot, fall back to `page.evaluate('Array.from(document.querySelectorAll(\"input\")).map(...)')` to enumerate raw attributes — that is how `#InputField` was discovered.
+  - After typing into a search/autocomplete field, ALWAYS `wait_for_timeout` (or `wait_for_selector`) and re-snapshot before clicking a suggestion.
+  - A URL change in the per-turn observation is the strongest signal that a click actually navigated; if the URL did not change when you expected it to, retry with a more specific selector.
+  - Do NOT call `done` until you have a turn whose stdout contains the actual answer (here: "27 ° C"). Reaching the right page is not the same as having extracted the value.
+
 Plain shell utilities work too (cat, ls, grep, jq, head, awk, curl, etc.). Each command runs in a workspace directory at /tmp/web_agent_workspace. Use them to inspect files you have written.
 
 IMPORTANT:

@@ -1,13 +1,17 @@
-# Web-agent RL on Qwen3.5-4B over om2w *easy* tasks, on a local 4-H100 box.
+# Web-agent RL on Qwen3.5-9B over om2w *easy* tasks, on a local 4-H100 80GB box.
 #
-# Scaled down from qwen35_9b_web_agent_easy_8gpu.yaml:
-#   - model / tokenizer: Qwen3.5-9B -> Qwen3.5-4B
+# Scaled from qwen35_9b_web_agent_easy_8gpu.yaml:
 #   - placement: 8 GPUs -> 4 GPUs (policy + ref)
-#   - inference engines: 8 -> 4
+#   - inference engines: 8 -> 4 (still tp=1; 9B fits in a single 80GB GPU)
+#   - gpu_memory_utilization stays at 0.8 — colocate_all swaps vLLM and FSDP
+#     state to host RAM in alternation, so vLLM gets the full GPU during
+#     inference. (First attempt at 0.65 produced negative Available KV cache
+#     memory because 17.66 GiB weights + CUDA graph buffers + activations
+#     already eat ~50 GiB.)
 #   - run_name updated
-# Data is om2w *easy* (same as 9B easy). All other training hyperparameters
-# (lr, batch, n_samples, epochs, max_turns, flash_attn/sample-packing off)
-# match the 9B easy config so results stay comparable.
+# All other training hyperparameters (lr, batch, n_samples, epochs, max_turns,
+# flash_attn / sample-packing off) match the 9B easy 8gpu config so results
+# stay comparable.
 
 data:
   train_data:
@@ -17,7 +21,7 @@ data:
     - name: web_agent_om2w_easy_val
       path: ${oc.env:ECHO_RL_DATA,/home/luyadong/sandbox/echo-rl/.claude/worktrees/web-agent-rl/data/web_agent}/om2w_easy_val.parquet
 
-tokenizer_path: Qwen/Qwen3.5-4B
+tokenizer_path: Qwen/Qwen3.5-9B
 chat_template_path: echo_rl/terminal_agent/chat_templates/qwen3_xml_tool_calling.jinja
 
 trainer:
@@ -30,7 +34,7 @@ trainer:
     ref_num_gpus_per_node: 4
   policy:
     model:
-      path: Qwen/Qwen3.5-4B
+      path: Qwen/Qwen3.5-9B
     optimizer_config:
       lr: 1.0e-6
       adam_betas: [0.9, 0.999]
@@ -72,7 +76,7 @@ trainer:
   log_path: ${oc.env:OUTPUT_DIR}/skyrl_logs
   logger: wandb
   project_name: world_model
-  run_name: web_agent_qwen35_4b_easy
+  run_name: web_agent_qwen35_9b_easy_4gpu
 
 generator:
   n_samples_per_prompt: 16
@@ -140,6 +144,11 @@ generator:
     enable_prefix_caching: true
     enable_chunked_prefill: true
     gpu_memory_utilization: 0.8
-    max_num_batched_tokens: 262144
+    # 262144 was inherited from the 9B 8gpu B200 config (180 GB per GPU). On
+    # H100 80 GB the activation buffer for a 256k-token batched forward eats
+    # all the headroom and leaves only 6 GiB for KV cache, which then OOMs
+    # during pool allocation. 32768 covers a single max_seq_len=34096 prefill
+    # in one chunk, which is what we actually need.
+    max_num_batched_tokens: 32768
     engine_init_kwargs:
       swap_space: 4
