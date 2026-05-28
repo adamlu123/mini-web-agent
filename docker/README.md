@@ -169,6 +169,36 @@ TAG=v2 bash docker/build.sh          # 自定义 tag
 | `wheels/` | 预编译 `causal-conv1d` / `flash_attn` wheel |
 | `build.sh` | ACR cloud build + push |
 | `submit_real_train_batch.sh` | 8-GPU batch 训练（自动 timeout 保护） |
+| `submit_uv_9b_easy.sh` | 8-GPU batch 训练，复用 PVC 上 persistent uv venv |
 | `submit_interactive_8gpu.sh` | 8-GPU interactive shell |
 | `submit_smoke.sh` | 1-GPU 镜像 smoke 测试 |
 | `submit_via_condapack.sh` | 备选：默认 NVIDIA image + conda-pack tar（不需要重 build 镜像） |
+
+---
+
+## Persistent uv venv on PVC
+
+`docker/submit_uv_9b_easy.sh` 在 PVC 上建一份 uv venv，跨 job 复用 —— 省掉每 job
+重装 editables 的 30s + 不用每次拉 wandb 之类的轻量 dep。
+
+PVC layout：
+```
+/mnt/pvc/t-yifeili/code/SkyRL/            ← 稳定路径，每个 job rsync 一次
+/mnt/pvc/t-yifeili/code/mini-web-agent/   ← 同上
+/mnt/pvc/t-yifeili/envs/echo-rl-uv/.venv  ← uv venv（--system-site-packages）
+/mnt/pvc/t-yifeili/envs/echo-rl-uv/bin/uv ← uv binary
+```
+
+`.venv` 用 `--system-site-packages` 创建，继承 image 里的 torch / vllm /
+flash-attn / transformers 等重 dep；editable .pth 指向 `/mnt/pvc/.../code/`
+稳定路径。Image 改了就 rebuild + 删 venv 重建；改 echo-rl 代码不用任何重建。
+
+跑：
+```bash
+cd /data/t-yifeili/mini-web-agent
+bash docker/submit_uv_9b_easy.sh
+# 改 config: CONFIG=echo_configs/qwen35_9b_web_agent_hard_8gpu.yaml bash docker/submit_uv_9b_easy.sh
+```
+
+第一次运行 ~1 min 装 rsync + uv + venv + editables；后续运行 ~10s
+（rsync + uv pip install -e 都是 noop / 增量）。
