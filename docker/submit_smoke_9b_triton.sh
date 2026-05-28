@@ -11,8 +11,8 @@
 #   IMAGE=aifrontiers.azurecr.io/<base>:<tag> \
 #     JOB_TAG=smoke9bnvbase bash docker/submit_smoke_9b_triton.sh
 #
-# JOB_TAG controls the PROJECT_NAME segment of the volcano job name so you can
-# tell the two pods apart.
+# JOB_TAG controls the job-name segment so you can tell the two pods apart.
+# (The workstream label is fixed to 'cua' for all jobs.)
 
 set -euo pipefail
 
@@ -27,7 +27,16 @@ UPLOAD_DIR="${UPLOAD_DIR:-/data/t-yifeili/mini-web-agent/docker}"
 export PATH="$HOME/.krew/bin:$PATH"
 export PRIORITY="${PRIORITY:-medium}"
 export PRIORITY_CLASS_NAME="${PRIORITY_CLASS_NAME:-medium}"
-export PROJECT_NAME="${PROJECT_NAME:-${JOB_TAG}}"
+# Submit under the 'cua' workstream by default; route JOB_TAG into JOB_NAME so
+# the two comparison pods still get distinct names on the dashboard.
+export PROJECT_NAME="${PROJECT_NAME:-cua}"
+export JOB_NAME="${JOB_NAME:-${USER%@*}-${PRIORITY}-${JOB_TAG}-job}"
+
+# FOLLOW_LOGS=1 streams the master pod logs until the pod exits (recommended:
+# these pods abort-and-GC fast on failure, so streaming is the only reliable
+# way to capture the traceback). Default on; set FOLLOW_LOGS=0 for fire-and-forget.
+FOLLOW_ARGS=()
+[[ "${FOLLOW_LOGS:-1}" == "1" ]] && FOLLOW_ARGS+=(--follow-logs)
 
 bash "$SUBMIT" \
     --upload "$UPLOAD_DIR" \
@@ -35,6 +44,7 @@ bash "$SUBMIT" \
     --node 1 --gpu-per-node 1 \
     --cpu 16 --memory 128Gi --shm 16Gi \
     --secret-volume echo-rl-creds:/run/secrets/echo-rl-creds \
+    "${FOLLOW_ARGS[@]}" \
     --cmd 'set -e
 echo "[smoke] hello from $JOB_NAME on $(hostname)"
 source /run/secrets/echo-rl-creds/cred.sh
@@ -75,21 +85,29 @@ PY
 python /tmp/probe_versions.py
 
 # Trigger the failing path: spin up vLLM with Qwen3.5-9B (GDN JIT compiles a
-# Triton kernel on first forward). Same FILE-not-stdin rule applies here.
+# Triton kernel on first forward). The `if __name__ == "__main__"` guard is
+# REQUIRED: vllm V1 uses spawn for its EngineCore workers, which re-imports
+# this file; without the guard the re-import re-runs LLM(...) and recursively
+# spawns (RuntimeError: attempt to start a new process before bootstrapping).
 cat > /tmp/probe_vllm_9b.py <<PY
 from vllm import LLM, SamplingParams
-print("[smoke] constructing LLM Qwen/Qwen3.5-9B ...", flush=True)
-llm = LLM(
-    model="Qwen/Qwen3.5-9B",
-    dtype="bfloat16",
-    gpu_memory_utilization=0.85,
-    max_model_len=8192,
-    enforce_eager=False,
-    enable_prefix_caching=True,
-)
-print("[smoke] generating ...", flush=True)
-out = llm.generate(["Hello, world!"], SamplingParams(max_tokens=8, temperature=0.0))
-print("[smoke] GENERATION OK:", repr(out[0].outputs[0].text), flush=True)
+
+def main():
+    print("[smoke] constructing LLM Qwen/Qwen3.5-9B ...", flush=True)
+    llm = LLM(
+        model="Qwen/Qwen3.5-9B",
+        dtype="bfloat16",
+        gpu_memory_utilization=0.85,
+        max_model_len=8192,
+        enforce_eager=False,
+        enable_prefix_caching=True,
+    )
+    print("[smoke] generating ...", flush=True)
+    out = llm.generate(["Hello, world!"], SamplingParams(max_tokens=8, temperature=0.0))
+    print("[smoke] GENERATION OK:", repr(out[0].outputs[0].text), flush=True)
+
+if __name__ == "__main__":
+    main()
 PY
 python /tmp/probe_vllm_9b.py
 

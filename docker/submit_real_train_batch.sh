@@ -28,6 +28,8 @@ export WANDB_HOST="${WANDB_HOST:-https://api.wandb.ai}"
 # Override per invocation: PRIORITY=p0 PRIORITY_CLASS_NAME=p0 bash ...
 export PRIORITY="${PRIORITY:-medium}"
 export PRIORITY_CLASS_NAME="${PRIORITY_CLASS_NAME:-medium}"
+# Submit under the 'cua' workstream by default (workstream label = PROJECT_NAME).
+export PROJECT_NAME="${PROJECT_NAME:-cua}"
 
 # Phyagi gateway / msr credentials are dead (April 2026); the only working
 # judge key right now is OPENAI_API_BACKUP_KEY (a real sk-proj-...). Forward

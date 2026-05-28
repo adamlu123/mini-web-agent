@@ -35,6 +35,8 @@ export PATH="$HOME/.krew/bin:$PATH"
 # Job priority. See submit_real_train_batch.sh for explanation.
 export PRIORITY="${PRIORITY:-medium}"
 export PRIORITY_CLASS_NAME="${PRIORITY_CLASS_NAME:-medium}"
+# Submit under the 'cua' workstream by default (workstream label = PROJECT_NAME).
+export PROJECT_NAME="${PROJECT_NAME:-cua}"
 
 # 1 GPU is enough to verify everything resolves; bump --gpu-per-node to 8 for
 # a real run once this passes.
