@@ -29,12 +29,22 @@ export WANDB_HOST="${WANDB_HOST:-https://api.wandb.ai}"
 export PRIORITY="${PRIORITY:-medium}"
 export PRIORITY_CLASS_NAME="${PRIORITY_CLASS_NAME:-medium}"
 
+# Phyagi gateway / msr credentials are dead (April 2026); the only working
+# judge key right now is OPENAI_API_BACKUP_KEY (a real sk-proj-...). Forward
+# it into the pod as OPENAI_API_KEY_OVERRIDE so the --cmd preamble below
+# routes the o4-mini judge through api.openai.com.
+EXTRA_ENV_ARGS=()
+if [[ -n "${OPENAI_API_BACKUP_KEY:-}" ]]; then
+    EXTRA_ENV_ARGS+=(--extra-env-vars "OPENAI_API_KEY_OVERRIDE=${OPENAI_API_BACKUP_KEY}")
+fi
+
 bash "$SUBMIT" \
     --upload "$MINI_WEB_AGENT_DIR" "$SKYRL_DIR" \
     --image "$IMAGE" \
     --node 1 --gpu-per-node 8 \
     --cpu 64 --memory 512Gi --shm 64Gi \
     --secret-volume echo-rl-creds:/run/secrets/echo-rl-creds \
+    "${EXTRA_ENV_ARGS[@]}" \
     --follow-logs \
     --cmd "set -e
 echo '[run] hello from \$JOB_NAME on \$(hostname)'
@@ -42,13 +52,11 @@ echo '[run] === source creds (sanitized cred.sh in k8s secret) ==='
 source /run/secrets/echo-rl-creds/cred.sh
 unset OPENAI_GATEWAY_API_KEY   # mirrors run_web_agent_yifei.sh
 
-# Optional fallback: when OPENAI_API_KEY_OVERRIDE is set in the host shell
-# at submission time, swap in that key and clear the phyagi gateway endpoint
-# so the o4-mini judge calls api.openai.com directly. Used while the
-# msr/phyagi credentials are dead. Leave OPENAI_API_KEY_OVERRIDE unset to
-# keep the old cred.sh-driven behaviour.
-if [ -n '${OPENAI_API_KEY_OVERRIDE:-}' ]; then
-  export OPENAI_API_KEY='${OPENAI_API_KEY_OVERRIDE:-}'
+# Auto-forwarded from the submit host via OPENAI_API_BACKUP_KEY (see above);
+# swap it into OPENAI_API_KEY and clear the dead phyagi gateway endpoint so
+# the o4-mini judge calls api.openai.com directly.
+if [ -n \"\${OPENAI_API_KEY_OVERRIDE:-}\" ]; then
+  export OPENAI_API_KEY=\"\${OPENAI_API_KEY_OVERRIDE}\"
   export OPENAI_GATEWAY_ENDPOINT=''
   echo '[run] OPENAI_API_KEY overridden; judge -> api.openai.com'
 fi

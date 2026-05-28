@@ -63,11 +63,16 @@ class OpenaiEngine:
         **kwargs,
     ) -> None:
         del tokenizer, port, endpoint_target_uri, kwargs
-        assert os.getenv("OPENAI_API_KEY", api_key) is not None, (
-            "must pass on the api_key or set OPENAI_API_KEY in the environment"
-        )
+        # Prefer OPENAI_API_BACKUP_KEY over OPENAI_API_KEY: the shared cred.sh
+        # files on the gcrsandbox box and in the k8s secret set OPENAI_API_KEY
+        # to a phyagi gateway token that 401s on api.openai.com (the gateway
+        # itself has been decommissioned). OPENAI_API_BACKUP_KEY is the
+        # real sk-proj-... key that currently works.
         if api_key is None:
-            api_key = os.getenv("OPENAI_API_KEY", api_key)
+            api_key = os.getenv("OPENAI_API_BACKUP_KEY") or os.getenv("OPENAI_API_KEY")
+        assert api_key is not None, (
+            "must pass api_key or set OPENAI_API_BACKUP_KEY / OPENAI_API_KEY in the environment"
+        )
         if isinstance(api_key, str):
             self.api_keys = [api_key]
         elif isinstance(api_key, list):

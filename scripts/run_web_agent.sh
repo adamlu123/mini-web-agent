@@ -21,6 +21,15 @@ if [[ -f /home/luyadong/cred_gateway.sh ]]; then
 fi
 unset OPENAI_GATEWAY_API_KEY
 
+# Phyagi gateway and its keys are dead (April 2026); the only working judge
+# key on this host is OPENAI_API_BACKUP_KEY (a real sk-proj-...). Overwrite
+# OPENAI_API_KEY with it and clear the gateway endpoint so OpenaiEngine
+# goes straight to api.openai.com.
+if [[ -n "${OPENAI_API_BACKUP_KEY:-}" ]]; then
+    export OPENAI_API_KEY="${OPENAI_API_BACKUP_KEY}"
+    unset OPENAI_GATEWAY_ENDPOINT
+fi
+
 : "${OPENAI_GATEWAY_ENDPOINT:=http://gateway.phyagi.net/api/responses}"
 : "${MINI_WEB_AGENT_ROOT:=/home/luyadong/sandbox/mini-web-agent}"
 export OPENAI_GATEWAY_ENDPOINT MINI_WEB_AGENT_ROOT

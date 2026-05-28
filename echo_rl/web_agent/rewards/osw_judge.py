@@ -17,11 +17,15 @@ class OSWJudgeReward:
     label per rollout; we expose it as ``reward = 1.0`` for success, else
     ``0.0``. Override ``success_reward``/``failure_reward`` to shape it.
 
-    The judge model is called via ``om2w_judge.utils.OpenaiEngine``. Pointing
-    ``judge_gateway_endpoint`` at the phyagi gateway routes calls through
-    it; an empty endpoint falls back to OpenAI's responses API. Either way the
-    API key is read from env vars (``OPENAI_GATEWAY_API_KEY`` /
-    ``OPENAI_API_KEY``) when not passed explicitly.
+    The judge model is called via ``om2w_judge.utils.OpenaiEngine``. The
+    phyagi gateway keys / endpoint that this used to route through are dead
+    (April 2026), and ``OpenaiEngine`` discards ``endpoint_target_uri``
+    anyway, so we just talk to ``api.openai.com`` directly with an
+    ``sk-...`` key. API key resolution order: explicit ``api_key`` arg →
+    ``OPENAI_API_BACKUP_KEY`` env (the working ``sk-proj-...`` that ships
+    in the host's environment, intentionally checked first because the
+    legacy ``OPENAI_API_KEY`` in shared cred.sh files is a stale phyagi
+    token that 401s on api.openai.com) → ``OPENAI_API_KEY``.
     """
 
     def __init__(
@@ -40,7 +44,11 @@ class OSWJudgeReward:
         self.judge_gateway_endpoint = judge_gateway_endpoint or os.environ.get(
             "OPENAI_GATEWAY_ENDPOINT", ""
         )
-        self.api_key = api_key
+        self.api_key = (
+            api_key
+            or os.environ.get("OPENAI_API_BACKUP_KEY")
+            or os.environ.get("OPENAI_API_KEY")
+        )
         self.score_threshold = int(score_threshold)
         self.mini_web_agent_root = (
             mini_web_agent_root or os.environ.get("MINI_WEB_AGENT_ROOT")
