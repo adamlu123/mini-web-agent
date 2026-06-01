@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -16,6 +17,43 @@ from miniswewebagent.models import get_model
 from miniswewebagent.tasks.om2w import load_om2w_task
 from miniswewebagent.utils.om2w_eval import export_online_mind2web_artifacts
 from miniswewebagent.utils.serialize import UNSET, recursive_merge
+
+_SESSION_ID_MAX_LEN = 128
+_SESSION_ID_ALLOWED = re.compile(r"[^A-Za-z0-9_.-]")
+
+
+def _sanitize_session_id(value: str) -> str:
+    cleaned = _SESSION_ID_ALLOWED.sub("_", value).strip("_")
+    if len(cleaned) > _SESSION_ID_MAX_LEN:
+        cleaned = cleaned[:_SESSION_ID_MAX_LEN].rstrip("_")
+    return cleaned
+
+
+def _apply_auto_model_overrides(
+    config: dict[str, Any],
+    auto_model_overrides: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Set phyagi-only model keys when YAML did not pin them. Returns applied dict for logging."""
+    if not auto_model_overrides:
+        return None
+    model_cfg = config.setdefault("model", {})
+    # Treat missing model_class as phyagi (matches get_model default at models/__init__.py:24).
+    model_class = str(model_cfg.get("model_class") or "phyagi")
+    if model_class != "phyagi":
+        return None
+    applied: dict[str, Any] = {}
+    for key, value in auto_model_overrides.items():
+        if value in (None, ""):
+            continue
+        if model_cfg.get(key):
+            continue
+        if key == "session_id":
+            value = _sanitize_session_id(str(value))
+            if not value:
+                continue
+        model_cfg[key] = value
+        applied[key] = value
+    return applied or None
 
 
 def _load_final_script(scripts_dir: Path, task_id: str) -> str:
@@ -153,6 +191,7 @@ def run_one(
     resolved_output_dir: Path | None = None,
     debug: bool = False,
     snapshot_config: bool = True,
+    auto_model_overrides: dict[str, Any] | None = None,
 ) -> Any:
     config_spec = config_spec or [DEFAULT_CONFIG]
     configs = [get_config_from_spec(spec) for spec in config_spec]
@@ -210,11 +249,15 @@ def run_one(
         },
     )
 
+    applied_auto = _apply_auto_model_overrides(config, auto_model_overrides)
+
     model = get_model(config.get("model", {}))
     env = get_environment(config.get("environment", {}))
     agent = get_agent(model, env, config.get("agent", {}), default_type="default")
 
     console.print(f"Running task in [bold green]{resolved_output_dir}[/bold green]")
+    if applied_auto:
+        console.print(f"Auto model overrides applied: {applied_auto}")
     run_exception: Exception | None = None
     close_exception: Exception | None = None
     result: dict[str, Any] = {}

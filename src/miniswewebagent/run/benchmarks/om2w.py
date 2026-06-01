@@ -98,6 +98,7 @@ def _run_task_worker(
     output_root: Path,
     log_dir: Path,
     iterative: bool = False,
+    session_id_prefix: str | None = None,
 ) -> dict[str, Any]:
     task_id = str(task["task_id"])
     task_output_dir = output_root / task_id
@@ -105,6 +106,10 @@ def _run_task_worker(
     task_log_path.parent.mkdir(parents=True, exist_ok=True)
 
     run_one = _resolve_run_one(iterative)
+
+    auto_model_overrides: dict[str, Any] = {}
+    if session_id_prefix:
+        auto_model_overrides["session_id"] = f"{session_id_prefix}_{task_id}"
 
     with task_log_path.open("w", encoding="utf-8") as handle:
         with contextlib.redirect_stdout(handle), contextlib.redirect_stderr(handle):
@@ -117,6 +122,7 @@ def _run_task_worker(
                     config_spec=config_spec,
                     resolved_output_dir=task_output_dir,
                     snapshot_config=False,
+                    auto_model_overrides=auto_model_overrides or None,
                 )
                 row = {
                     "task_id": task_id,
@@ -252,6 +258,7 @@ def main(
                 output_root=batch_output_dir,
                 log_dir=batch_log_dir,
                 iterative=is_iterative,
+                session_id_prefix=batch_name,
             )
             generation_rows.append(row)
             console.print(f"[{index}/{len(tasks)}] {row['task_id']} -> {row['status']}")
@@ -267,6 +274,7 @@ def main(
                     output_root=batch_output_dir,
                     log_dir=batch_log_dir,
                     iterative=is_iterative,
+                    session_id_prefix=batch_name,
                 ): task
                 for task in tasks
             }

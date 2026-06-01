@@ -25,6 +25,7 @@ from miniswewebagent.agents.iterative import IterativeRunner
 from miniswewebagent.config import get_config_from_spec, snapshot_config_specs
 from miniswewebagent.environments import get_environment
 from miniswewebagent.models import get_model
+from miniswewebagent.run.mini import _apply_auto_model_overrides
 from miniswewebagent.tasks.om2w import load_om2w_task
 from miniswewebagent.utils.om2w_eval import export_online_mind2web_artifacts
 from miniswewebagent.utils.serialize import UNSET, recursive_merge
@@ -53,6 +54,7 @@ def run_one(
     resolved_output_dir: Path | None = None,
     debug: bool = False,
     snapshot_config: bool = True,
+    auto_model_overrides: dict[str, Any] | None = None,
 ) -> Any:
     config_spec = config_spec or [DEFAULT_CONFIG]
     configs = [get_config_from_spec(spec) for spec in config_spec]
@@ -106,8 +108,13 @@ def run_one(
         },
     )
 
+    applied_auto = _apply_auto_model_overrides(config, auto_model_overrides)
+
     model = get_model(config.get("model", {}))
     env = get_environment(config.get("environment", {}))
+
+    if applied_auto:
+        console.print(f"Auto model overrides applied: {applied_auto}")
 
     # Split agent config from iterative config
     agent_config = dict(config.get("agent", {}))
