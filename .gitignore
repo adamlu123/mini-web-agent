@@ -443,6 +443,7 @@ FodyWeavers.xsd
 # skills/ trackable so the team gets the bonete-submit skill on git pull.
 .claude/settings.local.json
 outputs
+eval_outputs
 docker/wheels
 *.whl
 # Docs/banner assets — not needed at training runtime

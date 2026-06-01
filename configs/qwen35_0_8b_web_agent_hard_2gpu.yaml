@@ -8,10 +8,10 @@
 data:
   train_data:
     - name: web_agent_om2w_hard_train
-      path: ${oc.env:ECHO_RL_DATA,/home/luyadong/sandbox/echo-rl/.claude/worktrees/web-agent-rl/data/web_agent}/om2w_hard_train.parquet
+      path: ${oc.env:ECHO_RL_DATA,/data/t-yifeili/mini-web-agent/data/web_agent}/om2w_hard_train.parquet
   val_data:
     - name: web_agent_om2w_hard_val
-      path: ${oc.env:ECHO_RL_DATA,/home/luyadong/sandbox/echo-rl/.claude/worktrees/web-agent-rl/data/web_agent}/om2w_hard_val.parquet
+      path: ${oc.env:ECHO_RL_DATA,/data/t-yifeili/mini-web-agent/data/web_agent}/om2w_hard_val.parquet
 
 tokenizer_path: Qwen/Qwen3.5-0.8B
 chat_template_path: echo_rl/terminal_agent/chat_templates/qwen3_xml_tool_calling.jinja
@@ -73,7 +73,8 @@ generator:
   step_wise_trajectories: false
   parser_name: qwen35
   command_selection: first
-  max_turns: 16
+  max_turns: 50
+  history_window_turns: 10
   max_context_tokens: 16384
   max_tokens_per_generation: 2048
   max_terminal_output_chars: 50000

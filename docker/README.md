@@ -124,6 +124,56 @@ bash docker/submit_smoke.sh
 
 1 GPU，~10 min。验证：镜像能拉、editables 能装、Playwright 能起 Chromium。改了镜像或者升级依赖之后跑一下。
 
+### 9B / Qwen3.5 vLLM smoke
+
+```bash
+cd /data/t-yifeili/mini-web-agent
+bash docker/submit_smoke_9b_triton.sh                 # 默认 echo-rl:latest
+# 换镜像对照：
+IMAGE=aifrontiers.azurecr.io/<base>:<tag> \
+  EXTRA_PIP="--upgrade transformers" \
+  JOB_TAG=smoke9bnv bash docker/submit_smoke_9b_triton.sh
+```
+
+1 GPU，~6 min。在 vLLM 里加载 `Qwen/Qwen3.5-9B` 并生成 1 个 token —— 这会强制
+JIT 编译 Qwen3.5 Gated-DeltaNet（GDN/FLA）那条 **Triton kernel** 路径，是排查
+"9B 报 triton 错" 最便宜的复现手段，不用烧整个训练。默认带 `--follow-logs`，
+所以报错会直接流到你终端（这些 pod 失败后会很快 abort + GC，不 stream 就抓不到
+traceback）。脚本里两个 python probe 都写成**真文件**再跑（不是 `python - <<EOF`）
+并带 `if __name__ == "__main__":` 守卫 —— vLLM V1 用 spawn 起 EngineCore worker，
+会 re-import probe 文件，缺守卫会递归 spawn 报错，缺真文件会 `<stdin>` not found。
+
+## 镜像选型：跑 9B 用哪个？（2026-05 实测）
+
+> **结论：跑 Qwen3.5-9B 就用本仓库的 `t-yifeili/echo-rl:latest`，别换同学给的
+> `nvidia25.08-...-vllm0.10.3.dev` 镜像。** 后者更旧，根本不支持 Qwen3.5。
+
+用上面的 9B smoke 在 cluster 上实测两个镜像：
+
+| | `t-yifeili/echo-rl:latest`（本仓库） | `nvidia25.08-...-vllm0.10.3.dev20250918`（同学给的） |
+|---|---|---|
+| torch | 2.10.0+cu128 | 2.10.0.dev+cu130 |
+| triton | **3.6.0** | 3.4.0 |
+| vllm | **0.19.0** | 0.10.2rc3 |
+| transformers | **5.3.0** | 4.56.1 |
+| 加载 Qwen3.5-9B | ✅ GENERATION OK，GDN Triton kernel 正常 JIT 编译 | ❌ `model type 'qwen3_5' ... Transformers does not recognize` |
+
+- 同学镜像的 transformers 4.56 不认识 `qwen3_5`；容器里 `pip install --upgrade
+  transformers` 也只到 released 4.56.1，仍不够（Qwen3.5 要 transformers 5.x），
+  而且它的 vllm 0.10.2 也太旧。要硬掰过来等于重建当前镜像，得不偿失。
+- 当前镜像的栈（transformers 5.3 / vllm 0.19 / triton 3.6）已经能正常跑 9B
+  **推理 + GDN Triton 编译**，所以 "9B triton 报错" 不是镜像/triton 版本问题。
+  真正的报错若出现，优先怀疑 **训练路径（FSDP2）** 或被误判成 triton 的
+  **KV-cache OOM / config**（见下）。
+
+### 9B 上过的坑（config，不是镜像）
+
+- **KV-cache OOM**：vLLM 的 `max_model_len` 默认取模型自带的 262144，
+  `max_num_batched_tokens: 262144` 在显存小的卡上会把 activation buffer 撑爆、
+  KV cache 只剩几 GiB 然后 OOM（本地 4×H100 80GB 上复现过）。
+  `qwen35_9b_web_agent_easy_4gpu.yaml` 已把它降到 `32768`（够单条
+  `max_seq_len=34096` 的 prefill）；B200 180GB 的 8gpu 配置显存够，暂时保留 262144。
+
 ## 修改并 rebuild 环境
 
 只有 **改了 pip dep / playwright / apt 系统包** 时才要重 build。**改 echo_rl 或 SkyRL 代码不用** —— editables 每次 submit 都重装。
@@ -172,6 +222,7 @@ TAG=v2 bash docker/build.sh          # 自定义 tag
 | `submit_uv_9b_easy.sh` | 8-GPU batch 训练，复用 PVC 上 persistent uv venv |
 | `submit_interactive_8gpu.sh` | 8-GPU interactive shell |
 | `submit_smoke.sh` | 1-GPU 镜像 smoke 测试 |
+| `submit_smoke_9b_triton.sh` | 1-GPU Qwen3.5-9B vLLM smoke（复现/排除 GDN Triton 编译问题） |
 | `submit_via_condapack.sh` | 备选：默认 NVIDIA image + conda-pack tar（不需要重 build 镜像） |
 
 ---

@@ -13,10 +13,10 @@
 data:
   train_data:
     - name: web_agent_om2w_easy_train
-      path: ${oc.env:ECHO_RL_DATA,/home/luyadong/sandbox/echo-rl/.claude/worktrees/web-agent-rl/data/web_agent}/om2w_easy_train.parquet
+      path: ${oc.env:ECHO_RL_DATA,/data/t-yifeili/mini-web-agent/data/web_agent}/om2w_easy_train.parquet
   val_data:
     - name: web_agent_om2w_easy_val
-      path: ${oc.env:ECHO_RL_DATA,/home/luyadong/sandbox/echo-rl/.claude/worktrees/web-agent-rl/data/web_agent}/om2w_easy_val.parquet
+      path: ${oc.env:ECHO_RL_DATA,/data/t-yifeili/mini-web-agent/data/web_agent}/om2w_easy_val.parquet
 
 tokenizer_path: Qwen/Qwen3.5-9B
 chat_template_path: echo_rl/terminal_agent/chat_templates/qwen3_xml_tool_calling.jinja
@@ -50,11 +50,14 @@ trainer:
     loss_reduction: sequence_mean
     world_model_coeff: 0.0
     world_loss_normalization: full_observation_tokens
-  epochs: 2
+  epochs: 10
   update_epochs_per_batch: 1
   use_sample_packing: false
   flash_attn: false
-  max_prompt_length: 1536
+  # easy om2w prompts exceed 1536, which made the dataset's prompt-length filter
+  # drop all rows (size 0); match the easy_4gpu / easy_eval siblings at 4096
+  # (max_seq_len=34096 leaves headroom).
+  max_prompt_length: 4096
   train_batch_size: 16
   policy_mini_batch_size: 16
   micro_train_batch_size_per_gpu: 1
@@ -78,7 +81,8 @@ generator:
   step_wise_trajectories: false
   parser_name: qwen35
   command_selection: first
-  max_turns: 16
+  max_turns: 50
+  history_window_turns: 10
   max_context_tokens: 16384
   max_tokens_per_generation: 2048
   max_terminal_output_chars: 50000

@@ -86,7 +86,8 @@ generator:
   step_wise_trajectories: false
   parser_name: qwen35
   command_selection: first
-  max_turns: 16
+  max_turns: 50
+  history_window_turns: 10
   max_context_tokens: 16384
   max_tokens_per_generation: 2048
   max_terminal_output_chars: 50000
