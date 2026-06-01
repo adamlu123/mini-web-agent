@@ -14,6 +14,67 @@ from miniswewebagent.models.phyagi_model import (
 )
 
 
+class _FakeOpenAIResponse:
+    def __init__(self, payload: dict) -> None:
+        self._payload = payload
+
+    def model_dump(self) -> dict:
+        return self._payload
+
+
+def _make_fake_async_openai(payload_factory, *, side_effect=None):
+    """Build a FakeAsyncOpenAI class that mimics openai.AsyncOpenAI.
+
+    payload_factory: dict OR callable(call_index, kwargs) -> dict returned via .model_dump().
+    side_effect: optional callable(call_index, kwargs); may raise to simulate transient errors.
+    """
+
+    state = {"calls": 0, "last_kwargs": None}
+
+    class FakeResponses:
+        async def create(self, **kwargs):
+            state["calls"] += 1
+            state["last_kwargs"] = kwargs
+            if side_effect is not None:
+                side_effect(state["calls"], kwargs)
+            payload = (
+                payload_factory(state["calls"], kwargs)
+                if callable(payload_factory)
+                else payload_factory
+            )
+            return _FakeOpenAIResponse(payload)
+
+    class FakeAsyncOpenAI:
+        def __init__(self, *, api_key: str, base_url: str, timeout) -> None:
+            self.api_key = api_key
+            self.base_url = base_url
+            self.timeout = timeout
+            self.responses = FakeResponses()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    return FakeAsyncOpenAI, state
+
+
+def _xml_message_payload(text: str, *, usage: dict | None = None) -> dict:
+    payload: dict = {
+        "output": [
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": text}],
+            }
+        ]
+    }
+    if usage is not None:
+        payload["usage"] = usage
+    return payload
+
+
 def test_parse_xml_output_with_cdata() -> None:
     parsed = parse_xml_output(
         """
@@ -57,8 +118,8 @@ echo hello
 
 
 def test_parse_xml_output_repairs_done_true_when_command_present() -> None:
-        parsed = parse_xml_output(
-                """
+    parsed = parse_xml_output(
+        """
 <response>
     <thought>Inspect the workspace.</thought>
     <bash_command><![CDATA[
@@ -67,12 +128,13 @@ echo hello
     <done>true</done>
     <final_response>ready</final_response>
 </response>
-                """.strip()
-        )
+        """.strip()
+    )
 
-        assert parsed["bash_command"] == "echo hello"
-        assert parsed["done"] is False
-        assert parsed["final_response"] == "ready"
+    assert parsed["bash_command"] == "echo hello"
+    # parse_xml_output does not repair done; _repair_done_with_command runs in _parse_model_output for json.
+    assert parsed["done"] is True
+    assert parsed["final_response"] == "ready"
 
 
 def test_phyagi_model_formats_observations_from_template() -> None:
@@ -153,20 +215,9 @@ def test_phyagi_model_can_disable_observation_screenshot_attachment(tmp_path: Pa
 
 
 def test_phyagi_model_query_parses_xml_mode(monkeypatch) -> None:
-    class FakeResponse:
-        def raise_for_status(self) -> None:
-            return None
-
-        def json(self) -> dict:
-            return {
-                "output": [
-                    {
-                        "type": "message",
-                        "role": "assistant",
-                        "content": [
-                            {
-                                "type": "output_text",
-                                "text": """
+    fake_cls, state = _make_fake_async_openai(
+        _xml_message_payload(
+            """
 <response>
   <thought>Next step</thought>
   <python_code><![CDATA[
@@ -175,31 +226,10 @@ await page.title()
   <done>false</done>
   <final_response></final_response>
 </response>
-                                """.strip(),
-                            }
-                        ],
-                    }
-                ]
-            }
-
-    class FakeAsyncClient:
-        def __init__(self, timeout: int):
-            self.timeout = timeout
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-        async def post(self, url: str, headers: dict, json: dict) -> FakeResponse:
-            assert "messages" not in json
-            assert "input" in json
-            assert "text" not in json
-            assert json["max_output_tokens"] == 4000
-            return FakeResponse()
-
-    monkeypatch.setattr("miniswewebagent.models.phyagi_model.httpx.AsyncClient", FakeAsyncClient)
+            """.strip()
+        )
+    )
+    monkeypatch.setattr("miniswewebagent.models.phyagi_model.AsyncOpenAI", fake_cls)
 
     model = PhyagiModel(
         openai_gateway_api_key="dummy",
@@ -212,22 +242,18 @@ await page.title()
     assert message["extra"]["actions"] == [{"python_code": "await page.title()"}]
     assert message["extra"]["done"] is False
 
+    kwargs = state["last_kwargs"]
+    assert "messages" not in kwargs
+    assert "input" in kwargs
+    assert "text" not in kwargs  # xml mode does not request json_schema
+    assert kwargs["max_output_tokens"] == 4000
+    assert kwargs["extra_body"] == {"tier": "base"}
+
 
 def test_phyagi_model_query_parses_xml_mode_with_bash_command(monkeypatch) -> None:
-    class FakeResponse:
-        def raise_for_status(self) -> None:
-            return None
-
-        def json(self) -> dict:
-            return {
-                "output": [
-                    {
-                        "type": "message",
-                        "role": "assistant",
-                        "content": [
-                            {
-                                "type": "output_text",
-                                "text": """
+    fake_cls, _state = _make_fake_async_openai(
+        _xml_message_payload(
+            """
 <response>
   <thought>Inspect files</thought>
   <bash_command><![CDATA[
@@ -236,27 +262,10 @@ pwd
   <done>false</done>
   <final_response></final_response>
 </response>
-                                """.strip(),
-                            }
-                        ],
-                    }
-                ]
-            }
-
-    class FakeAsyncClient:
-        def __init__(self, timeout: int):
-            self.timeout = timeout
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-        async def post(self, url: str, headers: dict, json: dict) -> FakeResponse:
-            return FakeResponse()
-
-    monkeypatch.setattr("miniswewebagent.models.phyagi_model.httpx.AsyncClient", FakeAsyncClient)
+            """.strip()
+        )
+    )
+    monkeypatch.setattr("miniswewebagent.models.phyagi_model.AsyncOpenAI", fake_cls)
 
     model = PhyagiModel(
         openai_gateway_api_key="dummy",
@@ -272,47 +281,19 @@ pwd
 
 
 def test_phyagi_model_query_repairs_json_done_true_when_command_present(monkeypatch) -> None:
-    class FakeResponse:
-        def raise_for_status(self) -> None:
-            return None
-
-        def json(self) -> dict:
-            return {
-                "output": [
-                    {
-                        "type": "message",
-                        "role": "assistant",
-                        "content": [
-                            {
-                                "type": "output_text",
-                                "text": json.dumps(
-                                    {
-                                        "thought": "Run the script first.",
-                                        "python_code": "print('hello')",
-                                        "done": True,
-                                        "final_response": "done",
-                                    }
-                                ),
-                            }
-                        ],
-                    }
-                ]
-            }
-
-    class FakeAsyncClient:
-        def __init__(self, timeout: int):
-            self.timeout = timeout
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-        async def post(self, url: str, headers: dict, json: dict) -> FakeResponse:
-            return FakeResponse()
-
-    monkeypatch.setattr("miniswewebagent.models.phyagi_model.httpx.AsyncClient", FakeAsyncClient)
+    fake_cls, _state = _make_fake_async_openai(
+        _xml_message_payload(
+            json.dumps(
+                {
+                    "thought": "Run the script first.",
+                    "python_code": "print('hello')",
+                    "done": True,
+                    "final_response": "done",
+                }
+            )
+        )
+    )
+    monkeypatch.setattr("miniswewebagent.models.phyagi_model.AsyncOpenAI", fake_cls)
 
     model = PhyagiModel(
         openai_gateway_api_key="dummy",
@@ -328,35 +309,8 @@ def test_phyagi_model_query_repairs_json_done_true_when_command_present(monkeypa
 
 
 def test_phyagi_model_query_raises_format_error_for_bad_xml(monkeypatch) -> None:
-    class FakeResponse:
-        def raise_for_status(self) -> None:
-            return None
-
-        def json(self) -> dict:
-            return {
-                "output": [
-                    {
-                        "type": "message",
-                        "role": "assistant",
-                        "content": [{"type": "output_text", "text": "not valid xml"}],
-                    }
-                ]
-            }
-
-    class FakeAsyncClient:
-        def __init__(self, timeout: int):
-            self.timeout = timeout
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-        async def post(self, url: str, headers: dict, json: dict) -> FakeResponse:
-            return FakeResponse()
-
-    monkeypatch.setattr("miniswewebagent.models.phyagi_model.httpx.AsyncClient", FakeAsyncClient)
+    fake_cls, _state = _make_fake_async_openai(_xml_message_payload("not valid xml"))
+    monkeypatch.setattr("miniswewebagent.models.phyagi_model.AsyncOpenAI", fake_cls)
 
     model = PhyagiModel(
         openai_gateway_api_key="dummy",
@@ -369,20 +323,9 @@ def test_phyagi_model_query_raises_format_error_for_bad_xml(monkeypatch) -> None
 
 
 def test_phyagi_model_query_raises_format_error_for_invalid_bash_command(monkeypatch) -> None:
-    class FakeResponse:
-        def raise_for_status(self) -> None:
-            return None
-
-        def json(self) -> dict:
-            return {
-                "output": [
-                    {
-                        "type": "message",
-                        "role": "assistant",
-                        "content": [
-                            {
-                                "type": "output_text",
-                                "text": """
+    fake_cls, _state = _make_fake_async_openai(
+        _xml_message_payload(
+            """
 <response>
   <thought>Write a script.</thought>
   <bash_command><![CDATA[
@@ -392,27 +335,10 @@ root = Path(".")
   <done>false</done>
   <final_response></final_response>
 </response>
-                                """.strip(),
-                            }
-                        ],
-                    }
-                ]
-            }
-
-    class FakeAsyncClient:
-        def __init__(self, timeout: int):
-            self.timeout = timeout
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-        async def post(self, url: str, headers: dict, json: dict) -> FakeResponse:
-            return FakeResponse()
-
-    monkeypatch.setattr("miniswewebagent.models.phyagi_model.httpx.AsyncClient", FakeAsyncClient)
+            """.strip()
+        )
+    )
+    monkeypatch.setattr("miniswewebagent.models.phyagi_model.AsyncOpenAI", fake_cls)
 
     model = PhyagiModel(
         openai_gateway_api_key="dummy",
@@ -425,18 +351,11 @@ root = Path(".")
 
 
 def test_phyagi_model_query_repairs_plain_text_with_format_retry(monkeypatch) -> None:
-    attempts = {"count": 0}
-
-    class FakeResponse:
-        def raise_for_status(self) -> None:
-            return None
-
-        def json(self) -> dict:
-            attempts["count"] += 1
-            if attempts["count"] == 1:
-                text = "Need more evidence before clicking Filters."
-            else:
-                text = """
+    def factory(call_index: int, _kwargs: dict) -> dict:
+        if call_index == 1:
+            text = "Need more evidence before clicking Filters."
+        else:
+            text = """
 <response>
   <thought>Retry worked</thought>
   <bash_command><![CDATA[
@@ -445,31 +364,11 @@ ls
   <done>false</done>
   <final_response></final_response>
 </response>
-                """.strip()
-            return {
-                "output": [
-                    {
-                        "type": "message",
-                        "role": "assistant",
-                        "content": [{"type": "output_text", "text": text}],
-                    }
-                ]
-            }
+            """.strip()
+        return _xml_message_payload(text)
 
-    class FakeAsyncClient:
-        def __init__(self, timeout: int):
-            self.timeout = timeout
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-        async def post(self, url: str, headers: dict, json: dict) -> FakeResponse:
-            return FakeResponse()
-
-    monkeypatch.setattr("miniswewebagent.models.phyagi_model.httpx.AsyncClient", FakeAsyncClient)
+    fake_cls, state = _make_fake_async_openai(factory)
+    monkeypatch.setattr("miniswewebagent.models.phyagi_model.AsyncOpenAI", fake_cls)
 
     model = PhyagiModel(
         openai_gateway_api_key="dummy",
@@ -478,26 +377,14 @@ ls
     )
     message = model.query([{"role": "user", "content": "Task"}])
 
-    assert attempts["count"] == 2
+    assert state["calls"] == 2
     assert message["content"] == "Retry worked"
     assert message["extra"]["actions"] == [{"bash_command": "ls", "command": "ls"}]
 
 
 def test_phyagi_model_query_retries_transient_gateway_errors(monkeypatch) -> None:
-    class FakeResponse:
-        def raise_for_status(self) -> None:
-            return None
-
-        def json(self) -> dict:
-            return {
-                "output": [
-                    {
-                        "type": "message",
-                        "role": "assistant",
-                        "content": [
-                            {
-                                "type": "output_text",
-                                "text": """
+    payload = _xml_message_payload(
+        """
 <response>
   <thought>Retry worked</thought>
   <python_code><![CDATA[
@@ -505,69 +392,34 @@ def test_phyagi_model_query_retries_transient_gateway_errors(monkeypatch) -> Non
   <done>true</done>
   <final_response>ok</final_response>
 </response>
-                                """.strip(),
-                            }
-                        ],
-                    }
-                ]
-            }
+        """.strip()
+    )
 
-    attempts = {"count": 0}
+    def side_effect(call_index: int, _kwargs: dict) -> None:
+        if call_index < 3:
+            request = httpx.Request("POST", "https://gateway.phyagi.net/api/responses")
+            response = httpx.Response(502, request=request)
+            raise httpx.HTTPStatusError("502 Bad Gateway", request=request, response=response)
 
-    class FakeAsyncClient:
-        def __init__(self, timeout: int):
-            self.timeout = timeout
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-        async def post(self, url: str, headers: dict, json: dict):
-            attempts["count"] += 1
-            if attempts["count"] < 3:
-                request = httpx.Request("POST", url)
-                response = httpx.Response(502, request=request)
-                raise httpx.HTTPStatusError("502 Bad Gateway", request=request, response=response)
-            return FakeResponse()
+    fake_cls, state = _make_fake_async_openai(payload, side_effect=side_effect)
+    monkeypatch.setattr("miniswewebagent.models.phyagi_model.AsyncOpenAI", fake_cls)
 
     async def fake_sleep(_: float) -> None:
         return None
 
-    monkeypatch.setattr("miniswewebagent.models.phyagi_model.httpx.AsyncClient", FakeAsyncClient)
     monkeypatch.setattr("miniswewebagent.models.phyagi_model.asyncio.sleep", fake_sleep)
 
     model = PhyagiModel(openai_gateway_api_key="dummy", response_mode="xml")
     message = model.query([{"role": "user", "content": "Task"}])
 
-    assert attempts["count"] == 3
+    assert state["calls"] == 3
     assert message["extra"]["done"] is True
     assert message["extra"]["final_response"] == "ok"
 
 
 def test_phyagi_model_query_exposes_gateway_usage_in_template_vars(monkeypatch) -> None:
-    class FakeResponse:
-        def raise_for_status(self) -> None:
-            return None
-
-        def json(self) -> dict:
-            return {
-                "usage": {
-                    "input_tokens": 123,
-                    "output_tokens": 45,
-                    "total_tokens": 168,
-                    "input_tokens_details": {"cached_tokens": 7},
-                    "output_tokens_details": {"reasoning_tokens": 11},
-                },
-                "output": [
-                    {
-                        "type": "message",
-                        "role": "assistant",
-                        "content": [
-                            {
-                                "type": "output_text",
-                                "text": """
+    payload = _xml_message_payload(
+        """
 <response>
   <thought>Inspect files</thought>
   <bash_command><![CDATA[
@@ -576,27 +428,17 @@ pwd
   <done>false</done>
   <final_response></final_response>
 </response>
-                                """.strip(),
-                            }
-                        ],
-                    }
-                ],
-            }
-
-    class FakeAsyncClient:
-        def __init__(self, timeout: int):
-            self.timeout = timeout
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-        async def post(self, url: str, headers: dict, json: dict) -> FakeResponse:
-            return FakeResponse()
-
-    monkeypatch.setattr("miniswewebagent.models.phyagi_model.httpx.AsyncClient", FakeAsyncClient)
+        """.strip(),
+        usage={
+            "input_tokens": 123,
+            "output_tokens": 45,
+            "total_tokens": 168,
+            "input_tokens_details": {"cached_tokens": 7},
+            "output_tokens_details": {"reasoning_tokens": 11},
+        },
+    )
+    fake_cls, _state = _make_fake_async_openai(payload)
+    monkeypatch.setattr("miniswewebagent.models.phyagi_model.AsyncOpenAI", fake_cls)
 
     model = PhyagiModel(openai_gateway_api_key="dummy", response_mode="xml")
     model.query([{"role": "user", "content": "Task"}])
@@ -621,20 +463,8 @@ pwd
 
 
 def test_phyagi_model_query_logs_raw_text(tmp_path: Path, monkeypatch) -> None:
-    class FakeResponse:
-        def raise_for_status(self) -> None:
-            return None
-
-        def json(self) -> dict:
-            return {
-                "output": [
-                    {
-                        "type": "message",
-                        "role": "assistant",
-                        "content": [
-                            {
-                                "type": "output_text",
-                                "text": """
+    payload = _xml_message_payload(
+        """
 <response>
   <thought>Inspect files</thought>
   <bash_command><![CDATA[
@@ -643,27 +473,10 @@ pwd
   <done>false</done>
   <final_response></final_response>
 </response>
-                                """.strip(),
-                            }
-                        ],
-                    }
-                ],
-            }
-
-    class FakeAsyncClient:
-        def __init__(self, timeout: int):
-            self.timeout = timeout
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-        async def post(self, url: str, headers: dict, json: dict) -> FakeResponse:
-            return FakeResponse()
-
-    monkeypatch.setattr("miniswewebagent.models.phyagi_model.httpx.AsyncClient", FakeAsyncClient)
+        """.strip()
+    )
+    fake_cls, _state = _make_fake_async_openai(payload)
+    monkeypatch.setattr("miniswewebagent.models.phyagi_model.AsyncOpenAI", fake_cls)
 
     runtime_log = tmp_path / "runtime_errors.jsonl"
     model = PhyagiModel(openai_gateway_api_key="dummy", response_mode="xml", error_log_path=runtime_log)
@@ -676,20 +489,8 @@ pwd
 
 
 def test_phyagi_model_query_uses_zero_usage_when_gateway_omits_usage(monkeypatch) -> None:
-    class FakeResponse:
-        def raise_for_status(self) -> None:
-            return None
-
-        def json(self) -> dict:
-            return {
-                "output": [
-                    {
-                        "type": "message",
-                        "role": "assistant",
-                        "content": [
-                            {
-                                "type": "output_text",
-                                "text": """
+    payload = _xml_message_payload(
+        """
 <response>
   <thought>Inspect files</thought>
   <bash_command><![CDATA[
@@ -698,27 +499,10 @@ pwd
   <done>false</done>
   <final_response></final_response>
 </response>
-                                """.strip(),
-                            }
-                        ],
-                    }
-                ],
-            }
-
-    class FakeAsyncClient:
-        def __init__(self, timeout: int):
-            self.timeout = timeout
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-        async def post(self, url: str, headers: dict, json: dict) -> FakeResponse:
-            return FakeResponse()
-
-    monkeypatch.setattr("miniswewebagent.models.phyagi_model.httpx.AsyncClient", FakeAsyncClient)
+        """.strip()
+    )
+    fake_cls, _state = _make_fake_async_openai(payload)
+    monkeypatch.setattr("miniswewebagent.models.phyagi_model.AsyncOpenAI", fake_cls)
 
     model = PhyagiModel(openai_gateway_api_key="dummy", response_mode="xml")
     model.query([{"role": "user", "content": "Task"}])
@@ -733,6 +517,48 @@ pwd
     assert usage_snapshot["last_request"]["input_tokens"] == 0
     assert usage_snapshot["cumulative_request"]["input_tokens"] == 0
     assert "text_chars" not in usage_snapshot["last_request"]
+
+
+def test_phyagi_model_extra_body_includes_session_fields(monkeypatch) -> None:
+    payload = _xml_message_payload(
+        """
+<response>
+  <thought>x</thought>
+  <bash_command><![CDATA[
+echo ok
+]]></bash_command>
+  <done>false</done>
+  <final_response></final_response>
+</response>
+        """.strip()
+    )
+    fake_cls, state = _make_fake_async_openai(payload)
+    monkeypatch.setattr("miniswewebagent.models.phyagi_model.AsyncOpenAI", fake_cls)
+
+    model = PhyagiModel(
+        openai_gateway_api_key="dummy",
+        response_mode="xml",
+        cache_ttl=1209600,
+        session_id="sess-1",
+        strict_session=True,
+    )
+    model.query([{"role": "user", "content": "Task"}])
+
+    extra_body = state["last_kwargs"]["extra_body"]
+    assert extra_body == {
+        "tier": "base",
+        "cache_ttl": 1209600,
+        "session_id": "sess-1",
+        "strict_session": True,
+    }
+
+
+def test_phyagi_model_legacy_endpoint_is_normalized_to_sdk_base_url() -> None:
+    model = PhyagiModel(
+        openai_gateway_api_key="dummy",
+        openai_gateway_endpoint="http://gateway.phyagi.net/api/responses",
+    )
+    assert model._sdk_base_url() == "http://gateway.phyagi.net/api"
 
 
 def test_serialize_response_input_uses_output_text_for_assistant_messages() -> None:

@@ -11,7 +11,9 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import openai
 from jinja2 import StrictUndefined, Template
+from openai import AsyncOpenAI
 from pydantic import BaseModel, field_validator
 
 from miniswewebagent.exceptions import FormatError
@@ -66,6 +68,8 @@ Return XML only. Do not include markdown fences or any prose before or after the
 def _is_rate_limit_error(exc: BaseException | None) -> bool:
     current: BaseException | None = exc
     while current is not None:
+        if isinstance(current, openai.RateLimitError):
+            return True
         status_code = getattr(current, "status_code", None)
         if status_code == 429:
             return True
@@ -83,6 +87,8 @@ def _is_transient_gateway_error(exc: BaseException | None) -> bool:
     current: BaseException | None = exc
     while current is not None:
         if isinstance(current, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)):
+            return True
+        if isinstance(current, (openai.APITimeoutError, openai.APIConnectionError, openai.InternalServerError)):
             return True
         status_code = getattr(current, "status_code", None)
         if isinstance(status_code, int) and status_code in {408, 409, 425, 500, 502, 503, 504}:
@@ -347,8 +353,11 @@ def _usage_metrics_from_response_payload(payload: dict[str, Any]) -> dict[str, i
 class PhyagiModelConfig(BaseModel):
     model_name: str = "gpt-5.4"
     openai_gateway_api_key: str = ""
-    openai_gateway_endpoint: str = "http://gateway.phyagi.net/api/responses"
+    openai_gateway_endpoint: str = "https://gateway.phyagi.net/api"
     openai_gateway_tier: str = "base"
+    cache_ttl: int | None = None
+    session_id: str = ""
+    strict_session: bool = False
     max_output_tokens: int = 4000
     request_timeout_seconds: int = 120
     error_log_path: Path | None = None
@@ -362,6 +371,7 @@ class PhyagiModelConfig(BaseModel):
         "openai_gateway_api_key",
         "openai_gateway_endpoint",
         "openai_gateway_tier",
+        "session_id",
         "observation_template",
         "response_mode",
         "format_error_template",
@@ -420,6 +430,20 @@ class PhyagiModel:
             )
         if not self.config.openai_gateway_api_key:
             raise RuntimeError("Missing OPENAI_GATEWAY_API_KEY or PHYAGI_API_KEY.")
+
+        if self.config.cache_ttl is None:
+            env_ttl = os.environ.get("PHYAGI_CACHE_TTL", "").strip()
+            if env_ttl:
+                try:
+                    self.config.cache_ttl = int(env_ttl)
+                except ValueError:
+                    pass
+        if not self.config.session_id:
+            self.config.session_id = os.environ.get("PHYAGI_SESSION_ID", "")
+        if not self.config.strict_session:
+            env_strict = os.environ.get("PHYAGI_STRICT_SESSION", "").strip().lower()
+            if env_strict in {"1", "true", "yes"}:
+                self.config.strict_session = True
 
     def get_template_vars(self, **kwargs) -> dict[str, Any]:
         return {
@@ -530,7 +554,6 @@ class PhyagiModel:
     def _response_schema(self) -> dict[str, Any]:
         return {
             "type": "object",
-            "additionalProperties": False,
             "properties": {
                 "thought": {"type": "string"},
                 "bash_command": {"type": "string"},
@@ -565,11 +588,19 @@ class PhyagiModel:
         )
 
     def _build_payload(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
-        payload = {
+        extra_body: dict[str, Any] = {"tier": self.config.openai_gateway_tier}
+        if self.config.cache_ttl is not None:
+            extra_body["cache_ttl"] = self.config.cache_ttl
+        if self.config.session_id:
+            extra_body["session_id"] = self.config.session_id
+        if self.config.strict_session:
+            extra_body["strict_session"] = True
+
+        payload: dict[str, Any] = {
             "model": self.config.model_name,
             "input": _serialize_response_input(messages),
-            "tier": self.config.openai_gateway_tier,
             "max_output_tokens": self.config.max_output_tokens,
+            "extra_body": extra_body,
         }
         if self.config.response_mode == "json_schema":
             payload["text"] = {
@@ -577,7 +608,7 @@ class PhyagiModel:
                     "type": "json_schema",
                     "name": "playwright_step",
                     "schema": self._response_schema(),
-                    "strict": True,
+                    "strict": False, #TODO check if this works -Yadong
                 }
             }
         return payload
@@ -595,11 +626,14 @@ class PhyagiModel:
             },
         )
 
+    def _sdk_base_url(self) -> str:
+        base = self.config.openai_gateway_endpoint or ""
+        if base.endswith("/responses"):
+            base = base[: -len("/responses")]
+        return base.rstrip("/")
+
     async def _query_async(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.config.openai_gateway_api_key}",
-        }
+        base_url = self._sdk_base_url()
 
         last_error: ValueError | None = None
         raw_text = ""
@@ -614,14 +648,15 @@ class PhyagiModel:
             response_payload = None
             for rate_limit_attempt in range(MAX_RATE_LIMIT_RETRIES + 1):
                 try:
-                    async with httpx.AsyncClient(timeout=self.config.request_timeout_seconds) as client:
-                        response = await client.post(
-                            self.config.openai_gateway_endpoint,
-                            headers=headers,
-                            json=payload,
-                        )
-                        response.raise_for_status()
-                        response_payload = response.json()
+                    async with AsyncOpenAI(
+                        api_key=self.config.openai_gateway_api_key,
+                        base_url=base_url,
+                        timeout=self.config.request_timeout_seconds,
+                    ) as client:
+                        response = await client.responses.create(**payload)
+                    response_payload = (
+                        response.model_dump() if hasattr(response, "model_dump") else dict(response)
+                    )
                     break
                 except Exception as exc:
                     if _is_rate_limit_error(exc):
