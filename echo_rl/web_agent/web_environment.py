@@ -748,6 +748,10 @@ class WebAgentEnvironment:
         return browser, context
 
     async def _stop_playwright(self) -> None:
+        # A dead Browserbase/CDP session leaves the Playwright node driver pipe
+        # broken (EPIPE); close()/stop() can then block forever waiting on a
+        # reply that never comes. Bound every teardown await so a wedged session
+        # cannot hang the rollout — and the whole generation step — indefinitely.
         for handle in (self._page, self._context, self._browser):
             if handle is None:
                 continue
@@ -756,7 +760,7 @@ class WebAgentEnvironment:
                 try:
                     res = close()
                     if asyncio.iscoroutine(res):
-                        await res
+                        await asyncio.wait_for(res, timeout=30)
                 except Exception:
                     pass
         self._page = None
@@ -764,7 +768,7 @@ class WebAgentEnvironment:
         self._browser = None
         if self._playwright is not None:
             try:
-                await self._playwright.stop()
+                await asyncio.wait_for(self._playwright.stop(), timeout=30)
             except Exception:
                 pass
             self._playwright = None

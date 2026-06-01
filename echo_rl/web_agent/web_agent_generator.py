@@ -173,12 +173,45 @@ class WebAgentGenerator(TerminalAgentGenerator):
                         prompts[idx], env_extras[idx], trajectory_ids[idx], "error"
                     )
 
+        # NOTE: We deliberately avoid ``asyncio.TaskGroup`` here. TaskGroup's
+        # __aexit__ waits unconditionally for *every* child task, so a single
+        # rollout whose cancellation never completes (e.g. a Playwright/CDP
+        # ``close()`` wedged on a dead Browserbase session, or a judge call
+        # stuck in a non-cancellable worker thread) would stall the whole
+        # generation step — and with it the trainer's ``ray.get()`` — forever.
+        # That is exactly the ~19h hang observed on run lu4duvjj. Instead we
+        # impose a hard batch-level deadline and abandon stragglers as failures
+        # so the trainer always makes progress.
+        tasks = [asyncio.create_task(_worker(idx)) for idx in range(len(prompts))]
+        conc = max(1, int(self.generator_cfg.agent_max_concurrency))
+        waves = (len(tasks) + conc - 1) // conc
+        # Each wave is bounded by agent_timeout; add one extra wave + 5min of
+        # slack (cleanup/judge) so healthy batches never trip the deadline.
+        batch_deadline = self.generator_cfg.agent_timeout * (waves + 1) + 300
         try:
-            async with asyncio.TaskGroup() as tg:
-                for idx in range(len(prompts)):
-                    tg.create_task(_worker(idx))
+            _done, pending = await asyncio.wait(tasks, timeout=batch_deadline)
+            if pending:
+                logger.error(
+                    "Web generation batch deadline (%.0fs, %d waves) hit with "
+                    "%d/%d rollouts unfinished; cancelling and recording them "
+                    "as timeouts.",
+                    batch_deadline, waves, len(pending), len(tasks),
+                )
+                for t in pending:
+                    t.cancel()
+                # Bounded drain so cancellation can propagate, but never block
+                # the trainer waiting on a wedged task.
+                await asyncio.wait(pending, timeout=60)
+            for idx in range(len(prompts)):
+                if outputs[idx] is None:
+                    outputs[idx] = self._failure_output(
+                        prompts[idx], env_extras[idx], trajectory_ids[idx], "timeout"
+                    )
         finally:
-            await provider.cleanup_batch()
+            try:
+                await asyncio.wait_for(provider.cleanup_batch(), timeout=120)
+            except Exception:
+                logger.exception("web cleanup_batch failed or timed out")
         return self._build_generator_output([o for o in outputs if o is not None])
 
     async def _run_one(self, provider, prompt, env_extra, trajectory_id, sampling_params):
@@ -233,9 +266,9 @@ class WebAgentGenerator(TerminalAgentGenerator):
 
         if environment is not None:
             try:
-                await environment.cleanup()
+                await asyncio.wait_for(environment.cleanup(), timeout=60)
             except Exception:
-                logger.exception("web env cleanup failed")
+                logger.exception("web env cleanup failed or timed out")
 
         self._ensure_non_empty_completion(interaction)
         return TerminalTrajectoryOutput(

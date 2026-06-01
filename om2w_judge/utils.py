@@ -84,7 +84,12 @@ class OpenaiEngine:
         self.model = model
         self.request_interval = 0 if rate_limit == -1 else 60.0 / rate_limit
         self.next_avil_time = [0] * len(self.api_keys)
-        self.client = OpenAI(api_key=api_key)
+        # Bound every judge HTTP call. This engine runs inside a worker thread
+        # (asyncio.to_thread) that the rollout's wait_for cannot cancel, so the
+        # client's own timeout is the only real upper bound — without it a
+        # wedged request can pin a thread (and starve the executor) for the
+        # default ~10min, multiplied by retries and per-screenshot calls.
+        self.client = OpenAI(api_key=api_key, timeout=300.0, max_retries=2)
 
     def log_error(details):
         print(f"Retrying in {details['wait']:0.1f} seconds due to {details['exception']}")
