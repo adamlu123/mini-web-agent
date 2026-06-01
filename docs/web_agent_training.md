@@ -4,6 +4,11 @@ This doc describes the web-agent RL training added on top of echo-rl. The
 implementation lives entirely under `echo_rl/web_agent/` and reuses the
 echo-rl terminal-agent rollout loop / SkyRL hooks unchanged.
 
+> **Eval / inference:** to measure a model's Online-Mind2Web pass@1 without
+> training (base model or a trained checkpoint), see
+> [`web_agent_eval.md`](web_agent_eval.md). Latest numbers:
+> [`../eval_outputs/RESULTS.md`](../eval_outputs/RESULTS.md).
+
 ## What's the same as echo-rl terminal-agent
 
 Everything below is inherited:
@@ -33,10 +38,14 @@ Everything below is inherited:
 
 ```
 python -m echo_rl.web_agent.scripts.prepare_om2w_data \
-    --input  /home/luyadong/sandbox/nano_eval/task_files/om2w_260220.json \
-    --output ${ECHO_RL_DATA}/web_agent/om2w_train.parquet \
-    --val-output ${ECHO_RL_DATA}/web_agent/om2w_val.parquet \
-    --train-size 60 --val-size 8
+    --input  /home/luyadong/Online_Mind2Web.csv \
+    --output ${ECHO_RL_DATA}/web_agent/om2w_easy_train.parquet \
+    --val-output ${ECHO_RL_DATA}/web_agent/om2w_easy_val.parquet \
+    --levels easy --train-size 68 --val-size 12 --seed 7
+
+# Swap `easy` for `medium` / `hard` and adjust sizes to cover the level
+# pool (easy=80, medium=143, hard=77). The input can also be a JSON file
+# with the same columns; format is auto-detected by extension.
 ```
 
 The parquet only stores task metadata (`task_id`, `task`, `start_url`,

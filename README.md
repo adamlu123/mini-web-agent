@@ -166,12 +166,12 @@ run is a follow-up.
 ## Quick start (training)
 
 ```
-# 1. Build the dataset
+# 1. Build the dataset (CSV source; full pool sizes: easy=80, medium=143, hard=77)
 python -m echo_rl.web_agent.scripts.prepare_om2w_data \
-    --input  /home/luyadong/sandbox/nano_eval/task_files/om2w_260220.json \
-    --output ${ECHO_RL_DATA}/web_agent/om2w_train.parquet \
-    --val-output ${ECHO_RL_DATA}/web_agent/om2w_val.parquet \
-    --train-size 60 --val-size 8
+    --input  /home/luyadong/Online_Mind2Web.csv \
+    --output ${ECHO_RL_DATA}/web_agent/om2w_easy_train.parquet \
+    --val-output ${ECHO_RL_DATA}/web_agent/om2w_easy_val.parquet \
+    --levels easy --train-size 68 --val-size 12 --seed 7
 
 # 2. Set up creds (Browserbase + phyagi judge)
 source /home/luyadong/sandbox/cred.sh

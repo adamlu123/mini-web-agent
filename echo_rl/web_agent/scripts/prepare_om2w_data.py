@@ -1,14 +1,17 @@
-"""Convert an Online-Mind2Web JSON tasks file into a parquet usable by the
-web-agent RL dataset.
+"""Convert an Online-Mind2Web CSV/JSON tasks file into a parquet usable by
+the web-agent RL dataset.
 
-Example::
+Example (CSV — canonical source)::
 
     python -m echo_rl.web_agent.scripts.prepare_om2w_data \\
-        --input /home/luyadong/sandbox/nano_eval/task_files/om2w_260220.json \\
-        --output /home/luyadong/sandbox/echo-rl/data/web_agent/om2w_train.parquet \\
-        --split train --train-size 60 --val-output \\
-            /home/luyadong/sandbox/echo-rl/data/web_agent/om2w_val.parquet \\
-        --val-size 8
+        --input /home/luyadong/Online_Mind2Web.csv \\
+        --output ${ECHO_RL_DATA}/web_agent/om2w_easy_train.parquet \\
+        --val-output ${ECHO_RL_DATA}/web_agent/om2w_easy_val.parquet \\
+        --levels easy --train-size 68 --val-size 12 --seed 7
+
+Replace ``easy`` with ``medium`` or ``hard`` and adjust ``--train-size``
+to match the level pool (easy=80, medium=143, hard=77). JSON inputs with
+the same columns also work; format is auto-detected by extension.
 
 The parquet rows are pre-tokenized at load time inside ``WebAgentTaskDataset``,
 so this script only normalizes records and writes plain columns.

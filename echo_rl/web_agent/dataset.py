@@ -6,12 +6,13 @@ only the task metadata (id, prompt text, starting URL, level). We keep the
 same column names that the rollout glue expects, but the ``task_binary``
 column is now an empty bytes placeholder.
 
-Input formats handled (auto-detected):
+Input formats handled (auto-detected by file extension):
 
-- ``[{"id": "...", "task": "...", "website_url": "...", "level": "..."}, ...]``
-- ``{"tasks": [...]}``  (same items)
-- The mini-web-agent ``om2w_260220.json`` shape with ``task_id`` /
-  ``confirmed_task`` / ``website``.
+- ``.csv`` — the canonical ``Online_Mind2Web.csv`` shape with columns
+  ``task_id, confirmed_task, website, reference_length, level``.
+- ``.json`` — either ``[{"id": ..., "task": ..., "website_url": ...}, ...]``
+  or ``{"tasks": [...]}`` or the older ``om2w_*.json`` shape with
+  ``task_id`` / ``confirmed_task`` / ``website``.
 
 Outputs a HuggingFace ``datasets.Dataset`` with columns:
 - ``prompt``     — chat-template messages list
@@ -65,11 +66,18 @@ def _normalize_record(record: dict[str, Any]) -> dict[str, Any] | None:
 
 def load_om2w_records(source: str | Path) -> list[dict[str, Any]]:
     path = Path(source).expanduser()
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    if isinstance(payload, dict):
-        items = payload.get("tasks") or payload.get("data") or []
+    items: list[Any]
+    if path.suffix.lower() == ".csv":
+        import csv
+
+        with path.open(encoding="utf-8", newline="") as f:
+            items = list(csv.DictReader(f))
     else:
-        items = payload
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(payload, dict):
+            items = payload.get("tasks") or payload.get("data") or []
+        else:
+            items = payload
     out: list[dict[str, Any]] = []
     for item in items:
         if not isinstance(item, dict):
