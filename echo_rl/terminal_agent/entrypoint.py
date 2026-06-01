@@ -54,6 +54,11 @@ def _load_config(argv: list[str]) -> "EchoTerminalAgentSkyRLConfig":
 class TerminalAgentGeneratorConfig(GeneratorConfig):
     max_turns: int = 16
     max_context_tokens: int = 25000
+    # Sliding window over conversation history fed back to the policy: when set
+    # to a positive int, only the most recent N (assistant + observation) turns
+    # are included in the generation context. The full trajectory is still
+    # recorded for loss/masking. None (or <=0) keeps the full history.
+    history_window_turns: Optional[int] = None
     max_tokens_per_generation: int = 2048
     max_terminal_output_chars: int = 6000
     terminal_output_truncation: str = "start_end"

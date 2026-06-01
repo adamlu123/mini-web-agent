@@ -250,9 +250,22 @@ class TerminalAgentGenerator(GeneratorInterface):
         stop_reason = "error"
         t_run_start = time.monotonic()
         turn_traces: list[dict[str, Any]] = []
+        prompt_len = len(interaction.prompt_token_ids)
         rollout_context_ids: list[int] | None = None
         if self.generator_cfg.thinking_handling == "strip_rollout":
             rollout_context_ids = list(interaction.prompt_token_ids)
+
+        # Sliding window over conversation history: when set to a positive int,
+        # only the most recent `history_window_turns` (assistant + observation)
+        # turns are fed back to the policy as generation context. The full
+        # trajectory is still recorded on `interaction` for loss/masking — only
+        # the model's input context is truncated. `turn_boundaries[t]` is the
+        # offset, into the *completion* portion of the active stream, at which
+        # turn t's content begins.
+        window_turns = getattr(self.generator_cfg, "history_window_turns", None)
+        if window_turns is not None and window_turns <= 0:
+            window_turns = None
+        turn_boundaries: list[int] = []
 
         turn = -1
         for turn in range(self.generator_cfg.max_turns):
@@ -260,12 +273,25 @@ class TerminalAgentGenerator(GeneratorInterface):
             if not self._has_token_budget(interaction, 0):
                 stop_reason = "max_total_tokens"
                 break
-            current_len = len(rollout_context_ids) if rollout_context_ids is not None else total_len
+
+            # Mark where this turn starts in the active completion stream, then
+            # build the (optionally windowed) generation context.
+            active_full = rollout_context_ids if rollout_context_ids is not None else interaction.token_ids
+            completion_portion = active_full[prompt_len:]
+            turn_boundaries.append(len(completion_portion))
+            generation_context = self._windowed_generation_context(
+                interaction.prompt_token_ids,
+                completion_portion,
+                active_full,
+                turn_boundaries,
+                turn,
+                window_turns,
+            )
+
+            current_len = len(generation_context)
             if current_len >= self.generator_cfg.max_context_tokens:
                 stop_reason = "max_context_tokens"
                 break
-
-            generation_context = rollout_context_ids if rollout_context_ids is not None else interaction.token_ids
             max_tokens = self.generator_cfg.max_tokens_per_generation
             if self.generator_cfg.max_total_tokens is not None:
                 max_tokens = min(max_tokens, self.generator_cfg.max_total_tokens - total_len)
@@ -777,6 +803,32 @@ class TerminalAgentGenerator(GeneratorInterface):
                 if clean_logprobs is not None:
                     clean_logprobs.append(logprobs[i])
         return clean_ids, clean_logprobs
+
+    @staticmethod
+    def _windowed_generation_context(
+        prompt_token_ids: list[int],
+        completion_portion: list[int],
+        full_context: list[int],
+        turn_boundaries: list[int],
+        turn: int,
+        window_turns: int | None,
+    ) -> list[int]:
+        """Generation context fed to the policy for the current turn.
+
+        With no window (``window_turns`` None or the rollout shorter than the
+        window) the full conversation ``full_context`` is returned unchanged.
+        Otherwise only the prompt plus the most recent ``window_turns``
+        (assistant + observation) turns are kept: ``turn_boundaries[t]`` is the
+        offset, into ``completion_portion`` (the completion tokens after the
+        prompt), at which turn ``t`` begins, so slicing from
+        ``turn_boundaries[turn - window_turns]`` drops everything older. The
+        prompt's trailing generation prompt lines up with the first retained
+        assistant message, so the spliced context stays well-formed.
+        """
+        if window_turns is None or turn < window_turns:
+            return full_context
+        window_start = turn_boundaries[turn - window_turns]
+        return prompt_token_ids + completion_portion[window_start:]
 
     @staticmethod
     def _truncate_observation_segments(warning_text: str, env_text: str, max_chars: int) -> tuple[str, str, str]:
