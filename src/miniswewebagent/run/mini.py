@@ -289,6 +289,21 @@ def run_one(
             result["close_exception"] = str(exc)
             if run_exception is None:
                 run_exception = exc
+        # Release any cloud browser sessions recorded by open_browser_session,
+        # in case an agent step aborted before reaching `await browser.close()`.
+        try:
+            from miniswewebagent.tools.browser_session import release_recorded_sessions
+
+            released = release_recorded_sessions(resolved_output_dir / "browser_sessions.jsonl")
+            if released:
+                failures = [r for r in released if not r[1]]
+                console.print(
+                    f"Released {len(released) - len(failures)}/{len(released)} cloud browser session(s)."
+                )
+                for sid, _ok, err in failures:
+                    console.print(f"[yellow]  session {sid} release failed: {err}[/yellow]")
+        except Exception as exc:
+            console.print(f"[yellow]Browser session cleanup skipped: {exc}[/yellow]")
     judge_artifacts = export_online_mind2web_artifacts(
         output_dir=resolved_output_dir,
         task=resolved_task,

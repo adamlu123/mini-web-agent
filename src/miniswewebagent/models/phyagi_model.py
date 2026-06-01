@@ -103,6 +103,15 @@ def _is_transient_gateway_error(exc: BaseException | None) -> bool:
                 "connection reset",
                 "connection aborted",
                 "timed out",
+                # Transient phyagi-gateway upstream flake that surfaces as a 404
+                # NotFoundError ("upstream.failed - The upstream model returned
+                # an error. Try again in a moment." / "Azure OpenAI Responses
+                # API is not enabled in this region."). These are intermittent
+                # and clear on retry, so treat them as transient. Kept specific
+                # to avoid retrying genuine not-found errors (e.g. bad model id).
+                "upstream.failed",
+                "try again in a moment",
+                "responses api is not enabled",
             )
         ):
             return True
