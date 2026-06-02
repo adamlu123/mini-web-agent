@@ -41,7 +41,6 @@ model:
     Status: {{ 'ok' if observation.success else 'error' }}
     Workspace: {{ observation.workspace_dir }}
     Working directory: {{ observation.cwd }}
-    Command: {{ observation.command }}
     Return code: {{ observation.returncode }}
     {% if observation.exception %}Exception:
     {{ observation.exception }}
