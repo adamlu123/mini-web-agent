@@ -1,0 +1,41 @@
+### SMOKE: full SFT of Qwen3.5-4B on mock web-agent multi-turn data.
+### Tiny (max_steps=5, cutoff 2048, no save) -- just checks the code path runs
+### on 4 GPUs. Loss is on EVERY assistant turn (mask_history / train_on_prompt
+### left at their defaults = false), users/observations are masked.
+
+### model
+model_name_or_path: Qwen/Qwen3.5-4B
+trust_remote_code: true
+
+### method
+stage: sft
+do_train: true
+finetuning_type: full
+deepspeed: examples/deepspeed/ds_z3_config.json   # ZeRO-3 shards optimizer across the 4 GPUs
+
+### dataset
+dataset: web_agent_mock
+template: qwen3_5
+cutoff_len: 2048
+max_samples: 32
+overwrite_cache: true
+preprocessing_num_workers: 8
+dataloader_num_workers: 2
+
+### output
+output_dir: saves/qwen35_4b/full/websft_smoke
+logging_steps: 1
+save_steps: 100000          # effectively no checkpoint during the smoke
+plot_loss: false
+overwrite_output_dir: true
+report_to: none
+
+### train
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 1
+learning_rate: 1.0e-5
+max_steps: 5
+lr_scheduler_type: constant
+warmup_ratio: 0.0
+bf16: true
+ddp_timeout: 180000000

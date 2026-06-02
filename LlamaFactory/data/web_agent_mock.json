@@ -1,0 +1,1234 @@
+[
+  {
+    "conversations": [
+      {
+        "from": "human",
+        "value": "Task: Book a table for two at an Italian restaurant downtown for 7pm tonight.\n\n[page] Search results: 12 items. Top result: 'Acme X100' $129.99, rating 4.3 (812 reviews)."
+      },
+      {
+        "from": "gpt",
+        "value": "Now proceed to checkout.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Proceed to checkout\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Flight list: AS288 nonstop 10h25m $742; DL167 1 stop $688; NH179 nonstop $815."
+      },
+      {
+        "from": "gpt",
+        "value": "I will apply the vegetarian filter first.\n<tool_call>{\"name\":\"type\",\"args\":{\"selector\":\"#search\",\"text\":\"vegetarian lasagna\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Filters applied. 3 results match. First: 'Nonna's Lasagna' 4.8 stars, 1,203 reviews."
+      },
+      {
+        "from": "gpt",
+        "value": "Now proceed to checkout.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Proceed to checkout\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Filters applied. 3 results match. First: 'Nonna's Lasagna' 4.8 stars, 1,203 reviews."
+      },
+      {
+        "from": "gpt",
+        "value": "Based on the page, here is the answer to \"Book a table for two at an Italian resta...\".\n<tool_call>{\"name\":\"submit\",\"args\":{\"answer\":\"<final answer>\"}}</tool_call>"
+      }
+    ],
+    "system": "You are a web-browsing agent. You solve the user's task by issuing shell commands that drive a single live browser tab. Think step by step, then emit exactly one action per turn as <tool_call>{...}</tool_call>."
+  },
+  {
+    "conversations": [
+      {
+        "from": "human",
+        "value": "Task: Find a vegetarian lasagna recipe with more than 500 reviews.\n\n[page] Product detail loaded. Price $129.99. 'Add to cart' button is visible (role=button)."
+      },
+      {
+        "from": "gpt",
+        "value": "I will sort the flights by price to find the cheapest.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"button\",\"name\":\"Sort by price\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Product detail loaded. Price $129.99. 'Add to cart' button is visible (role=button)."
+      },
+      {
+        "from": "gpt",
+        "value": "Now proceed to checkout.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Proceed to checkout\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Product detail loaded. Price $129.99. 'Add to cart' button is visible (role=button)."
+      },
+      {
+        "from": "gpt",
+        "value": "I will open the top result to inspect details.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Acme X100\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Flight list: AS288 nonstop 10h25m $742; DL167 1 stop $688; NH179 nonstop $815."
+      },
+      {
+        "from": "gpt",
+        "value": "Based on the page, here is the answer to \"Find a vegetarian lasagna recipe with mo...\".\n<tool_call>{\"name\":\"submit\",\"args\":{\"answer\":\"<final answer>\"}}</tool_call>"
+      }
+    ],
+    "system": "You are a web-browsing agent. You solve the user's task by issuing shell commands that drive a single live browser tab. Think step by step, then emit exactly one action per turn as <tool_call>{...}</tool_call>."
+  },
+  {
+    "conversations": [
+      {
+        "from": "human",
+        "value": "Task: Find a vegetarian lasagna recipe with more than 500 reviews.\n\n[page] Help center article: 'Electronics may be returned within 30 days of delivery.'"
+      },
+      {
+        "from": "gpt",
+        "value": "I will sort the flights by price to find the cheapest.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"button\",\"name\":\"Sort by price\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Product detail loaded. Price $129.99. 'Add to cart' button is visible (role=button)."
+      },
+      {
+        "from": "gpt",
+        "value": "Now proceed to checkout.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Proceed to checkout\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Search results: 12 items. Top result: 'Acme X100' $129.99, rating 4.3 (812 reviews)."
+      },
+      {
+        "from": "gpt",
+        "value": "I will open the top result to inspect details.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Acme X100\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Help center article: 'Electronics may be returned within 30 days of delivery.'"
+      },
+      {
+        "from": "gpt",
+        "value": "Based on the page, here is the answer to \"Find a vegetarian lasagna recipe with mo...\".\n<tool_call>{\"name\":\"submit\",\"args\":{\"answer\":\"<final answer>\"}}</tool_call>"
+      }
+    ],
+    "system": "You are a web-browsing agent. You solve the user's task by issuing shell commands that drive a single live browser tab. Think step by step, then emit exactly one action per turn as <tool_call>{...}</tool_call>."
+  },
+  {
+    "conversations": [
+      {
+        "from": "human",
+        "value": "Task: Book a table for two at an Italian restaurant downtown for 7pm tonight.\n\n[page] Flight list: AS288 nonstop 10h25m $742; DL167 1 stop $688; NH179 nonstop $815."
+      },
+      {
+        "from": "gpt",
+        "value": "I will open the top result to inspect details.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Acme X100\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Cart (1 item). Subtotal $129.99. 'Proceed to checkout' link present."
+      },
+      {
+        "from": "gpt",
+        "value": "I will apply the vegetarian filter first.\n<tool_call>{\"name\":\"type\",\"args\":{\"selector\":\"#search\",\"text\":\"vegetarian lasagna\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Cart (1 item). Subtotal $129.99. 'Proceed to checkout' link present."
+      },
+      {
+        "from": "gpt",
+        "value": "I will sort the flights by price to find the cheapest.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"button\",\"name\":\"Sort by price\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Help center article: 'Electronics may be returned within 30 days of delivery.'"
+      },
+      {
+        "from": "gpt",
+        "value": "Based on the page, here is the answer to \"Book a table for two at an Italian resta...\".\n<tool_call>{\"name\":\"submit\",\"args\":{\"answer\":\"<final answer>\"}}</tool_call>"
+      }
+    ],
+    "system": "You are a web-browsing agent. You solve the user's task by issuing shell commands that drive a single live browser tab. Think step by step, then emit exactly one action per turn as <tool_call>{...}</tool_call>."
+  },
+  {
+    "conversations": [
+      {
+        "from": "human",
+        "value": "Task: Find a vegetarian lasagna recipe with more than 500 reviews.\n\n[page] Filters applied. 3 results match. First: 'Nonna's Lasagna' 4.8 stars, 1,203 reviews."
+      },
+      {
+        "from": "gpt",
+        "value": "I will apply the vegetarian filter first.\n<tool_call>{\"name\":\"type\",\"args\":{\"selector\":\"#search\",\"text\":\"vegetarian lasagna\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Flight list: AS288 nonstop 10h25m $742; DL167 1 stop $688; NH179 nonstop $815."
+      },
+      {
+        "from": "gpt",
+        "value": "Now proceed to checkout.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Proceed to checkout\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Search results: 12 items. Top result: 'Acme X100' $129.99, rating 4.3 (812 reviews)."
+      },
+      {
+        "from": "gpt",
+        "value": "Based on the page, here is the answer to \"Find a vegetarian lasagna recipe with mo...\".\n<tool_call>{\"name\":\"submit\",\"args\":{\"answer\":\"<final answer>\"}}</tool_call>"
+      }
+    ],
+    "system": "You are a web-browsing agent. You solve the user's task by issuing shell commands that drive a single live browser tab. Think step by step, then emit exactly one action per turn as <tool_call>{...}</tool_call>."
+  },
+  {
+    "conversations": [
+      {
+        "from": "human",
+        "value": "Task: Find the cheapest direct flight from Seattle to Tokyo next Friday.\n\n[page] Search results: 12 items. Top result: 'Acme X100' $129.99, rating 4.3 (812 reviews)."
+      },
+      {
+        "from": "gpt",
+        "value": "I will apply the vegetarian filter first.\n<tool_call>{\"name\":\"type\",\"args\":{\"selector\":\"#search\",\"text\":\"vegetarian lasagna\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Help center article: 'Electronics may be returned within 30 days of delivery.'"
+      },
+      {
+        "from": "gpt",
+        "value": "I will open the top result to inspect details.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Acme X100\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Flight list: AS288 nonstop 10h25m $742; DL167 1 stop $688; NH179 nonstop $815."
+      },
+      {
+        "from": "gpt",
+        "value": "I will apply the vegetarian filter first.\n<tool_call>{\"name\":\"type\",\"args\":{\"selector\":\"#search\",\"text\":\"vegetarian lasagna\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Cart (1 item). Subtotal $129.99. 'Proceed to checkout' link present."
+      },
+      {
+        "from": "gpt",
+        "value": "The add-to-cart button is visible; I will click it.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"button\",\"name\":\"Add to cart\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Help center article: 'Electronics may be returned within 30 days of delivery.'"
+      },
+      {
+        "from": "gpt",
+        "value": "Based on the page, here is the answer to \"Find the cheapest direct flight from Sea...\".\n<tool_call>{\"name\":\"submit\",\"args\":{\"answer\":\"<final answer>\"}}</tool_call>"
+      }
+    ],
+    "system": "You are a web-browsing agent. You solve the user's task by issuing shell commands that drive a single live browser tab. Think step by step, then emit exactly one action per turn as <tool_call>{...}</tool_call>."
+  },
+  {
+    "conversations": [
+      {
+        "from": "human",
+        "value": "Task: Locate the return policy window (in days) for electronics on this store.\n\n[page] Search results: 12 items. Top result: 'Acme X100' $129.99, rating 4.3 (812 reviews)."
+      },
+      {
+        "from": "gpt",
+        "value": "The add-to-cart button is visible; I will click it.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"button\",\"name\":\"Add to cart\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Flight list: AS288 nonstop 10h25m $742; DL167 1 stop $688; NH179 nonstop $815."
+      },
+      {
+        "from": "gpt",
+        "value": "The add-to-cart button is visible; I will click it.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"button\",\"name\":\"Add to cart\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Product detail loaded. Price $129.99. 'Add to cart' button is visible (role=button)."
+      },
+      {
+        "from": "gpt",
+        "value": "The add-to-cart button is visible; I will click it.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"button\",\"name\":\"Add to cart\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Flight list: AS288 nonstop 10h25m $742; DL167 1 stop $688; NH179 nonstop $815."
+      },
+      {
+        "from": "gpt",
+        "value": "Based on the page, here is the answer to \"Locate the return policy window (in days...\".\n<tool_call>{\"name\":\"submit\",\"args\":{\"answer\":\"<final answer>\"}}</tool_call>"
+      }
+    ],
+    "system": "You are a web-browsing agent. You solve the user's task by issuing shell commands that drive a single live browser tab. Think step by step, then emit exactly one action per turn as <tool_call>{...}</tool_call>."
+  },
+  {
+    "conversations": [
+      {
+        "from": "human",
+        "value": "Task: Find the cheapest direct flight from Seattle to Tokyo next Friday.\n\n[page] Search results: 12 items. Top result: 'Acme X100' $129.99, rating 4.3 (812 reviews)."
+      },
+      {
+        "from": "gpt",
+        "value": "Now proceed to checkout.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Proceed to checkout\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Flight list: AS288 nonstop 10h25m $742; DL167 1 stop $688; NH179 nonstop $815."
+      },
+      {
+        "from": "gpt",
+        "value": "I will apply the vegetarian filter first.\n<tool_call>{\"name\":\"type\",\"args\":{\"selector\":\"#search\",\"text\":\"vegetarian lasagna\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Search results: 12 items. Top result: 'Acme X100' $129.99, rating 4.3 (812 reviews)."
+      },
+      {
+        "from": "gpt",
+        "value": "Now proceed to checkout.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Proceed to checkout\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Flight list: AS288 nonstop 10h25m $742; DL167 1 stop $688; NH179 nonstop $815."
+      },
+      {
+        "from": "gpt",
+        "value": "Based on the page, here is the answer to \"Find the cheapest direct flight from Sea...\".\n<tool_call>{\"name\":\"submit\",\"args\":{\"answer\":\"<final answer>\"}}</tool_call>"
+      }
+    ],
+    "system": "You are a web-browsing agent. You solve the user's task by issuing shell commands that drive a single live browser tab. Think step by step, then emit exactly one action per turn as <tool_call>{...}</tool_call>."
+  },
+  {
+    "conversations": [
+      {
+        "from": "human",
+        "value": "Task: Locate the return policy window (in days) for electronics on this store.\n\n[page] Search results: 12 items. Top result: 'Acme X100' $129.99, rating 4.3 (812 reviews)."
+      },
+      {
+        "from": "gpt",
+        "value": "I will sort the flights by price to find the cheapest.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"button\",\"name\":\"Sort by price\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Cart (1 item). Subtotal $129.99. 'Proceed to checkout' link present."
+      },
+      {
+        "from": "gpt",
+        "value": "I will sort the flights by price to find the cheapest.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"button\",\"name\":\"Sort by price\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Product detail loaded. Price $129.99. 'Add to cart' button is visible (role=button)."
+      },
+      {
+        "from": "gpt",
+        "value": "I will sort the flights by price to find the cheapest.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"button\",\"name\":\"Sort by price\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Flight list: AS288 nonstop 10h25m $742; DL167 1 stop $688; NH179 nonstop $815."
+      },
+      {
+        "from": "gpt",
+        "value": "Based on the page, here is the answer to \"Locate the return policy window (in days...\".\n<tool_call>{\"name\":\"submit\",\"args\":{\"answer\":\"<final answer>\"}}</tool_call>"
+      }
+    ],
+    "system": "You are a web-browsing agent. You solve the user's task by issuing shell commands that drive a single live browser tab. Think step by step, then emit exactly one action per turn as <tool_call>{...}</tool_call>."
+  },
+  {
+    "conversations": [
+      {
+        "from": "human",
+        "value": "Task: What is the customer rating of the top-listed noise-cancelling headphone?\n\n[page] Filters applied. 3 results match. First: 'Nonna's Lasagna' 4.8 stars, 1,203 reviews."
+      },
+      {
+        "from": "gpt",
+        "value": "I will open the top result to inspect details.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Acme X100\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Flight list: AS288 nonstop 10h25m $742; DL167 1 stop $688; NH179 nonstop $815."
+      },
+      {
+        "from": "gpt",
+        "value": "I will apply the vegetarian filter first.\n<tool_call>{\"name\":\"type\",\"args\":{\"selector\":\"#search\",\"text\":\"vegetarian lasagna\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Cart (1 item). Subtotal $129.99. 'Proceed to checkout' link present."
+      },
+      {
+        "from": "gpt",
+        "value": "I will sort the flights by price to find the cheapest.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"button\",\"name\":\"Sort by price\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Product detail loaded. Price $129.99. 'Add to cart' button is visible (role=button)."
+      },
+      {
+        "from": "gpt",
+        "value": "Now proceed to checkout.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Proceed to checkout\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Product detail loaded. Price $129.99. 'Add to cart' button is visible (role=button)."
+      },
+      {
+        "from": "gpt",
+        "value": "Based on the page, here is the answer to \"What is the customer rating of the top-l...\".\n<tool_call>{\"name\":\"submit\",\"args\":{\"answer\":\"<final answer>\"}}</tool_call>"
+      }
+    ],
+    "system": "You are a web-browsing agent. You solve the user's task by issuing shell commands that drive a single live browser tab. Think step by step, then emit exactly one action per turn as <tool_call>{...}</tool_call>."
+  },
+  {
+    "conversations": [
+      {
+        "from": "human",
+        "value": "Task: Add a 1 kg bag of arabica coffee beans to the cart and go to checkout.\n\n[page] Search results: 12 items. Top result: 'Acme X100' $129.99, rating 4.3 (812 reviews)."
+      },
+      {
+        "from": "gpt",
+        "value": "I will sort the flights by price to find the cheapest.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"button\",\"name\":\"Sort by price\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Help center article: 'Electronics may be returned within 30 days of delivery.'"
+      },
+      {
+        "from": "gpt",
+        "value": "Now proceed to checkout.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Proceed to checkout\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Filters applied. 3 results match. First: 'Nonna's Lasagna' 4.8 stars, 1,203 reviews."
+      },
+      {
+        "from": "gpt",
+        "value": "Based on the page, here is the answer to \"Add a 1 kg bag of arabica coffee beans t...\".\n<tool_call>{\"name\":\"submit\",\"args\":{\"answer\":\"<final answer>\"}}</tool_call>"
+      }
+    ],
+    "system": "You are a web-browsing agent. You solve the user's task by issuing shell commands that drive a single live browser tab. Think step by step, then emit exactly one action per turn as <tool_call>{...}</tool_call>."
+  },
+  {
+    "conversations": [
+      {
+        "from": "human",
+        "value": "Task: Find the cheapest direct flight from Seattle to Tokyo next Friday.\n\n[page] Help center article: 'Electronics may be returned within 30 days of delivery.'"
+      },
+      {
+        "from": "gpt",
+        "value": "The add-to-cart button is visible; I will click it.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"button\",\"name\":\"Add to cart\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Product detail loaded. Price $129.99. 'Add to cart' button is visible (role=button)."
+      },
+      {
+        "from": "gpt",
+        "value": "I will open the top result to inspect details.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Acme X100\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Search results: 12 items. Top result: 'Acme X100' $129.99, rating 4.3 (812 reviews)."
+      },
+      {
+        "from": "gpt",
+        "value": "Based on the page, here is the answer to \"Find the cheapest direct flight from Sea...\".\n<tool_call>{\"name\":\"submit\",\"args\":{\"answer\":\"<final answer>\"}}</tool_call>"
+      }
+    ],
+    "system": "You are a web-browsing agent. You solve the user's task by issuing shell commands that drive a single live browser tab. Think step by step, then emit exactly one action per turn as <tool_call>{...}</tool_call>."
+  },
+  {
+    "conversations": [
+      {
+        "from": "human",
+        "value": "Task: Find a vegetarian lasagna recipe with more than 500 reviews.\n\n[page] Help center article: 'Electronics may be returned within 30 days of delivery.'"
+      },
+      {
+        "from": "gpt",
+        "value": "I will apply the vegetarian filter first.\n<tool_call>{\"name\":\"type\",\"args\":{\"selector\":\"#search\",\"text\":\"vegetarian lasagna\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Help center article: 'Electronics may be returned within 30 days of delivery.'"
+      },
+      {
+        "from": "gpt",
+        "value": "I will sort the flights by price to find the cheapest.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"button\",\"name\":\"Sort by price\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Cart (1 item). Subtotal $129.99. 'Proceed to checkout' link present."
+      },
+      {
+        "from": "gpt",
+        "value": "I will sort the flights by price to find the cheapest.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"button\",\"name\":\"Sort by price\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Product detail loaded. Price $129.99. 'Add to cart' button is visible (role=button)."
+      },
+      {
+        "from": "gpt",
+        "value": "The add-to-cart button is visible; I will click it.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"button\",\"name\":\"Add to cart\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Help center article: 'Electronics may be returned within 30 days of delivery.'"
+      },
+      {
+        "from": "gpt",
+        "value": "Based on the page, here is the answer to \"Find a vegetarian lasagna recipe with mo...\".\n<tool_call>{\"name\":\"submit\",\"args\":{\"answer\":\"<final answer>\"}}</tool_call>"
+      }
+    ],
+    "system": "You are a web-browsing agent. You solve the user's task by issuing shell commands that drive a single live browser tab. Think step by step, then emit exactly one action per turn as <tool_call>{...}</tool_call>."
+  },
+  {
+    "conversations": [
+      {
+        "from": "human",
+        "value": "Task: Book a table for two at an Italian restaurant downtown for 7pm tonight.\n\n[page] Flight list: AS288 nonstop 10h25m $742; DL167 1 stop $688; NH179 nonstop $815."
+      },
+      {
+        "from": "gpt",
+        "value": "Now proceed to checkout.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Proceed to checkout\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Filters applied. 3 results match. First: 'Nonna's Lasagna' 4.8 stars, 1,203 reviews."
+      },
+      {
+        "from": "gpt",
+        "value": "I will apply the vegetarian filter first.\n<tool_call>{\"name\":\"type\",\"args\":{\"selector\":\"#search\",\"text\":\"vegetarian lasagna\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Help center article: 'Electronics may be returned within 30 days of delivery.'"
+      },
+      {
+        "from": "gpt",
+        "value": "Now proceed to checkout.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Proceed to checkout\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Search results: 12 items. Top result: 'Acme X100' $129.99, rating 4.3 (812 reviews)."
+      },
+      {
+        "from": "gpt",
+        "value": "Now proceed to checkout.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Proceed to checkout\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Flight list: AS288 nonstop 10h25m $742; DL167 1 stop $688; NH179 nonstop $815."
+      },
+      {
+        "from": "gpt",
+        "value": "Based on the page, here is the answer to \"Book a table for two at an Italian resta...\".\n<tool_call>{\"name\":\"submit\",\"args\":{\"answer\":\"<final answer>\"}}</tool_call>"
+      }
+    ],
+    "system": "You are a web-browsing agent. You solve the user's task by issuing shell commands that drive a single live browser tab. Think step by step, then emit exactly one action per turn as <tool_call>{...}</tool_call>."
+  },
+  {
+    "conversations": [
+      {
+        "from": "human",
+        "value": "Task: Book a table for two at an Italian restaurant downtown for 7pm tonight.\n\n[page] Flight list: AS288 nonstop 10h25m $742; DL167 1 stop $688; NH179 nonstop $815."
+      },
+      {
+        "from": "gpt",
+        "value": "Now proceed to checkout.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Proceed to checkout\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Product detail loaded. Price $129.99. 'Add to cart' button is visible (role=button)."
+      },
+      {
+        "from": "gpt",
+        "value": "The add-to-cart button is visible; I will click it.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"button\",\"name\":\"Add to cart\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Search results: 12 items. Top result: 'Acme X100' $129.99, rating 4.3 (812 reviews)."
+      },
+      {
+        "from": "gpt",
+        "value": "Based on the page, here is the answer to \"Book a table for two at an Italian resta...\".\n<tool_call>{\"name\":\"submit\",\"args\":{\"answer\":\"<final answer>\"}}</tool_call>"
+      }
+    ],
+    "system": "You are a web-browsing agent. You solve the user's task by issuing shell commands that drive a single live browser tab. Think step by step, then emit exactly one action per turn as <tool_call>{...}</tool_call>."
+  },
+  {
+    "conversations": [
+      {
+        "from": "human",
+        "value": "Task: What is the customer rating of the top-listed noise-cancelling headphone?\n\n[page] Search results: 12 items. Top result: 'Acme X100' $129.99, rating 4.3 (812 reviews)."
+      },
+      {
+        "from": "gpt",
+        "value": "The add-to-cart button is visible; I will click it.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"button\",\"name\":\"Add to cart\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Cart (1 item). Subtotal $129.99. 'Proceed to checkout' link present."
+      },
+      {
+        "from": "gpt",
+        "value": "The add-to-cart button is visible; I will click it.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"button\",\"name\":\"Add to cart\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Cart (1 item). Subtotal $129.99. 'Proceed to checkout' link present."
+      },
+      {
+        "from": "gpt",
+        "value": "I will apply the vegetarian filter first.\n<tool_call>{\"name\":\"type\",\"args\":{\"selector\":\"#search\",\"text\":\"vegetarian lasagna\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Search results: 12 items. Top result: 'Acme X100' $129.99, rating 4.3 (812 reviews)."
+      },
+      {
+        "from": "gpt",
+        "value": "I will open the top result to inspect details.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Acme X100\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Product detail loaded. Price $129.99. 'Add to cart' button is visible (role=button)."
+      },
+      {
+        "from": "gpt",
+        "value": "Based on the page, here is the answer to \"What is the customer rating of the top-l...\".\n<tool_call>{\"name\":\"submit\",\"args\":{\"answer\":\"<final answer>\"}}</tool_call>"
+      }
+    ],
+    "system": "You are a web-browsing agent. You solve the user's task by issuing shell commands that drive a single live browser tab. Think step by step, then emit exactly one action per turn as <tool_call>{...}</tool_call>."
+  },
+  {
+    "conversations": [
+      {
+        "from": "human",
+        "value": "Task: Add a 1 kg bag of arabica coffee beans to the cart and go to checkout.\n\n[page] Search results: 12 items. Top result: 'Acme X100' $129.99, rating 4.3 (812 reviews)."
+      },
+      {
+        "from": "gpt",
+        "value": "I will sort the flights by price to find the cheapest.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"button\",\"name\":\"Sort by price\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Help center article: 'Electronics may be returned within 30 days of delivery.'"
+      },
+      {
+        "from": "gpt",
+        "value": "I will sort the flights by price to find the cheapest.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"button\",\"name\":\"Sort by price\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Flight list: AS288 nonstop 10h25m $742; DL167 1 stop $688; NH179 nonstop $815."
+      },
+      {
+        "from": "gpt",
+        "value": "I will open the top result to inspect details.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Acme X100\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Search results: 12 items. Top result: 'Acme X100' $129.99, rating 4.3 (812 reviews)."
+      },
+      {
+        "from": "gpt",
+        "value": "I will open the top result to inspect details.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Acme X100\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Help center article: 'Electronics may be returned within 30 days of delivery.'"
+      },
+      {
+        "from": "gpt",
+        "value": "Based on the page, here is the answer to \"Add a 1 kg bag of arabica coffee beans t...\".\n<tool_call>{\"name\":\"submit\",\"args\":{\"answer\":\"<final answer>\"}}</tool_call>"
+      }
+    ],
+    "system": "You are a web-browsing agent. You solve the user's task by issuing shell commands that drive a single live browser tab. Think step by step, then emit exactly one action per turn as <tool_call>{...}</tool_call>."
+  },
+  {
+    "conversations": [
+      {
+        "from": "human",
+        "value": "Task: Find a vegetarian lasagna recipe with more than 500 reviews.\n\n[page] Flight list: AS288 nonstop 10h25m $742; DL167 1 stop $688; NH179 nonstop $815."
+      },
+      {
+        "from": "gpt",
+        "value": "I will open the top result to inspect details.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Acme X100\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Filters applied. 3 results match. First: 'Nonna's Lasagna' 4.8 stars, 1,203 reviews."
+      },
+      {
+        "from": "gpt",
+        "value": "I will open the top result to inspect details.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Acme X100\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Cart (1 item). Subtotal $129.99. 'Proceed to checkout' link present."
+      },
+      {
+        "from": "gpt",
+        "value": "Based on the page, here is the answer to \"Find a vegetarian lasagna recipe with mo...\".\n<tool_call>{\"name\":\"submit\",\"args\":{\"answer\":\"<final answer>\"}}</tool_call>"
+      }
+    ],
+    "system": "You are a web-browsing agent. You solve the user's task by issuing shell commands that drive a single live browser tab. Think step by step, then emit exactly one action per turn as <tool_call>{...}</tool_call>."
+  },
+  {
+    "conversations": [
+      {
+        "from": "human",
+        "value": "Task: Find the cheapest direct flight from Seattle to Tokyo next Friday.\n\n[page] Flight list: AS288 nonstop 10h25m $742; DL167 1 stop $688; NH179 nonstop $815."
+      },
+      {
+        "from": "gpt",
+        "value": "I will open the top result to inspect details.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Acme X100\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Product detail loaded. Price $129.99. 'Add to cart' button is visible (role=button)."
+      },
+      {
+        "from": "gpt",
+        "value": "The add-to-cart button is visible; I will click it.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"button\",\"name\":\"Add to cart\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Help center article: 'Electronics may be returned within 30 days of delivery.'"
+      },
+      {
+        "from": "gpt",
+        "value": "Based on the page, here is the answer to \"Find the cheapest direct flight from Sea...\".\n<tool_call>{\"name\":\"submit\",\"args\":{\"answer\":\"<final answer>\"}}</tool_call>"
+      }
+    ],
+    "system": "You are a web-browsing agent. You solve the user's task by issuing shell commands that drive a single live browser tab. Think step by step, then emit exactly one action per turn as <tool_call>{...}</tool_call>."
+  },
+  {
+    "conversations": [
+      {
+        "from": "human",
+        "value": "Task: Book a table for two at an Italian restaurant downtown for 7pm tonight.\n\n[page] Product detail loaded. Price $129.99. 'Add to cart' button is visible (role=button)."
+      },
+      {
+        "from": "gpt",
+        "value": "I will open the top result to inspect details.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Acme X100\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Help center article: 'Electronics may be returned within 30 days of delivery.'"
+      },
+      {
+        "from": "gpt",
+        "value": "I will open the top result to inspect details.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Acme X100\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Flight list: AS288 nonstop 10h25m $742; DL167 1 stop $688; NH179 nonstop $815."
+      },
+      {
+        "from": "gpt",
+        "value": "Based on the page, here is the answer to \"Book a table for two at an Italian resta...\".\n<tool_call>{\"name\":\"submit\",\"args\":{\"answer\":\"<final answer>\"}}</tool_call>"
+      }
+    ],
+    "system": "You are a web-browsing agent. You solve the user's task by issuing shell commands that drive a single live browser tab. Think step by step, then emit exactly one action per turn as <tool_call>{...}</tool_call>."
+  },
+  {
+    "conversations": [
+      {
+        "from": "human",
+        "value": "Task: Find a vegetarian lasagna recipe with more than 500 reviews.\n\n[page] Search results: 12 items. Top result: 'Acme X100' $129.99, rating 4.3 (812 reviews)."
+      },
+      {
+        "from": "gpt",
+        "value": "Now proceed to checkout.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Proceed to checkout\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Search results: 12 items. Top result: 'Acme X100' $129.99, rating 4.3 (812 reviews)."
+      },
+      {
+        "from": "gpt",
+        "value": "The add-to-cart button is visible; I will click it.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"button\",\"name\":\"Add to cart\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Search results: 12 items. Top result: 'Acme X100' $129.99, rating 4.3 (812 reviews)."
+      },
+      {
+        "from": "gpt",
+        "value": "Now proceed to checkout.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Proceed to checkout\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Cart (1 item). Subtotal $129.99. 'Proceed to checkout' link present."
+      },
+      {
+        "from": "gpt",
+        "value": "Based on the page, here is the answer to \"Find a vegetarian lasagna recipe with mo...\".\n<tool_call>{\"name\":\"submit\",\"args\":{\"answer\":\"<final answer>\"}}</tool_call>"
+      }
+    ],
+    "system": "You are a web-browsing agent. You solve the user's task by issuing shell commands that drive a single live browser tab. Think step by step, then emit exactly one action per turn as <tool_call>{...}</tool_call>."
+  },
+  {
+    "conversations": [
+      {
+        "from": "human",
+        "value": "Task: Add a 1 kg bag of arabica coffee beans to the cart and go to checkout.\n\n[page] Search results: 12 items. Top result: 'Acme X100' $129.99, rating 4.3 (812 reviews)."
+      },
+      {
+        "from": "gpt",
+        "value": "I will sort the flights by price to find the cheapest.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"button\",\"name\":\"Sort by price\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Filters applied. 3 results match. First: 'Nonna's Lasagna' 4.8 stars, 1,203 reviews."
+      },
+      {
+        "from": "gpt",
+        "value": "I will open the top result to inspect details.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Acme X100\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Flight list: AS288 nonstop 10h25m $742; DL167 1 stop $688; NH179 nonstop $815."
+      },
+      {
+        "from": "gpt",
+        "value": "I will open the top result to inspect details.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Acme X100\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Help center article: 'Electronics may be returned within 30 days of delivery.'"
+      },
+      {
+        "from": "gpt",
+        "value": "Based on the page, here is the answer to \"Add a 1 kg bag of arabica coffee beans t...\".\n<tool_call>{\"name\":\"submit\",\"args\":{\"answer\":\"<final answer>\"}}</tool_call>"
+      }
+    ],
+    "system": "You are a web-browsing agent. You solve the user's task by issuing shell commands that drive a single live browser tab. Think step by step, then emit exactly one action per turn as <tool_call>{...}</tool_call>."
+  },
+  {
+    "conversations": [
+      {
+        "from": "human",
+        "value": "Task: Add a 1 kg bag of arabica coffee beans to the cart and go to checkout.\n\n[page] Cart (1 item). Subtotal $129.99. 'Proceed to checkout' link present."
+      },
+      {
+        "from": "gpt",
+        "value": "Now proceed to checkout.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Proceed to checkout\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Help center article: 'Electronics may be returned within 30 days of delivery.'"
+      },
+      {
+        "from": "gpt",
+        "value": "I will apply the vegetarian filter first.\n<tool_call>{\"name\":\"type\",\"args\":{\"selector\":\"#search\",\"text\":\"vegetarian lasagna\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Flight list: AS288 nonstop 10h25m $742; DL167 1 stop $688; NH179 nonstop $815."
+      },
+      {
+        "from": "gpt",
+        "value": "The add-to-cart button is visible; I will click it.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"button\",\"name\":\"Add to cart\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Help center article: 'Electronics may be returned within 30 days of delivery.'"
+      },
+      {
+        "from": "gpt",
+        "value": "Based on the page, here is the answer to \"Add a 1 kg bag of arabica coffee beans t...\".\n<tool_call>{\"name\":\"submit\",\"args\":{\"answer\":\"<final answer>\"}}</tool_call>"
+      }
+    ],
+    "system": "You are a web-browsing agent. You solve the user's task by issuing shell commands that drive a single live browser tab. Think step by step, then emit exactly one action per turn as <tool_call>{...}</tool_call>."
+  },
+  {
+    "conversations": [
+      {
+        "from": "human",
+        "value": "Task: Add a 1 kg bag of arabica coffee beans to the cart and go to checkout.\n\n[page] Search results: 12 items. Top result: 'Acme X100' $129.99, rating 4.3 (812 reviews)."
+      },
+      {
+        "from": "gpt",
+        "value": "The add-to-cart button is visible; I will click it.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"button\",\"name\":\"Add to cart\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Product detail loaded. Price $129.99. 'Add to cart' button is visible (role=button)."
+      },
+      {
+        "from": "gpt",
+        "value": "Now proceed to checkout.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Proceed to checkout\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Flight list: AS288 nonstop 10h25m $742; DL167 1 stop $688; NH179 nonstop $815."
+      },
+      {
+        "from": "gpt",
+        "value": "Now proceed to checkout.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Proceed to checkout\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Search results: 12 items. Top result: 'Acme X100' $129.99, rating 4.3 (812 reviews)."
+      },
+      {
+        "from": "gpt",
+        "value": "I will sort the flights by price to find the cheapest.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"button\",\"name\":\"Sort by price\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Filters applied. 3 results match. First: 'Nonna's Lasagna' 4.8 stars, 1,203 reviews."
+      },
+      {
+        "from": "gpt",
+        "value": "Based on the page, here is the answer to \"Add a 1 kg bag of arabica coffee beans t...\".\n<tool_call>{\"name\":\"submit\",\"args\":{\"answer\":\"<final answer>\"}}</tool_call>"
+      }
+    ],
+    "system": "You are a web-browsing agent. You solve the user's task by issuing shell commands that drive a single live browser tab. Think step by step, then emit exactly one action per turn as <tool_call>{...}</tool_call>."
+  },
+  {
+    "conversations": [
+      {
+        "from": "human",
+        "value": "Task: Add a 1 kg bag of arabica coffee beans to the cart and go to checkout.\n\n[page] Search results: 12 items. Top result: 'Acme X100' $129.99, rating 4.3 (812 reviews)."
+      },
+      {
+        "from": "gpt",
+        "value": "I will apply the vegetarian filter first.\n<tool_call>{\"name\":\"type\",\"args\":{\"selector\":\"#search\",\"text\":\"vegetarian lasagna\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Help center article: 'Electronics may be returned within 30 days of delivery.'"
+      },
+      {
+        "from": "gpt",
+        "value": "I will apply the vegetarian filter first.\n<tool_call>{\"name\":\"type\",\"args\":{\"selector\":\"#search\",\"text\":\"vegetarian lasagna\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Flight list: AS288 nonstop 10h25m $742; DL167 1 stop $688; NH179 nonstop $815."
+      },
+      {
+        "from": "gpt",
+        "value": "I will sort the flights by price to find the cheapest.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"button\",\"name\":\"Sort by price\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Cart (1 item). Subtotal $129.99. 'Proceed to checkout' link present."
+      },
+      {
+        "from": "gpt",
+        "value": "Now proceed to checkout.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Proceed to checkout\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Filters applied. 3 results match. First: 'Nonna's Lasagna' 4.8 stars, 1,203 reviews."
+      },
+      {
+        "from": "gpt",
+        "value": "Based on the page, here is the answer to \"Add a 1 kg bag of arabica coffee beans t...\".\n<tool_call>{\"name\":\"submit\",\"args\":{\"answer\":\"<final answer>\"}}</tool_call>"
+      }
+    ],
+    "system": "You are a web-browsing agent. You solve the user's task by issuing shell commands that drive a single live browser tab. Think step by step, then emit exactly one action per turn as <tool_call>{...}</tool_call>."
+  },
+  {
+    "conversations": [
+      {
+        "from": "human",
+        "value": "Task: What is the customer rating of the top-listed noise-cancelling headphone?\n\n[page] Product detail loaded. Price $129.99. 'Add to cart' button is visible (role=button)."
+      },
+      {
+        "from": "gpt",
+        "value": "I will sort the flights by price to find the cheapest.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"button\",\"name\":\"Sort by price\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Help center article: 'Electronics may be returned within 30 days of delivery.'"
+      },
+      {
+        "from": "gpt",
+        "value": "I will open the top result to inspect details.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Acme X100\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Filters applied. 3 results match. First: 'Nonna's Lasagna' 4.8 stars, 1,203 reviews."
+      },
+      {
+        "from": "gpt",
+        "value": "I will open the top result to inspect details.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Acme X100\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Cart (1 item). Subtotal $129.99. 'Proceed to checkout' link present."
+      },
+      {
+        "from": "gpt",
+        "value": "I will open the top result to inspect details.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Acme X100\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Flight list: AS288 nonstop 10h25m $742; DL167 1 stop $688; NH179 nonstop $815."
+      },
+      {
+        "from": "gpt",
+        "value": "Based on the page, here is the answer to \"What is the customer rating of the top-l...\".\n<tool_call>{\"name\":\"submit\",\"args\":{\"answer\":\"<final answer>\"}}</tool_call>"
+      }
+    ],
+    "system": "You are a web-browsing agent. You solve the user's task by issuing shell commands that drive a single live browser tab. Think step by step, then emit exactly one action per turn as <tool_call>{...}</tool_call>."
+  },
+  {
+    "conversations": [
+      {
+        "from": "human",
+        "value": "Task: Add a 1 kg bag of arabica coffee beans to the cart and go to checkout.\n\n[page] Product detail loaded. Price $129.99. 'Add to cart' button is visible (role=button)."
+      },
+      {
+        "from": "gpt",
+        "value": "I will apply the vegetarian filter first.\n<tool_call>{\"name\":\"type\",\"args\":{\"selector\":\"#search\",\"text\":\"vegetarian lasagna\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Cart (1 item). Subtotal $129.99. 'Proceed to checkout' link present."
+      },
+      {
+        "from": "gpt",
+        "value": "I will sort the flights by price to find the cheapest.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"button\",\"name\":\"Sort by price\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Cart (1 item). Subtotal $129.99. 'Proceed to checkout' link present."
+      },
+      {
+        "from": "gpt",
+        "value": "Now proceed to checkout.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Proceed to checkout\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Flight list: AS288 nonstop 10h25m $742; DL167 1 stop $688; NH179 nonstop $815."
+      },
+      {
+        "from": "gpt",
+        "value": "Based on the page, here is the answer to \"Add a 1 kg bag of arabica coffee beans t...\".\n<tool_call>{\"name\":\"submit\",\"args\":{\"answer\":\"<final answer>\"}}</tool_call>"
+      }
+    ],
+    "system": "You are a web-browsing agent. You solve the user's task by issuing shell commands that drive a single live browser tab. Think step by step, then emit exactly one action per turn as <tool_call>{...}</tool_call>."
+  },
+  {
+    "conversations": [
+      {
+        "from": "human",
+        "value": "Task: Find a vegetarian lasagna recipe with more than 500 reviews.\n\n[page] Product detail loaded. Price $129.99. 'Add to cart' button is visible (role=button)."
+      },
+      {
+        "from": "gpt",
+        "value": "Now proceed to checkout.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Proceed to checkout\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Filters applied. 3 results match. First: 'Nonna's Lasagna' 4.8 stars, 1,203 reviews."
+      },
+      {
+        "from": "gpt",
+        "value": "I will apply the vegetarian filter first.\n<tool_call>{\"name\":\"type\",\"args\":{\"selector\":\"#search\",\"text\":\"vegetarian lasagna\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Help center article: 'Electronics may be returned within 30 days of delivery.'"
+      },
+      {
+        "from": "gpt",
+        "value": "I will open the top result to inspect details.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Acme X100\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Search results: 12 items. Top result: 'Acme X100' $129.99, rating 4.3 (812 reviews)."
+      },
+      {
+        "from": "gpt",
+        "value": "I will sort the flights by price to find the cheapest.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"button\",\"name\":\"Sort by price\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Product detail loaded. Price $129.99. 'Add to cart' button is visible (role=button)."
+      },
+      {
+        "from": "gpt",
+        "value": "Based on the page, here is the answer to \"Find a vegetarian lasagna recipe with mo...\".\n<tool_call>{\"name\":\"submit\",\"args\":{\"answer\":\"<final answer>\"}}</tool_call>"
+      }
+    ],
+    "system": "You are a web-browsing agent. You solve the user's task by issuing shell commands that drive a single live browser tab. Think step by step, then emit exactly one action per turn as <tool_call>{...}</tool_call>."
+  },
+  {
+    "conversations": [
+      {
+        "from": "human",
+        "value": "Task: What is the customer rating of the top-listed noise-cancelling headphone?\n\n[page] Product detail loaded. Price $129.99. 'Add to cart' button is visible (role=button)."
+      },
+      {
+        "from": "gpt",
+        "value": "The add-to-cart button is visible; I will click it.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"button\",\"name\":\"Add to cart\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Product detail loaded. Price $129.99. 'Add to cart' button is visible (role=button)."
+      },
+      {
+        "from": "gpt",
+        "value": "I will apply the vegetarian filter first.\n<tool_call>{\"name\":\"type\",\"args\":{\"selector\":\"#search\",\"text\":\"vegetarian lasagna\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Filters applied. 3 results match. First: 'Nonna's Lasagna' 4.8 stars, 1,203 reviews."
+      },
+      {
+        "from": "gpt",
+        "value": "I will sort the flights by price to find the cheapest.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"button\",\"name\":\"Sort by price\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Filters applied. 3 results match. First: 'Nonna's Lasagna' 4.8 stars, 1,203 reviews."
+      },
+      {
+        "from": "gpt",
+        "value": "I will open the top result to inspect details.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Acme X100\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Filters applied. 3 results match. First: 'Nonna's Lasagna' 4.8 stars, 1,203 reviews."
+      },
+      {
+        "from": "gpt",
+        "value": "Based on the page, here is the answer to \"What is the customer rating of the top-l...\".\n<tool_call>{\"name\":\"submit\",\"args\":{\"answer\":\"<final answer>\"}}</tool_call>"
+      }
+    ],
+    "system": "You are a web-browsing agent. You solve the user's task by issuing shell commands that drive a single live browser tab. Think step by step, then emit exactly one action per turn as <tool_call>{...}</tool_call>."
+  },
+  {
+    "conversations": [
+      {
+        "from": "human",
+        "value": "Task: Find a vegetarian lasagna recipe with more than 500 reviews.\n\n[page] Filters applied. 3 results match. First: 'Nonna's Lasagna' 4.8 stars, 1,203 reviews."
+      },
+      {
+        "from": "gpt",
+        "value": "I will open the top result to inspect details.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Acme X100\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Product detail loaded. Price $129.99. 'Add to cart' button is visible (role=button)."
+      },
+      {
+        "from": "gpt",
+        "value": "I will apply the vegetarian filter first.\n<tool_call>{\"name\":\"type\",\"args\":{\"selector\":\"#search\",\"text\":\"vegetarian lasagna\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Search results: 12 items. Top result: 'Acme X100' $129.99, rating 4.3 (812 reviews)."
+      },
+      {
+        "from": "gpt",
+        "value": "Now proceed to checkout.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Proceed to checkout\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Help center article: 'Electronics may be returned within 30 days of delivery.'"
+      },
+      {
+        "from": "gpt",
+        "value": "The add-to-cart button is visible; I will click it.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"button\",\"name\":\"Add to cart\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Filters applied. 3 results match. First: 'Nonna's Lasagna' 4.8 stars, 1,203 reviews."
+      },
+      {
+        "from": "gpt",
+        "value": "Based on the page, here is the answer to \"Find a vegetarian lasagna recipe with mo...\".\n<tool_call>{\"name\":\"submit\",\"args\":{\"answer\":\"<final answer>\"}}</tool_call>"
+      }
+    ],
+    "system": "You are a web-browsing agent. You solve the user's task by issuing shell commands that drive a single live browser tab. Think step by step, then emit exactly one action per turn as <tool_call>{...}</tool_call>."
+  },
+  {
+    "conversations": [
+      {
+        "from": "human",
+        "value": "Task: Book a table for two at an Italian restaurant downtown for 7pm tonight.\n\n[page] Flight list: AS288 nonstop 10h25m $742; DL167 1 stop $688; NH179 nonstop $815."
+      },
+      {
+        "from": "gpt",
+        "value": "I will sort the flights by price to find the cheapest.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"button\",\"name\":\"Sort by price\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Search results: 12 items. Top result: 'Acme X100' $129.99, rating 4.3 (812 reviews)."
+      },
+      {
+        "from": "gpt",
+        "value": "I will open the top result to inspect details.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Acme X100\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Filters applied. 3 results match. First: 'Nonna's Lasagna' 4.8 stars, 1,203 reviews."
+      },
+      {
+        "from": "gpt",
+        "value": "Now proceed to checkout.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Proceed to checkout\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Cart (1 item). Subtotal $129.99. 'Proceed to checkout' link present."
+      },
+      {
+        "from": "gpt",
+        "value": "I will apply the vegetarian filter first.\n<tool_call>{\"name\":\"type\",\"args\":{\"selector\":\"#search\",\"text\":\"vegetarian lasagna\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Search results: 12 items. Top result: 'Acme X100' $129.99, rating 4.3 (812 reviews)."
+      },
+      {
+        "from": "gpt",
+        "value": "Based on the page, here is the answer to \"Book a table for two at an Italian resta...\".\n<tool_call>{\"name\":\"submit\",\"args\":{\"answer\":\"<final answer>\"}}</tool_call>"
+      }
+    ],
+    "system": "You are a web-browsing agent. You solve the user's task by issuing shell commands that drive a single live browser tab. Think step by step, then emit exactly one action per turn as <tool_call>{...}</tool_call>."
+  },
+  {
+    "conversations": [
+      {
+        "from": "human",
+        "value": "Task: Add a 1 kg bag of arabica coffee beans to the cart and go to checkout.\n\n[page] Flight list: AS288 nonstop 10h25m $742; DL167 1 stop $688; NH179 nonstop $815."
+      },
+      {
+        "from": "gpt",
+        "value": "I will open the top result to inspect details.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"link\",\"name\":\"Acme X100\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Help center article: 'Electronics may be returned within 30 days of delivery.'"
+      },
+      {
+        "from": "gpt",
+        "value": "The add-to-cart button is visible; I will click it.\n<tool_call>{\"name\":\"click\",\"args\":{\"role\":\"button\",\"name\":\"Add to cart\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Search results: 12 items. Top result: 'Acme X100' $129.99, rating 4.3 (812 reviews)."
+      },
+      {
+        "from": "gpt",
+        "value": "I will apply the vegetarian filter first.\n<tool_call>{\"name\":\"type\",\"args\":{\"selector\":\"#search\",\"text\":\"vegetarian lasagna\"}}</tool_call>"
+      },
+      {
+        "from": "human",
+        "value": "[page] Help center article: 'Electronics may be returned within 30 days of delivery.'"
+      },
+      {
+        "from": "gpt",
+        "value": "Based on the page, here is the answer to \"Add a 1 kg bag of arabica coffee beans t...\".\n<tool_call>{\"name\":\"submit\",\"args\":{\"answer\":\"<final answer>\"}}</tool_call>"
+      }
+    ],
+    "system": "You are a web-browsing agent. You solve the user's task by issuing shell commands that drive a single live browser tab. Think step by step, then emit exactly one action per turn as <tool_call>{...}</tool_call>."
+  }
+]
