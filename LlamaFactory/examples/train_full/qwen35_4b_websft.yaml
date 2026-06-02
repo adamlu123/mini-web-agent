@@ -17,9 +17,9 @@ finetuning_type: full
 deepspeed: examples/deepspeed/ds_z3_offload_config.json   # ZeRO-3 + CPU offload: frees the fp32 master/Adam states (~13GB/GPU) so the 32k-seq x 248k-vocab logits fit on 80GB
 
 ### dataset
-dataset: web_agent_pae100        # 86 online gpt-5.x trajectories -> sharegpt (scripts/make_web_agent_sft.py)
+dataset: web_agent_pae100_full   # 86 online gpt-5.x trajectories -> sharegpt, obs NOT truncated (scripts/make_web_agent_sft.py --max-obs-chars 0)
 template: qwen3_5                 # multi-turn + <think>/<bash> format; use qwen3_5_nothink to drop thinking
-cutoff_len: 32768                # with obs turns capped to 3000 chars at conversion time, all 86 convos fit fully (max ~32k tok) — no tail truncation, every <answer> kept.
+cutoff_len: 32768                # NOTE: full (untruncated) obs -> token len avg ~31k, max ~89k. Convos beyond this cutoff get tail-truncated by the trainer (some <answer> may be lost). Raise to fit fully, or regenerate with a smaller --max-obs-chars.
 overwrite_cache: true
 preprocessing_num_workers: 16
 dataloader_num_workers: 4
@@ -29,8 +29,8 @@ enable_thinking: true            # never strip the chain-of-thought from any tur
 ### output
 output_dir: saves/qwen35_4b/full/websft
 logging_steps: 5
-save_steps: 200
-save_total_limit: 3
+save_strategy: epoch             # save only at epoch end (with num_train_epochs=1 -> exactly one final ckpt)
+save_total_limit: 1              # keep only the last checkpoint
 plot_loss: true
 overwrite_output_dir: true
 report_to: none                  # set to wandb to log curves
@@ -39,7 +39,7 @@ report_to: none                  # set to wandb to log curves
 per_device_train_batch_size: 1
 gradient_accumulation_steps: 8
 learning_rate: 1.0e-5
-num_train_epochs: 3.0
+num_train_epochs: 1.0
 lr_scheduler_type: cosine
 warmup_ratio: 0.05
 bf16: true
