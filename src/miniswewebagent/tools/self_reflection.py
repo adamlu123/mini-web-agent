@@ -16,8 +16,10 @@ and make one final call that must end with ``Status: success`` or
 ``Status: failure``.
 
 The CLI reads all of its config from a single JSON file so the agent can
-prepare it in one turn and invoke the tool in the next. Default model is
-``gpt-5.4``.
+prepare it in one turn and invoke the tool in the next. By default it uses
+Microsoft TRAPI's Kimi-K2.5 deployment (``Kimi-K2.5_1`` on ``gcr/shared``)
+via Azure AD. Explicit legacy overrides still route to the phyagi Responses
+gateway.
 
 Usage::
 
@@ -41,6 +43,13 @@ The output JSON written to ``--output`` (or stdout) contains the per-image
 records, the image path list, the final response, and
 ``predicted_label`` (``1`` for success, ``0`` for failure, ``null`` if the
 ``Status:`` line could not be parsed). Exit code: 0 if PASS, 1 otherwise.
+
+By default, ``--num-evals`` parallel self-reflection evaluations are run.
+The gate PASSES only when ALL N runs return ``predicted_label == 1``;
+otherwise the written JSON contains one of the failed verdicts (preferring
+an explicit ``predicted_label == 0``) plus ``num_evals``,
+``all_predicted_labels``, ``chosen_eval_index``, and a compact
+``all_eval_runs`` summary.
 """
 
 from __future__ import annotations
@@ -63,9 +72,17 @@ import httpx
 
 from miniswewebagent.models.phyagi_model import _extract_response_text, text_part
 
-DEFAULT_MODEL = "gpt-4.1"
-DEFAULT_ENDPOINT = "http://gateway.phyagi.net/api/responses"
+DEFAULT_RESPONSES_MODEL = "gpt-5.4"
+DEFAULT_RESPONSES_ENDPOINT = "http://gateway.phyagi.net/api/responses"
+DEFAULT_TRAPI_MODEL = "Kimi-K2.5_1"
+DEFAULT_TRAPI_BASE_ENDPOINT = "https://trapi.research.microsoft.com"
+DEFAULT_TRAPI_INSTANCE = "gcr/shared"
+DEFAULT_TRAPI_API_VERSION = "2024-10-21"
+DEFAULT_TRAPI_SCOPE = "api://trapi/.default"
+DEFAULT_MODEL = DEFAULT_TRAPI_MODEL
+DEFAULT_ENDPOINT = DEFAULT_TRAPI_BASE_ENDPOINT
 DEFAULT_IMAGE_PARSE_MAX_RETRIES = 3
+DEFAULT_NUM_EVALS = 1
 
 _RETRYABLE_STATUS_CODES = frozenset({400, 408, 409, 425, 429, 500, 502, 503, 504})
 
@@ -77,6 +94,15 @@ _PROMPT_FIELDS = (
 )
 
 _IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp"})
+_TRAPI_TOKEN_PROVIDERS: dict[str, Any] = {}
+
+
+@dataclass(frozen=True)
+class _GatewayConfig:
+    backend: str
+    endpoint: str
+    model: str
+    api_key: str
 
 
 # ---------------------------------------------------------------------------
@@ -239,22 +265,67 @@ def _high_detail_image_part_from_path(image_path: Path) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Gateway HTTP helpers (mirrors image_qa)
+# Gateway HTTP helpers
 # ---------------------------------------------------------------------------
 
-def _gateway_config(
-    *, api_key: str, endpoint: str, model: str
-) -> tuple[str, str, str]:
-    resolved_key = (
-        api_key
-        or os.environ.get("OPENAI_GATEWAY_API_KEY", "")
-        or os.environ.get("PHYAGI_API_KEY", "")
+def _looks_like_trapi_endpoint(endpoint: str) -> bool:
+    normalized = endpoint.lower()
+    return "trapi.research.microsoft.com" in normalized or "/openai/deployments/" in normalized
+
+
+def _trapi_chat_completions_url(base_endpoint: str, *, model: str) -> str:
+    if "/openai/deployments/" in base_endpoint:
+        return base_endpoint
+    base = base_endpoint.rstrip("/")
+    instance = DEFAULT_TRAPI_INSTANCE.strip("/")
+    return (
+        f"{base}/{instance}/openai/deployments/{model}/chat/completions"
+        f"?api-version={DEFAULT_TRAPI_API_VERSION}"
     )
-    if not resolved_key:
-        raise RuntimeError("Missing OPENAI_GATEWAY_API_KEY or PHYAGI_API_KEY.")
-    resolved_endpoint = endpoint or DEFAULT_ENDPOINT
-    resolved_model = model or os.environ.get("OPENAI_GATEWAY_MODEL", DEFAULT_MODEL)
-    return resolved_key, resolved_endpoint, resolved_model
+
+
+def _use_legacy_responses_backend(*, endpoint: str, model: str) -> bool:
+    if endpoint:
+        return not _looks_like_trapi_endpoint(endpoint)
+    if model and model != DEFAULT_TRAPI_MODEL:
+        return True
+    env_model = os.environ.get("OPENAI_GATEWAY_MODEL", "")
+    if env_model and env_model != DEFAULT_TRAPI_MODEL:
+        return True
+    return False
+
+
+def _gateway_config(*, api_key: str, endpoint: str, model: str) -> _GatewayConfig:
+    if _use_legacy_responses_backend(endpoint=endpoint, model=model):
+        resolved_key = (
+            api_key
+            or os.environ.get("OPENAI_GATEWAY_API_KEY", "")
+            or os.environ.get("PHYAGI_API_KEY", "")
+        )
+        if not resolved_key:
+            raise RuntimeError(
+                "Missing OPENAI_GATEWAY_API_KEY or PHYAGI_API_KEY for the legacy responses backend."
+            )
+        resolved_endpoint = endpoint or DEFAULT_RESPONSES_ENDPOINT
+        resolved_model = model or os.environ.get("OPENAI_GATEWAY_MODEL", DEFAULT_RESPONSES_MODEL)
+        return _GatewayConfig(
+            backend="responses",
+            endpoint=resolved_endpoint,
+            model=resolved_model,
+            api_key=resolved_key,
+        )
+
+    resolved_model = model or DEFAULT_TRAPI_MODEL
+    resolved_endpoint = _trapi_chat_completions_url(
+        endpoint or DEFAULT_TRAPI_BASE_ENDPOINT,
+        model=resolved_model,
+    )
+    return _GatewayConfig(
+        backend="trapi_kimi",
+        endpoint=resolved_endpoint,
+        model=resolved_model,
+        api_key=api_key or "",
+    )
 
 
 def _sleep_backoff(attempt: int, base_delay: float) -> float:
@@ -306,74 +377,120 @@ def _post_with_retry(
     raise RuntimeError("self_reflection retry loop exited without returning")
 
 
+def _serialize_trapi_content_part(part: dict[str, Any]) -> dict[str, Any]:
+    if part.get("type") == "input_image":
+        image_url = {"url": part.get("image_url", "")}
+        detail = part.get("detail")
+        if detail:
+            image_url["detail"] = detail
+        return {"type": "image_url", "image_url": image_url}
+    return {"type": "text", "text": part.get("text", "")}
+
+
+def _serialize_trapi_user_content(user_content: list[dict[str, Any]]) -> str | list[dict[str, Any]]:
+    serialized = [
+        _serialize_trapi_content_part(part)
+        for part in user_content
+        if isinstance(part, dict)
+    ]
+    if serialized and all(part.get("type") == "text" for part in serialized):
+        return "\n".join(part["text"] for part in serialized)
+    return serialized
+
+
+def _extract_trapi_chat_text(payload: dict[str, Any]) -> str:
+    choices = payload.get("choices") or []
+    if not choices:
+        return ""
+    message = choices[0].get("message") or {}
+    content = message.get("content", "")
+    if isinstance(content, list):
+        text = "\n".join(part.get("text", "") for part in content if isinstance(part, dict)).strip()
+        if text:
+            return text
+    else:
+        text = str(content or "").strip()
+        if text:
+            return text
+    reasoning = message.get("reasoning_content", "")
+    if isinstance(reasoning, list):
+        return "\n".join(part.get("text", "") for part in reasoning if isinstance(part, dict)).strip()
+    return str(reasoning or "").strip()
+
+
+def _trapi_token_provider(scope: str):
+    provider = _TRAPI_TOKEN_PROVIDERS.get(scope)
+    if provider is not None:
+        return provider
+
+    try:
+        from azure.identity import (
+            AzureCliCredential,
+            ChainedTokenCredential,
+            ManagedIdentityCredential,
+            get_bearer_token_provider,
+        )
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "TRAPI self_reflection requires azure-identity. Install it and run "
+            "`az login --scope api://trapi/.default`, or pass a legacy responses "
+            "model/endpoint override instead."
+        ) from exc
+
+    credential = ChainedTokenCredential(
+        AzureCliCredential(),
+        ManagedIdentityCredential(),
+    )
+    provider = get_bearer_token_provider(credential, scope)
+    _TRAPI_TOKEN_PROVIDERS[scope] = provider
+    return provider
+
+
+def _resolve_trapi_bearer_token(api_key: str) -> str:
+    if api_key:
+        return api_key
+    return _trapi_token_provider(DEFAULT_TRAPI_SCOPE)()
+
+
 # ---------------------------------------------------------------------------
 # Gateway call: plain message list -> text
 # ---------------------------------------------------------------------------
 
-def _call_gateway(
+def _call_responses_gateway(
     *,
     system_prompt: str,
     user_content: list[dict[str, Any]],
-    api_key: str,
-    endpoint: str,
-    model: str,
+    gateway_config: _GatewayConfig,
     timeout_seconds: int,
     max_new_tokens: int,
     max_attempts: int,
     retry_base_delay: float,
     tag: str,
 ) -> str:
-    is_chat_completions = "/chat/completions" in endpoint
-
-    if is_chat_completions:
-        messages: list[dict[str, Any]] = [
-            {"role": "system", "content": system_prompt},
-        ]
-        # Convert user_content list of parts into multimodal content array
-        chat_content: list[dict[str, Any]] = []
-        for part in user_content:
-            ptype = part.get("type")
-            if ptype == "input_text":
-                chat_content.append({"type": "text", "text": part.get("text", "")})
-            elif ptype == "input_image":
-                chat_content.append({"type": "image_url", "image_url": {"url": part.get("image_url", "")}})
-            else:
-                # Fallback: if there is text, emit text; if image_url, emit image_url
-                if isinstance(part.get("text"), str):
-                    chat_content.append({"type": "text", "text": part["text"]})
-                elif isinstance(part.get("image_url"), str):
-                    chat_content.append({"type": "image_url", "image_url": {"url": part["image_url"]}})
-        messages.append({"role": "user", "content": chat_content})
-        payload: dict[str, Any] = {
-            "model": model,
-            "messages": messages,
-            "max_completion_tokens": max_new_tokens,
-        }
-    else:
-        payload = {
-            "model": model,
-            "input": [
-                {
-                    "type": "message",
-                    "role": "system",
-                    "content": [text_part(system_prompt)],
-                },
-                {
-                    "type": "message",
-                    "role": "user",
-                    "content": user_content,
-                },
-            ],
-            "max_output_tokens": max_new_tokens,
-        }
+    payload: dict[str, Any] = {
+        "model": gateway_config.model,
+        "input": [
+            {
+                "type": "message",
+                "role": "developer",
+                "content": [text_part(system_prompt)],
+            },
+            {
+                "type": "message",
+                "role": "user",
+                "content": user_content,
+            },
+        ],
+        "max_output_tokens": max_new_tokens,
+    }
 
     with httpx.Client(timeout=timeout_seconds) as client:
         response = _post_with_retry(
             client,
-            endpoint,
+            gateway_config.endpoint,
             headers={
                 "Content-Type": "application/json",
-                "Authorization": f"Bearer {api_key}",
+                "Authorization": f"Bearer {gateway_config.api_key}",
             },
             json_body=payload,
             max_attempts=max_attempts,
@@ -382,15 +499,85 @@ def _call_gateway(
         )
         response_payload = response.json()
 
-    if is_chat_completions:
-        choices = response_payload.get("choices", [])
-        if choices:
-            content = choices[0].get("message", {}).get("content", "")
-        else:
-            content = ""
-        return content.strip()
-
     return _extract_response_text(response_payload).strip()
+
+
+def _call_trapi_gateway(
+    *,
+    system_prompt: str,
+    user_content: list[dict[str, Any]],
+    gateway_config: _GatewayConfig,
+    timeout_seconds: int,
+    max_new_tokens: int,
+    max_attempts: int,
+    retry_base_delay: float,
+    tag: str,
+) -> str:
+    payload: dict[str, Any] = {
+        "messages": [
+            {
+                "role": "system",
+                "content": system_prompt,
+            },
+            {
+                "role": "user",
+                "content": _serialize_trapi_user_content(user_content),
+            },
+        ],
+        "max_tokens": max_new_tokens,
+    }
+
+    bearer_token = _resolve_trapi_bearer_token(gateway_config.api_key)
+    with httpx.Client(timeout=timeout_seconds) as client:
+        response = _post_with_retry(
+            client,
+            gateway_config.endpoint,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {bearer_token}",
+            },
+            json_body=payload,
+            max_attempts=max_attempts,
+            base_delay=retry_base_delay,
+            tag=tag,
+        )
+        response_payload = response.json()
+
+    return _extract_trapi_chat_text(response_payload).strip()
+
+
+def _call_gateway(
+    *,
+    system_prompt: str,
+    user_content: list[dict[str, Any]],
+    gateway_config: _GatewayConfig,
+    timeout_seconds: int,
+    max_new_tokens: int,
+    max_attempts: int,
+    retry_base_delay: float,
+    tag: str,
+) -> str:
+    if gateway_config.backend == "trapi_kimi":
+        return _call_trapi_gateway(
+            system_prompt=system_prompt,
+            user_content=user_content,
+            gateway_config=gateway_config,
+            timeout_seconds=timeout_seconds,
+            max_new_tokens=max_new_tokens,
+            max_attempts=max_attempts,
+            retry_base_delay=retry_base_delay,
+            tag=tag,
+        )
+    return _call_responses_gateway(
+        system_prompt=system_prompt,
+        user_content=user_content,
+        gateway_config=gateway_config,
+        timeout_seconds=timeout_seconds,
+        max_new_tokens=max_new_tokens,
+        max_attempts=max_attempts,
+        retry_base_delay=retry_base_delay,
+        tag=tag,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -448,9 +635,7 @@ async def _judge_one_image(
     image_path: Path,
     image_judge_system_prompt: str,
     image_judge_user_prompt: str,
-    api_key: str,
-    endpoint: str,
-    model: str,
+    gateway_config: _GatewayConfig,
     timeout_seconds: int,
     max_attempts: int,
     retry_base_delay: float,
@@ -469,9 +654,7 @@ async def _judge_one_image(
             _call_gateway,
             system_prompt=image_judge_system_prompt,
             user_content=user_content,
-            api_key=api_key,
-            endpoint=endpoint,
-            model=model,
+            gateway_config=gateway_config,
             timeout_seconds=timeout_seconds,
             max_new_tokens=max_new_tokens,
             max_attempts=max_attempts,
@@ -546,34 +729,26 @@ async def run_self_reflection_async(
     max_image_parse_retries: int,
     final_max_new_tokens: int,
     image_max_new_tokens: int,
-    api_key: str,
-    endpoint: str,
-    model: str,
+    gateway_config: _GatewayConfig,
     timeout_seconds: int,
     max_attempts: int,
     retry_base_delay: float,
 ) -> SelfReflectionResult:
+    per_image = []
     if images:
-        per_image = await asyncio.gather(
-            *(
-                _judge_one_image(
-                    image_path=path,
-                    image_judge_system_prompt=image_judge_system_prompt,
-                    image_judge_user_prompt=image_judge_user_prompt,
-                    api_key=api_key,
-                    endpoint=endpoint,
-                    model=model,
-                    timeout_seconds=timeout_seconds,
-                    max_attempts=max_attempts,
-                    retry_base_delay=retry_base_delay,
-                    max_new_tokens=image_max_new_tokens,
-                    max_parse_retries=max_image_parse_retries,
-                )
-                for path in images
+        for path in images:
+            record = await _judge_one_image(
+                image_path=path,
+                image_judge_system_prompt=image_judge_system_prompt,
+                image_judge_user_prompt=image_judge_user_prompt,
+                gateway_config=gateway_config,
+                timeout_seconds=timeout_seconds,
+                max_attempts=max_attempts,
+                retry_base_delay=retry_base_delay,
+                max_new_tokens=image_max_new_tokens,
+                max_parse_retries=max_image_parse_retries,
             )
-        )
-    else:
-        per_image = []
+            per_image.append(record)
 
     image_paths = [record["image_path"] for record in per_image]
     reasonings = [record["Reasoning"] or "" for record in per_image]
@@ -596,9 +771,7 @@ async def run_self_reflection_async(
         _call_gateway,
         system_prompt=final_verdict_system_prompt,
         user_content=user_content,
-        api_key=api_key,
-        endpoint=endpoint,
-        model=model,
+        gateway_config=gateway_config,
         timeout_seconds=timeout_seconds,
         max_new_tokens=final_max_new_tokens,
         max_attempts=max_attempts,
@@ -614,8 +787,8 @@ async def run_self_reflection_async(
         final_system_msg=final_verdict_system_prompt,
         final_response=final_response,
         predicted_label=predicted_label,
-        model=model,
-        endpoint=endpoint,
+        model=gateway_config.model,
+        endpoint=gateway_config.endpoint,
     )
 
 
@@ -652,8 +825,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Two-stage screenshot judge. Reads a JSON config describing images and "
-            "prompts, calls the phyagi gateway (gpt-5.4 by default), and prints a "
-            "JSON result with per-image records and the final verdict."
+            "prompts, calls TRAPI Kimi-K2.5 by default (with legacy responses "
+            "gateway overrides still supported), and prints a JSON result with "
+            "per-image records and the final verdict."
         )
     )
     parser.add_argument("--config", required=True, help="Path to JSON config, or '-' for stdin.")
@@ -669,11 +843,39 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--max-image-parse-retries", type=int, default=DEFAULT_IMAGE_PARSE_MAX_RETRIES)
-    parser.add_argument("--image-max-new-tokens", type=int, default=1024)
+    parser.add_argument(
+        "--num-evals",
+        type=int,
+        default=DEFAULT_NUM_EVALS,
+        help=(
+            f"Number of parallel self-reflection evaluations to run. Default: {DEFAULT_NUM_EVALS}. "
+            "All N must return predicted_label==1 for the gate to PASS; otherwise "
+            "one of the failed verdicts is written to --output."
+        ),
+    )
+    parser.add_argument("--image-max-new-tokens", type=int, default=2048)
     parser.add_argument("--final-max-new-tokens", type=int, default=8192)
-    parser.add_argument("--model", default="", help="Override gateway model (default: gpt-5.4).")
-    parser.add_argument("--endpoint", default="", help="Override gateway endpoint.")
-    parser.add_argument("--api-key", default="", help="Override gateway API key.")
+    parser.add_argument(
+        "--model",
+        default="",
+        help=(
+            "Override the judge model or deployment. Defaults to TRAPI Kimi-K2.5 "
+            f"({DEFAULT_TRAPI_MODEL}); explicit non-TRAPI overrides keep the legacy responses backend."
+        ),
+    )
+    parser.add_argument(
+        "--endpoint",
+        default="",
+        help=(
+            "Override the judge endpoint. Defaults to the TRAPI base endpoint; "
+            "explicit non-TRAPI endpoints keep the legacy responses backend."
+        ),
+    )
+    parser.add_argument(
+        "--api-key",
+        default="",
+        help="Override the bearer token or API key used by the selected backend.",
+    )
     parser.add_argument("--timeout-seconds", type=int, default=120)
     parser.add_argument("--max-attempts", type=int, default=4, help="HTTP retry count per gateway call.")
     parser.add_argument("--retry-base-delay", type=float, default=1.0)
@@ -737,29 +939,75 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
 
-    api_key, endpoint, model = _gateway_config(
+    gateway_config = _gateway_config(
         api_key=args.api_key, endpoint=args.endpoint, model=args.model
     )
 
-    result = run_self_reflection(
-        images=resolved_images,
-        image_judge_system_prompt=prompts["image_judge_system_prompt"],
-        image_judge_user_prompt=prompts["image_judge_user_prompt"],
-        final_verdict_system_prompt=prompts["final_verdict_system_prompt"],
-        final_verdict_user_prompt=prompts["final_verdict_user_prompt"],
-        action_history_log=action_history_log,
-        max_image_parse_retries=args.max_image_parse_retries,
-        final_max_new_tokens=args.final_max_new_tokens,
-        image_max_new_tokens=args.image_max_new_tokens,
-        api_key=api_key,
-        endpoint=endpoint,
-        model=model,
-        timeout_seconds=args.timeout_seconds,
-        max_attempts=args.max_attempts,
-        retry_base_delay=args.retry_base_delay,
+    if args.num_evals < 1:
+        print(
+            f"ERROR: --num-evals must be >= 1 (got {args.num_evals}).",
+            file=sys.stderr,
+        )
+        return 2
+
+    print(
+        f"[self_reflection] images={len(resolved_images)} backend={gateway_config.backend} "
+        f"model={gateway_config.model} "
+        f"num_evals={args.num_evals}",
+        file=sys.stderr,
     )
 
-    payload = result.to_dict()
+    async def _run_all() -> list[SelfReflectionResult]:
+        return await asyncio.gather(
+            *(
+                run_self_reflection_async(
+                    images=resolved_images,
+                    image_judge_system_prompt=prompts["image_judge_system_prompt"],
+                    image_judge_user_prompt=prompts["image_judge_user_prompt"],
+                    final_verdict_system_prompt=prompts["final_verdict_system_prompt"],
+                    final_verdict_user_prompt=prompts["final_verdict_user_prompt"],
+                    action_history_log=action_history_log,
+                    max_image_parse_retries=args.max_image_parse_retries,
+                    final_max_new_tokens=args.final_max_new_tokens,
+                    image_max_new_tokens=args.image_max_new_tokens,
+                    gateway_config=gateway_config,
+                    timeout_seconds=args.timeout_seconds,
+                    max_attempts=args.max_attempts,
+                    retry_base_delay=args.retry_base_delay,
+                )
+                for _ in range(args.num_evals)
+            )
+        )
+
+    results = asyncio.run(_run_all())
+
+    labels = [r.predicted_label for r in results]
+    all_pass = all(lbl == 1 for lbl in labels)
+    if all_pass:
+        chosen_idx = 0
+    else:
+        # Prefer an explicit failure (label==0) over an unparsed verdict.
+        chosen_idx = next(
+            (i for i, lbl in enumerate(labels) if lbl == 0),
+            next(
+                (i for i, lbl in enumerate(labels) if lbl != 1),
+                0,
+            ),
+        )
+
+    chosen = results[chosen_idx]
+    payload = chosen.to_dict()
+    payload["num_evals"] = args.num_evals
+    payload["all_predicted_labels"] = labels
+    payload["chosen_eval_index"] = chosen_idx
+    payload["all_eval_runs"] = [
+        {
+            "predicted_label": r.predicted_label,
+            "final_response": r.final_response,
+        }
+        for r in results
+    ]
+
     serialized = json.dumps(payload, indent=2, ensure_ascii=False)
     if args.output:
         Path(args.output).write_text(serialized, encoding="utf-8")
@@ -768,14 +1016,23 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.write(serialized)
         sys.stdout.write("\n")
 
-    label = result.predicted_label
-    if label == 1:
-        print("JUDGE VERDICT: PASS", file=sys.stderr)
+    label = chosen.predicted_label
+    if all_pass:
+        print(
+            f"JUDGE VERDICT: PASS (all {args.num_evals} evals predicted_label=1)",
+            file=sys.stderr,
+        )
         return 0
     if label == 0:
-        print("JUDGE VERDICT: FAIL", file=sys.stderr)
+        print(
+            f"JUDGE VERDICT: FAIL (labels={labels}; reporting failed eval #{chosen_idx})",
+            file=sys.stderr,
+        )
         return 1
-    print("JUDGE VERDICT: UNPARSED (treating as FAIL)", file=sys.stderr)
+    print(
+        f"JUDGE VERDICT: UNPARSED (labels={labels}; reporting eval #{chosen_idx}; treating as FAIL)",
+        file=sys.stderr,
+    )
     return 1
 
 

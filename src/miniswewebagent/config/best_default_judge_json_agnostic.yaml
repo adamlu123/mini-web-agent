@@ -111,7 +111,7 @@ agent:
   judge_model: gpt-5.4 #o4-mini Used by the default agent's built-in completion gate (agents/default.py line 449), but only when judge_mode: om2w
   judge_gateway_endpoint: ""
   judge_score_threshold: 3
-  summary_every_n_steps: 20
+  summary_every_n_steps: 10
 
   system_template: |
     You are a benchmark-oriented Web agent operating through a local terminal + workspace harness.

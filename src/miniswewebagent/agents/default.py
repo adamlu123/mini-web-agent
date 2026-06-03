@@ -183,6 +183,10 @@ class DefaultAgent:
     def __init__(self, model: Model, env: Environment, *, config_class: type = AgentConfig, **kwargs):
         self.config = config_class(**kwargs)
         self.messages: list[dict[str, Any]] = []
+        # Snapshots of each full session that was replaced by a compaction summary.
+        # self.messages always holds the live (post-last-compaction) session; this
+        # preserves every earlier session so the saved trajectory is complete.
+        self.compacted_sessions: list[list[dict[str, Any]]] = []
         self.model = model
         self.env = env
         self.extra_template_vars: dict[str, Any] = {}
@@ -525,11 +529,15 @@ class DefaultAgent:
             ),
             extra={"interrupt_type": "HistoryCompactionSummary"},
         )
+        # Archive the full session before it is replaced by the summary so the
+        # saved trajectory retains every compaction session, not just the last.
+        self.compacted_sessions.append(list(self.messages))
         self.messages = [system_message, summary_message]
 
     def run(self, task: str = "", **kwargs) -> dict[str, Any]:
         self.extra_template_vars |= {"task": task, **kwargs}
         self.messages = []
+        self.compacted_sessions = []
         self.n_calls = 0
         self.n_format_errors = 0
         self.add_messages(
@@ -641,6 +649,10 @@ class DefaultAgent:
                     "format_errors": self.n_format_errors,
                 },
                 "messages": [_sanitize_message_for_disk(message) for message in self.messages],
+                "compacted_sessions": [
+                    [_sanitize_message_for_disk(message) for message in session]
+                    for session in self.compacted_sessions
+                ],
                 "trajectory_format": "mini-swe-webagent-0.1",
             },
             self.model.serialize(),
