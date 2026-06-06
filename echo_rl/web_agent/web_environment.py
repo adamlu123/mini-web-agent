@@ -146,6 +146,52 @@ def _attach_stub_locator(page: _StubPage) -> None:
     page.locator = _locator  # type: ignore[attr-defined]
 
 
+# Shim written into the SFT-mode workspace so the trained model's learned
+# `from browser_session import open_browser_session` works. Opens a FRESH
+# Browserbase cloud session per call (matching the stateless SFT harness);
+# keep_alive=False makes the session self-terminate when the per-command
+# subprocess exits. Falls back to a local Chromium launch when Browserbase
+# creds are absent (offline smoke tests).
+_BROWSER_SESSION_SHIM = '''"""Backend-agnostic browser session helper (SFT-aligned shim).
+
+Usage (exactly as in the SFT trajectories):
+    from playwright.async_api import async_playwright
+    from browser_session import open_browser_session
+    async with async_playwright() as p:
+        browser = await open_browser_session(p)
+        context = browser.contexts[0] if browser.contexts else await browser.new_context()
+        page = context.pages[0] if context.pages else await context.new_page()
+        ...
+"""
+import asyncio
+import os
+
+
+async def open_browser_session(playwright):
+    """Return a Playwright Browser. Prefers a fresh Browserbase cloud session;
+    falls back to a local headless Chromium when creds are unavailable."""
+    api_key = os.environ.get("BROWSERBASE_API_KEY", "")
+    project_id = os.environ.get("BROWSERBASE_PROJECT_ID", "")
+    if api_key and project_id:
+        from browserbase import Browserbase
+
+        client = Browserbase(api_key=api_key)
+        session = await asyncio.to_thread(
+            client.sessions.create,
+            project_id=project_id,
+            proxies=True,
+            browser_settings={"advanced_stealth": True},
+            keep_alive=False,
+            timeout=1200,
+        )
+        connect_url = getattr(session, "connect_url", "") or (
+            session.get("connectUrl", "") if isinstance(session, dict) else ""
+        )
+        return await playwright.chromium.connect_over_cdp(connect_url, timeout=60000)
+    return await playwright.chromium.launch(headless=True)
+'''
+
+
 @dataclass
 class WebAgentEnvironmentConfig:
     task_id: str = ""
@@ -170,6 +216,14 @@ class WebAgentEnvironmentConfig:
     # image_qa / self_reflection CLIs can route through it.
     policy_endpoint_url: str = ""
     policy_model_name: str = ""
+    # SFT-aligned mode: the agent drives its OWN fresh browser per command via
+    # the `browser_session` shim (matching the stateless SFT harness) and writes
+    # screenshots to disk. In this mode the env (a) writes task.json + a
+    # browser_session.py shim into the workspace at setup, (b) does NOT auto-
+    # capture its own persistent page (it would be the wrong page), and (c)
+    # serves the model-authored screenshots (final_runs/run_*/screenshots/*.png)
+    # to the judge instead of env captures.
+    sft_mode: bool = False
     stub: bool = False
 
 
@@ -202,6 +256,14 @@ class WebAgentEnvironment:
         self._screenshots_dir = self._workspace / self.cfg.screenshots_dirname
         self._screenshots_dir.mkdir(parents=True, exist_ok=True)
 
+        if self.cfg.sft_mode:
+            # SFT harness layout: the agent reads /workspace/task.json and opens
+            # its OWN fresh browser per command via `from browser_session import
+            # open_browser_session`. We provision those two artifacts and do NOT
+            # stand up a persistent env browser (the agent never uses it, and its
+            # page would be the wrong one to screenshot for the judge).
+            self._write_sft_workspace_assets()
+
         if self.cfg.stub:
             self._page = _StubPage(self.cfg.start_url)
             _attach_stub_locator(self._page)
@@ -220,6 +282,10 @@ class WebAgentEnvironment:
                     indent=2,
                 )
             )
+        elif self.cfg.sft_mode:
+            # No env browser; the agent self-launches via the shim. _safe_url_title
+            # and _capture_screenshot are already None-safe / no-op in sft mode.
+            pass
         else:
             await self._start_playwright()
             if self.cfg.start_url:
@@ -234,6 +300,13 @@ class WebAgentEnvironment:
         self._turn += 1
         timeout = float(timeout) if timeout is not None else 30.0
         command = command.strip()
+        # SFT alignment: the model was trained on a harness where the workspace
+        # literally was `/workspace`. There is no container here, so map the
+        # absolute `/workspace` it emits onto this rollout's real workspace dir
+        # before executing. The generator still echoes the original `/workspace`
+        # path back in the observation, so the in-context text stays in-distribution.
+        if self.cfg.sft_mode and self._workspace is not None and "/workspace" in command:
+            command = command.replace("/workspace", str(self._workspace))
         if not command:
             return ExecResult(stdout="", stderr="empty command", return_code=2)
 
@@ -370,7 +443,53 @@ class WebAgentEnvironment:
         ]
 
     def screenshot_paths(self) -> list[str]:
+        if self.cfg.sft_mode:
+            return self._sft_screenshot_paths()
         return [step.screenshot_path for step in self._steps if step.screenshot_path]
+
+    def _sft_screenshot_paths(self) -> list[str]:
+        """Screenshots the AGENT wrote to disk (what the original SFT harness
+        judged). Prefer the latest `final_runs/run_<id>/screenshots/*.png` (the
+        model's final verified run); fall back to any *.png under the workspace
+        ordered by mtime so a model that never reached the final-run stage still
+        gets scored on whatever evidence it produced."""
+        if self._workspace is None:
+            return []
+        ws = self._workspace
+        run_dirs = sorted(
+            ws.glob("final_runs/run_*/screenshots"),
+            key=lambda p: (p.parent.stat().st_mtime if p.exists() else 0.0),
+        )
+        for run_ss in reversed(run_dirs):
+            pngs = sorted(run_ss.glob("*.png"))
+            if pngs:
+                return [str(p) for p in pngs]
+        # Fallback: every PNG the agent saved anywhere under the workspace.
+        all_pngs = [p for p in ws.rglob("*.png") if p.is_file()]
+        all_pngs.sort(key=lambda p: p.stat().st_mtime)
+        return [str(p) for p in all_pngs]
+
+    def _write_sft_workspace_assets(self) -> None:
+        """Provision the SFT harness artifacts the trained model expects:
+        /workspace/task.json (read via `cat task.json`) and a browser_session.py
+        shim that opens a FRESH Browserbase session per call (the stateless
+        `from browser_session import open_browser_session` the model was trained
+        on). Sessions use keep_alive=False so they self-terminate when the
+        agent's per-command subprocess exits -> no leaked sessions to clean up."""
+        if self._workspace is None:
+            return
+        (self._workspace / "task.json").write_text(
+            json.dumps(
+                {
+                    "task": self.cfg.task,
+                    "task_id": self.cfg.task_id,
+                    "start_url": self.cfg.start_url,
+                    "task_record": None,
+                },
+                indent=2,
+            )
+        )
+        (self._workspace / "browser_session.py").write_text(_BROWSER_SESSION_SHIM)
 
     # ------------------------------------------------------------------
     # web subcommands
@@ -589,7 +708,15 @@ class WebAgentEnvironment:
                 coro = locals_dict["__web_step__"]()
                 if asyncio.iscoroutine(coro):
                     await coro
-        except Exception as exc:
+        # Catch SystemExit too: model-generated snippets often emit exit()/quit()/
+        # sys.exit(), all of which raise SystemExit (a BaseException, not an
+        # Exception). The snippet runs in-process via exec(), so an unguarded one
+        # propagates up and kills the Ray training worker (-> SYSTEM_ERROR, lost
+        # placement group, dead run). Treat it as a normal failed exec instead.
+        # CancelledError (asyncio.wait_for timeouts) and KeyboardInterrupt are
+        # deliberately NOT caught so rollout/step timeouts and real interrupts
+        # still propagate.
+        except (Exception, SystemExit) as exc:
             return ExecResult(
                 stdout=out_buf.getvalue(),
                 stderr=(err_buf.getvalue() + "\n" + str(exc)).strip(),
@@ -608,6 +735,27 @@ class WebAgentEnvironment:
             env["WEB_AGENT_POLICY_URL"] = self.cfg.policy_endpoint_url
         if self.cfg.policy_model_name:
             env["WEB_AGENT_POLICY_MODEL"] = self.cfg.policy_model_name
+        if self.cfg.sft_mode:
+            # The browser_session shim needs Browserbase creds; image_qa /
+            # self_reflection (run as `python -m ...`) need their package dir on
+            # PYTHONPATH.
+            if self.cfg.browserbase_api_key:
+                env["BROWSERBASE_API_KEY"] = self.cfg.browserbase_api_key
+            if self.cfg.browserbase_project_id:
+                env["BROWSERBASE_PROJECT_ID"] = self.cfg.browserbase_project_id
+            tools_dir = str(Path(__file__).resolve().parent / "tools")
+            env["PYTHONPATH"] = (
+                tools_dir + _os.pathsep + env.get("PYTHONPATH", "")
+            ).rstrip(_os.pathsep)
+            # The model's `python - <<PY` heredocs run in THIS subprocess shell;
+            # bare `python` must resolve to the interpreter that actually has
+            # playwright/browserbase installed (the one running the eval), not
+            # whatever bare `python` is first on PATH.
+            import sys as _sys
+
+            env["PATH"] = (
+                _os.path.dirname(_sys.executable) + _os.pathsep + env.get("PATH", "")
+            ).rstrip(_os.pathsep)
         proc = await asyncio.create_subprocess_shell(
             command,
             stdout=asyncio.subprocess.PIPE,
@@ -656,6 +804,10 @@ class WebAgentEnvironment:
 
     async def _capture_screenshot(self, name: str, *, increment_turn: bool = True) -> Path | None:
         del increment_turn
+        # SFT mode: the agent drives its own browser and writes its own
+        # screenshots; the env has no meaningful page to capture.
+        if self.cfg.sft_mode:
+            return None
         if self._screenshots_dir is None:
             return None
         out_path = self._screenshots_dir / f"{name}.png"

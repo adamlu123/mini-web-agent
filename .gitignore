@@ -449,3 +449,7 @@ docker/wheels
 # Docs/banner assets — not needed at training runtime
 echo.gif
 echo.pdf
+
+# LlamaFactory SFT checkpoints (local) -- keep out of uploads
+LlamaFactory/saves/
+LlamaFactory/output/

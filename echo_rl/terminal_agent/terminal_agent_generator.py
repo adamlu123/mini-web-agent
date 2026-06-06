@@ -361,6 +361,10 @@ class TerminalAgentGenerator(GeneratorInterface):
 
             if parse_result.is_done:
                 stop_reason = "done"
+                # Surface the final answer text (e.g. SFT `<answer>` payload) so
+                # the web-agent judge receives it as `final_response`.
+                if getattr(parse_result, "answer", ""):
+                    interaction.metadata["final_response"] = parse_result.answer
                 break
             if not self._has_token_budget(interaction, 0):
                 stop_reason = "max_total_tokens"

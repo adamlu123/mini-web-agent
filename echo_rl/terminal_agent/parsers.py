@@ -19,6 +19,9 @@ class ParseResult:
     error: str = ""
     warnings: list[str] = field(default_factory=list)
     violations: list[str] = field(default_factory=list)
+    # Final answer text (e.g. the SFT `<answer>...</answer>` payload). Surfaced
+    # so the rollout glue can route it to the judge as `final_response`.
+    answer: str = ""
 
 
 def check_format_warnings(
@@ -29,7 +32,10 @@ def check_format_warnings(
 ) -> tuple[list[str], list[str]]:
     if not raw_response:
         return [], []
-    if thinking_enabled and parser_name == "qwen35":
+    if thinking_enabled and parser_name in ("qwen35", "bash"):
+        # The qwen3_5 chat template prefills `<think>\n` at the generation
+        # prompt, so the model's completion starts AFTER the opening tag. Re-add
+        # it before counting tags, else every turn falsely warns "Missing <think>".
         raw_response = "<think>\n" + raw_response
 
     tags = tags or ["command", "action"]
@@ -189,11 +195,43 @@ class Qwen35XMLParser:
         return ParseResult(thinking=thinking, commands=commands, is_done=is_done)
 
 
-def get_parser(parser_name: str) -> HFHermesParser | Qwen35XMLParser | XMLParser:
+class BashAnswerParser:
+    """Parser for the SFT `<think>/<bash>/<answer>` format (see LlamaFactory/
+    scripts/make_web_agent_sft.py). Each turn is either ONE `<bash>...</bash>`
+    shell command or a final `<answer>...</answer>`. Returns the same shape as
+    Qwen35XMLParser -- ParsedCommand(name="bash", arguments={"command": ...}) --
+    so the terminal_agent generator's `arguments["command"]` consumer is
+    unchanged; `<answer>` maps to is_done."""
+
+    format_tags = ["bash"]
+    _BASH_RE = re.compile(r"<bash>\n?(.*?)\n?</bash>", re.DOTALL)
+    _ANSWER_RE = re.compile(r"<answer>(.*?)</answer>", re.DOTALL)
+
+    def parse_response(self, response: str | None, extract_answer_tags_for_done: bool = False) -> ParseResult:
+        if not response:
+            return ParseResult(thinking="", error="Empty response")
+        think_match = re.search(r"<think>(.*?)</think>", response, re.DOTALL)
+        thinking = think_match.group(1).strip() if think_match else ""
+        answer_match = self._ANSWER_RE.search(response)
+        is_done = bool(answer_match)
+        answer = answer_match.group(1).strip() if answer_match else ""
+        commands = []
+        for raw in self._BASH_RE.findall(response):
+            cmd = raw.strip()
+            if cmd:
+                commands.append(ParsedCommand(name="bash", arguments={"command": cmd}, raw=cmd))
+        if not commands and not is_done:
+            return ParseResult(thinking=thinking, error="No <bash> command or <answer> found in response.")
+        return ParseResult(thinking=thinking, commands=commands, is_done=is_done, answer=answer)
+
+
+def get_parser(parser_name: str) -> "HFHermesParser | Qwen35XMLParser | XMLParser | BashAnswerParser":
     if parser_name == "hermes":
         return HFHermesParser()
     if parser_name == "xml":
         return XMLParser()
     if parser_name == "qwen35":
         return Qwen35XMLParser()
-    raise ValueError(f"Unknown parser_name {parser_name!r}. Must be 'hermes', 'xml', or 'qwen35'.")
+    if parser_name == "bash":
+        return BashAnswerParser()
+    raise ValueError(f"Unknown parser_name {parser_name!r}. Must be 'hermes', 'xml', 'qwen35', or 'bash'.")

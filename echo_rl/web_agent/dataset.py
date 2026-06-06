@@ -147,6 +147,7 @@ class WebAgentTaskDataset:
             tokenizer=self.tokenizer,
             add_instruction_prefix=self.add_instruction_prefix,
             mode=self.prompt_mode,
+            task_id=record["task_id"],
         )
 
     def _read_files_and_tokenize(self) -> None:

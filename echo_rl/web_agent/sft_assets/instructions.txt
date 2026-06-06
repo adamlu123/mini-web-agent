@@ -1,0 +1,87 @@
+<instructions>
+# Task Instructions
+
+You're solving a web task through a stateless local terminal + workspace harness.
+
+<IMPORTANT>
+This is an interactive process where you reason, execute exactly one bash command, inspect the result, and then produce your next command. You have a single session — context is preserved across all steps, so there is no need to reload state between turns.
+</IMPORTANT>
+
+## Harness Rules
+
+- Work only inside `/workspace`.
+- Keep generated code, screenshots, logs, scratch files, and notes **only** in `/workspace`.
+- The required final artifact is `/workspace/final_script.py`.
+- Create `final_runs/run_<id>/` folders for every clean execution of the final script. Use an integer ID higher than any that already exists for each new attempt.
+- Store each run's `final_script.py`, `final_script_log.txt`, and final verification screenshots **only** inside that run folder.
+- Always use Browserbase cloud sessions.
+
+## Web Task Rules
+
+- Do not guess UI interactions. Use printed evidence from the current run.
+- Some required filters or options may be hidden behind expandable sections, drawers, dropdowns, or mobile filter panels. Open those controls and inspect again before deciding a filter is unavailable.
+- A broad search query does not satisfy explicit filter constraints when the site exposes dedicated controls.
+- Save final verification screenshots inside the active `final_runs/run_<id>/screenshots/` folder.
+- Print concise ARIA snapshots, URLs, titles, visible labels, and any extracted state needed for the next step.
+
+## Task Success Criteria
+
+1. Filtered results must be displayed correctly. Missing selection, missing confirmation, or no visible effect = failure.
+2. Specific filter conditions ("best," "highest," "cheapest," "latest," "lowest," etc.) must be applied using the filter/sort function.
+3. Requirements must be applied through filters, not embedded in a broad search query.
+4. Numeric ranges (money, years, beds/baths) must exactly match the task requirement — no broadening or narrowing.
+5. Tasks requiring a submission action or results display need that action to be taken.
+6. Empty results are OK if the correct action was performed.
+7. All explicit filters must use site controls when those controls exist.
+8. If a site control does not exist, verify the constraint directly from page content.
+
+## Image QA Tool
+
+- Use image_qa during exploration to inspect screenshots and verify UI state:
+  `python -m image_qa --workspace-dir "/workspace" --image screenshots/example.png --question "inspect prompt"`
+- Use multiple `--image` flags for combined visual verification.
+- image_qa returns JSON with `answer`, `evidence`, `unknown`, and `confidence` fields.
+
+## Recommended Workflow
+
+1. **Planning**: Parse the task into a list of critical points — every explicit constraint, filter, sort, selection, or datum that must be satisfied. Write them to `plan.md` as a checklist:
+   ```
+   # Critical Points
+   - [ ] CP1: <description of constraint/filter/action>
+   - [ ] CP2: <description of constraint/filter/action>
+   ...
+   ```
+   Each critical point must be independently verifiable from a screenshot or log entry.
+
+2. **Author judge_config.json (once)**: Write `/workspace/judge_config.json` containing only the four prompts (`image_judge_system_prompt`, `image_judge_user_prompt`, `final_verdict_system_prompt`, `final_verdict_user_prompt`) for the `self_reflection` tool. Embed the full critical-point list from `plan.md` and the task description into the user prompts, but keep the prompts generic — this file is reused verbatim for every `self_reflection` invocation, so do NOT hard-code a specific run id, screenshot filename, or `final_script_log.txt` content.
+
+3. **Exploration**: Inspect `task.json`, create exploration scripts, identify every required filter control. Use `image_qa` during exploration to verify UI state.
+
+4. **Final script**: Write `final_script.py`, run it once in a new `final_runs/run_<id>/` folder. The script must produce screenshots and action logs as described in **Final Script Instrumentation**.
+
+5. **Run self_reflection**: Execute `python -m self_reflection --config judge_config.json --workspace-dir "/workspace" --output final_runs/run_<id>/judge_result.json`. The tool auto-attaches every screenshot in the latest `final_runs/run_*/screenshots/` folder (default `--auto-latest-run final_runs`) — you do NOT pass an image list. If the tool exits non-zero or `predicted_label != 1`, diagnose the specific issue, fix `final_script.py`, re-run it in a new `final_runs/run_<id+1>/` folder, and re-invoke `self_reflection` against the new run. Do NOT edit `judge_config.json` between attempts.
+
+6. **Declare done**: Set `"done": true` ONLY after `self_reflection` exits 0 and `judge_result.json` reports `"predicted_label": 1` for the latest run. The external judge reads that same `judge_result.json` as the final verdict. Declaring done in any other state is a failure.
+
+## Final Script Instrumentation
+
+`final_script.py` must:
+- be stored as `final_runs/run_<id>/final_script.py`
+- save critical-point screenshots as `final_runs/run_<id>/screenshots/final_execution_<step_number>_<action>.png`
+- create or reset `final_runs/run_<id>/final_script_log.txt` at the start of each clean run
+- write `step <step_number> action: <reason and action description>` to the log for every interaction you did, or intermediate result/observation you need to save. And end the log with a single `Final Response: <answer text>` line when the task asks for a final datum
+- each screenshot should correspond to a critical point from `plan.md` so that `self_reflection` can verify it
+
+This instrumentation is mandatory because both `self_reflection` and the external judge evaluate those screenshots and action logs.
+
+## Completion Gate
+
+Set `"done": true` ONLY if ALL of the following are true:
+1. `plan.md` exists with all critical points identified.
+2. `judge_config.json` exists with all four prompts populated for `self_reflection`.
+3. `final_script.py` was run from scratch in a `final_runs/run_<id>/` folder.
+4. `python -m self_reflection --config judge_config.json --workspace-dir "/workspace" --output final_runs/run_<id>/judge_result.json` was executed against that run, exited 0, and wrote `final_runs/run_<id>/judge_result.json` with `"predicted_label": 1`.
+5. `ls -R final_runs/run_<id>` and `cat final_runs/run_<id>/final_script_log.txt` confirm the expected artifacts.
+
+Do NOT declare done if `self_reflection` exits non-zero, if `predicted_label` is not 1, if the run folder is missing, if required screenshots are missing, or if `self_reflection` has not been run against the latest `final_runs/run_<id>/`.
+</instructions>

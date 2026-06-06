@@ -1,5 +1,38 @@
 # TODO: the model is pretty weak of 4b size, so consider reduce the boilerplate code for this mode as much as possible:  e.g. you can create a cli tool for the agent to use called: create_browser() -> return a page object, and provide utility  
+from pathlib import Path
 from typing import Any
+
+# ---------------------------------------------------------------------------
+# Mode: "sft" — byte-exact replay of the prompt the 9B web-agent SFT model was
+# trained on (LlamaFactory/data/web_agent_pae100_full.json). The system prompt
+# and the first-turn <instructions> block are loaded verbatim from sft_assets/
+# (extracted from the training data, round-trip verified) so train/inference
+# prompts stay aligned. Action format is <think>/<bash>/<answer> (parser="bash").
+# ---------------------------------------------------------------------------
+_SFT_ASSETS = Path(__file__).resolve().parent / "sft_assets"
+SFT_SYSTEM = (_SFT_ASSETS / "system.txt").read_text()
+SFT_INSTRUCTIONS = (_SFT_ASSETS / "instructions.txt").read_text()
+
+# Variable header prepended to the constant <instructions> block. Mirrors the
+# original benchmark harness first user turn exactly (the instructions body has
+# no f-string braces, so we concatenate rather than .format() the whole thing).
+SFT_FIRST_USER_HEADER = (
+    "Task: {task}\n"
+    "Task ID: {task_id}\n"
+    "Start URL: {start_url}\n"
+    "Workspace root: /workspace\n"
+    "Task metadata JSON: /workspace/task.json\n"
+    "Required final script path: /workspace/final_script.py\n\n"
+)
+
+
+def format_sft_first_user(task: str, task_id: str, start_url: str) -> str:
+    """Reconstruct the SFT first user turn byte-for-byte."""
+    return (
+        SFT_FIRST_USER_HEADER.format(task=task, task_id=task_id, start_url=start_url)
+        + SFT_INSTRUCTIONS
+    )
+
 
 # ---------------------------------------------------------------------------
 # Mode: "default" — single persistent Playwright tab pre-injected into every
@@ -373,9 +406,21 @@ def format_web_task_prompt(
     tokenizer: Any,
     add_instruction_prefix: bool = True,
     mode: str = "default",
+    task_id: str = "",
 ) -> list[dict]:
+    # "sft" mode: verbatim train-aligned prompt. System = SFT_SYSTEM (NOT the
+    # tool-schema-augmented one), first user = SFT first turn, parser = "bash".
+    if mode == "sft":
+        if parser_name != "bash":
+            raise ValueError(
+                f"prompt mode 'sft' requires parser_name='bash', got {parser_name!r}"
+            )
+        return [
+            {"role": "system", "content": SFT_SYSTEM},
+            {"role": "user", "content": format_sft_first_user(task, task_id, start_url)},
+        ]
     if parser_name not in ("qwen35", "hermes"):
-        raise ValueError(f"web_agent only supports qwen35 and hermes parsers, got {parser_name!r}")
+        raise ValueError(f"web_agent only supports qwen35, hermes and bash (sft mode) parsers, got {parser_name!r}")
     if mode not in _INSTRUCTION_PREFIX_REGISTRY:
         raise ValueError(
             f"Unknown web_agent prompt mode {mode!r}. Available: {list_modes()}"
