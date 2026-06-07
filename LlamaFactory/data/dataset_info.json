@@ -790,5 +790,20 @@
       "assistant_tag": "gpt",
       "observation_tag": "observation"
     }
+  },
+  "web_agent_pae_merged": {
+    "file_name": "web_agent_pae_merged.json",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "conversations",
+      "system": "system"
+    },
+    "tags": {
+      "role_tag": "from",
+      "content_tag": "value",
+      "user_tag": "human",
+      "assistant_tag": "gpt",
+      "observation_tag": "observation"
+    }
   }
 }

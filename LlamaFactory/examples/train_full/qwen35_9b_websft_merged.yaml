@@ -1,0 +1,50 @@
+### Full SFT of Qwen3.5-9B on the MERGED web-agent multi-turn trajectories.
+### Data: scripts/make_web_agent_sft.py converts BOTH
+###   - the original pae_100 online gpt-5.x rollouts (86 convos), and
+###   - the 0601 N500_s100_agnostic_r2_success rollouts (142 convos),
+### into sharegpt convos, then merges them -> web_agent_pae_merged (228 convos,
+### 1612 assistant turns). Each assistant turn is
+###   <think>...</think><bash>...</bash>   (or <answer>...</answer> to finish).
+### Loss is computed on EVERY assistant turn including its <think> (mask_history
+### = false so the qwen3_5 ReasoningTemplate does NOT discard history thinking),
+### while human task/observation turns are masked.
+
+### model
+model_name_or_path: Qwen/Qwen3.5-9B
+trust_remote_code: true
+
+### method
+stage: sft
+do_train: true
+finetuning_type: full
+deepspeed: examples/deepspeed/ds_z2_config.json   # ZeRO-2 (NOT z3): z3's zero.init() fails to load pretrained weights into this Qwen3.5 VL/ImageTextToText model -> trains from random init (step-1 loss ~ln(248k)=12.4). z2 has no zero.init so from_pretrained loads weights normally; 9B fits comfortably on a 180GB B200.
+
+### dataset
+dataset: web_agent_pae_merged    # 86 pae_100 + 142 N500_r2_success -> sharegpt, obs NOT truncated (make_web_agent_sft.py --max-obs-chars 0)
+template: qwen3_5                 # multi-turn + <think>/<bash> format; use qwen3_5_nothink to drop thinking
+cutoff_len: 32768                # untruncated obs -> some convos exceed this and get tail-truncated by the trainer. Raise to fit fully, or regenerate with a smaller --max-obs-chars.
+overwrite_cache: true
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+mask_history: false              # keep <think> on ALL turns (not just the last); loss on every turn
+enable_thinking: true            # never strip the chain-of-thought from any turn
+
+### output
+output_dir: saves/qwen35_9b/full/websft_merged
+logging_steps: 5
+save_strategy: epoch             # save only at epoch end (with num_train_epochs=1 -> exactly one final ckpt)
+save_total_limit: 1              # keep only the last checkpoint
+plot_loss: true
+overwrite_output_dir: true
+report_to: wandb                 # log curves to wandb (creds + WANDB_PROJECT injected by submit_job.sh)
+run_name: qwen35_9b_websft_merged
+
+### train
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 1
+learning_rate: 1.0e-5
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.05
+bf16: true
+ddp_timeout: 180000000
