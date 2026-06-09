@@ -1,0 +1,53 @@
+### Full SFT of Qwen3.5-9B on ALL web-agent trajectories, SINGLE-STEP packing.
+### Data: scripts/make_web_agent_sft.py --turn-mode single merges THREE sources
+###   - pae_100 online gpt-5.x rollouts (88 trajs), no compaction
+###   - 0601 N500_s100_agnostic_r2_success rollouts (152 trajs), compacted
+###   - webchain 423 self_reflection-success rollouts (423 trajs)
+### -> web_agent_all_st (10488 samples / 10488 SUPERVISED steps). Each sample is
+### a TRUNCATED multi-turn conversation ending at one target step t (real
+### human/gpt prefix turns, incl. the cold-start first step of each session).
+### Same total supervised steps as the _mt variant, one step per example.
+### IMPORTANT: mask_history=true -> loss falls ONLY on the final (target) gpt turn;
+### the prefix turns are context. <think> kept on the target turn.
+
+### model
+model_name_or_path: Qwen/Qwen3.5-9B
+trust_remote_code: true
+
+### method
+stage: sft
+do_train: true
+finetuning_type: full
+deepspeed: examples/deepspeed/ds_z2_config.json   # ZeRO-2 (NOT z3): z3 zero.init() fails to load pretrained weights into this Qwen3.5 ImageTextToText model -> random init. z2 loads weights normally; 9B fits on a 180GB B200.
+
+### dataset
+dataset: web_agent_all_st         # pae_100 + r2_success + webchain_423 -> sharegpt truncated multi-turn, obs NOT truncated (--max-obs-chars 0)
+template: qwen3_5                  # multi-turn + <think>/<bash> format
+cutoff_len: 32768                 # untruncated obs -> long prefixes may tail-truncate; target turn sits at the end
+overwrite_cache: true
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+mask_history: true                # SINGLE-step: supervise ONLY the last (target) gpt turn; prefix is context
+enable_thinking: true             # keep the chain-of-thought on the target turn
+packing: true                     # pack multiple ST samples into one cutoff_len seq (median ST=12k << 32k -> ~2.5/pack -> far fewer steps)
+neat_packing: true                # block-diagonal attention so packed samples don't attend across each other
+
+### output
+output_dir: saves/qwen35_9b/full/websft_all_st_3ep_pack
+logging_steps: 5
+save_strategy: epoch              # save_total_limit=1 -> keep only the last (3rd) epoch ckpt
+save_total_limit: 1
+plot_loss: true
+overwrite_output_dir: true
+report_to: wandb
+run_name: qwen35_9b_websft_all_st_3ep_pack
+
+### train
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 1
+learning_rate: 1.0e-5
+num_train_epochs: 3.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.05
+bf16: true
+ddp_timeout: 180000000

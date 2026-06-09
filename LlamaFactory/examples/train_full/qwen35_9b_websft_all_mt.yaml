@@ -1,0 +1,51 @@
+### Full SFT of Qwen3.5-9B on ALL web-agent trajectories, MULTI-TURN packing.
+### Data: scripts/make_web_agent_sft.py --turn-mode multi merges THREE sources
+###   - pae_100 online gpt-5.x rollouts (88 trajs), no compaction
+###   - 0601 N500_s100_agnostic_r2_success rollouts (152 trajs), compacted
+###   - webchain 423 self_reflection-success rollouts (423 trajs)
+### -> web_agent_all_mt (1152 samples / 10488 SUPERVISED steps). Each session is
+### ONE multi-turn sample emitted in chronological order (compacted sessions
+### first, then the final one), every assistant turn supervised.
+### Each assistant turn = <think>...</think><bash>...</bash> (or <answer> to end).
+### Loss on EVERY assistant turn incl. <think> (mask_history=false so the qwen3_5
+### ReasoningTemplate keeps history thinking); human task/observation turns masked.
+
+### model
+model_name_or_path: Qwen/Qwen3.5-9B
+trust_remote_code: true
+
+### method
+stage: sft
+do_train: true
+finetuning_type: full
+deepspeed: examples/deepspeed/ds_z2_config.json   # ZeRO-2 (NOT z3): z3 zero.init() fails to load pretrained weights into this Qwen3.5 ImageTextToText model -> random init. z2 loads weights normally; 9B fits on a 180GB B200.
+
+### dataset
+dataset: web_agent_all_mt         # pae_100 + r2_success + webchain_423 -> sharegpt multi-turn, obs NOT truncated (--max-obs-chars 0)
+template: qwen3_5                  # multi-turn + <think>/<bash> format
+cutoff_len: 32768                 # untruncated obs -> some sessions exceed this and get tail-truncated by the trainer
+overwrite_cache: true
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+mask_history: false               # keep <think> on ALL turns; loss on every turn
+enable_thinking: true             # never strip the chain-of-thought from any turn
+
+### output
+output_dir: saves/qwen35_9b/full/websft_all_mt
+logging_steps: 5
+save_strategy: epoch              # one final ckpt with num_train_epochs=1
+save_total_limit: 1
+plot_loss: true
+overwrite_output_dir: true
+report_to: wandb
+run_name: qwen35_9b_websft_all_mt
+
+### train
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 1
+learning_rate: 1.0e-5
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.05
+bf16: true
+ddp_timeout: 180000000

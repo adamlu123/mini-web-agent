@@ -1,0 +1,170 @@
+# SFT-ALIGNED eval-only config for the Qwen3.5-9B web-agent SFT checkpoint over
+# the FULL om2w 300 set: easy 80 + medium 143 + hard 77. Derived from
+# qwen35_9b_web_agent_easy_eval_sft.yaml (only val_data + run_name changed); the
+# differences make the ONLINE rollout prompt/format match the SFT TRAINING data
+# (LlamaFactory/data/web_agent_pae100_full.json) so train/inference are aligned:
+#
+#   - tokenizer/model/chat_template -> the SFT checkpoint (qwen3_5 template, the
+#     same one tokenizer.apply_chat_template used during training).
+#   - generator.parser_name: bash         (<think>/<bash>/<answer>, not tool_call)
+#   - generator.prompt_mode: sft          (SFT system + first-user <instructions>)
+#   - generator.env_overrides.sft_mode: true
+#         -> env writes /workspace/task.json + a browser_session.py shim,
+#            does NOT stand up a persistent env browser, and serves the
+#            MODEL-authored screenshots (final_runs/run_*/screenshots/*.png)
+#            to the OSW judge instead of env auto-captures.
+#
+# The judge (osw_judge / WebJudge_Online_Mind2Web) is UNCHANGED, so the eval
+# target (task-level success from task + actions + screenshots) is identical to
+# the existing om2w eval. Run with run_local_eval-style env via
+# scripts/sft_eval_online_m2w_sft_aligned.sh.
+
+data:
+  train_data:
+    - name: web_agent_om2w_easy_train
+      path: ${oc.env:ECHO_RL_DATA,/data/t-yifeili/mini-web-agent/data/web_agent}/om2w_easy_train.parquet
+  # Eval over the FULL Online-Mind2Web 300 set: easy 80 + medium 143 + hard 77.
+  # The driver forces generator.eval_n_samples_per_prompt=1 -> 300 rollouts/job.
+  val_data:
+    - name: web_agent_om2w_easy_full
+      path: ${oc.env:ECHO_RL_DATA,/data/t-yifeili/mini-web-agent/data/web_agent}/om2w_easy_full.parquet
+    - name: web_agent_om2w_medium_full
+      path: ${oc.env:ECHO_RL_DATA,/data/t-yifeili/mini-web-agent/data/web_agent}/om2w_medium_full.parquet
+    - name: web_agent_om2w_hard_full
+      path: ${oc.env:ECHO_RL_DATA,/data/t-yifeili/mini-web-agent/data/web_agent}/om2w_hard_full.parquet
+
+tokenizer_path: ${oc.env:WEB_SFT_CKPT,/data/t-yifeili/ckpts/websft_32k}
+chat_template_path: ${oc.env:WEB_SFT_CKPT,/data/t-yifeili/ckpts/websft_32k}/chat_template.jinja
+
+trainer:
+  placement:
+    colocate_all: true
+    colocate_policy_ref: true
+    policy_num_nodes: 1
+    policy_num_gpus_per_node: 4
+    ref_num_nodes: 1
+    ref_num_gpus_per_node: 4
+  policy:
+    model:
+      path: ${oc.env:WEB_SFT_CKPT,/data/t-yifeili/ckpts/websft_32k}
+    optimizer_config:
+      lr: 1.0e-6
+      adam_betas: [0.9, 0.999]
+      weight_decay: 0.01
+      max_grad_norm: 0.2
+      scheduler: constant_with_warmup
+      num_warmup_steps: 20
+  algorithm:
+    # vLLM max_model_len: must hold the windowed per-turn context
+    # (<= generator.max_context_tokens) + one generation. SFT ckpt was trained
+    # at cutoff_len 32768, so 32768 + 2048 generation -> 36864.
+    max_seq_len: 36864
+    use_kl_loss: false
+    use_kl_in_reward: false
+    kl_loss_coef: 0.0
+    eps_clip_low: 0.2
+    eps_clip_high: 0.2
+    advantage_batch_normalize: false
+    loss_reduction: sequence_mean
+    world_model_coeff: 0.0
+    world_loss_normalization: full_observation_tokens
+  epochs: 2
+  update_epochs_per_batch: 1
+  use_sample_packing: false
+  flash_attn: false
+  max_prompt_length: 4096
+  train_batch_size: 16
+  policy_mini_batch_size: 16
+  micro_train_batch_size_per_gpu: 1
+  micro_forward_batch_size_per_gpu: 1
+  eval_batch_size: 16
+  eval_before_train: false
+  eval_interval: 1
+  ckpt_interval: 2
+  max_ckpts_to_keep: 2
+  hf_save_interval: -1
+  ckpt_path: ${oc.env:OUTPUT_DIR}/ckpts
+  export_path: ${oc.env:OUTPUT_DIR}/exports
+  log_path: ${oc.env:OUTPUT_DIR}/skyrl_logs
+  logger: wandb
+  project_name: world_model
+  run_name: web_agent_qwen35_9b_all3_eval_sft
+
+generator:
+  n_samples_per_prompt: 16
+  eval_n_samples_per_prompt: 8
+  step_wise_trajectories: false
+  parser_name: bash
+  prompt_mode: sft
+  command_selection: first
+  max_turns: 50
+  history_window_turns: 10
+  # Match the 32k SFT training context (cutoff_len 32768); the old 16384 cap
+  # suffocated rollouts at ~turn 11 because each web-exploration observation
+  # dumps ~6-7k chars of ARIA/body text.
+  max_context_tokens: 32768
+  max_tokens_per_generation: 2048
+  max_terminal_output_chars: 50000
+  terminal_output_truncation: start
+  add_format_warn: true
+  world_loss_target: env_only
+  thinking_handling: keep_all
+  verifier_timeout: 120.0
+  length_penalty_coef: 0.0
+  length_penalty_threshold: 20000
+  correct_threshold: 0.5
+  # Cumulative rollout accumulator cap (full untruncated history; only the
+  # windowed slice is ever sent to vLLM, so this does not affect KV-cache size).
+  # Training trajectories ran ~31k avg / ~89k max tokens, so keep this generous
+  # to let multi-turn tasks reach the final_script + self_reflection stage.
+  max_total_tokens: 131072
+  docker_memory_mb: 1024
+  docker_cpus: 1
+  base_temp_dir: /tmp/web_agent
+  agent_max_concurrency: 32
+  agent_timeout: 1200.0
+  max_concurrent_builds: 32
+  max_build_retries: 3
+  dataset_num_workers: 4
+  dataset_max_rows: null
+
+  reward:
+    name: osw_judge
+    judge_model: o4-mini
+    judge_gateway_endpoint: ${oc.env:OPENAI_GATEWAY_ENDPOINT,http://gateway.phyagi.net/api/responses}
+    score_threshold: 3
+    mini_web_agent_root: ${oc.env:MINI_WEB_AGENT_ROOT}
+  env_overrides:
+    headless: true
+    nav_timeout_ms: 60000
+    op_timeout_ms: 20000
+    max_snapshot_chars: 6000
+    workspace_root: ${oc.env:OUTPUT_DIR,/tmp/web_agent_rollouts}/rollouts
+    use_browserbase: true
+    browserbase_api_key: ${oc.env:BROWSERBASE_API_KEY,""}
+    browserbase_project_id: ${oc.env:BROWSERBASE_PROJECT_ID,""}
+    sft_mode: true
+  stub_env: false
+
+  sampling_params:
+    max_generate_length: 2048
+    temperature: 0.8
+    logprobs: 0
+  eval_sampling_params:
+    max_generate_length: 2048
+    temperature: 0.6
+    logprobs: 0
+  inference_engine:
+    backend: vllm
+    run_engines_locally: true
+    num_engines: 4
+    weight_sync_backend: nccl
+    tensor_parallel_size: 1
+    async_engine: true
+    enforce_eager: false
+    enable_prefix_caching: true
+    enable_chunked_prefill: true
+    gpu_memory_utilization: 0.85
+    max_num_batched_tokens: 36864
+    engine_init_kwargs:
+      swap_space: 4

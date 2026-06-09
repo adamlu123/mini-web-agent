@@ -19,6 +19,24 @@ Each trajectory.json is a dict with:
                            the last assistant's final_response
     environment.config.output_dir -> the per-task workspace abs path
 
+A compacted rollout is stored as MULTIPLE sessions: the earlier (pre-compaction)
+sessions in `compacted_sessions` and the final session in `messages`. This
+converter walks ALL of them in chronological order (compacted first, oldest ->
+newest, then the final one), so a rollout of steps 1-10 (compacted) + 11-13
+(final) emits the 1-10 session BEFORE the 11-13 session, in order. The previous
+version read only `messages` and silently dropped every compacted step (~87% of
+all action steps in the N500 set).
+
+Two output shapes via --turn-mode (BOTH are ShareGPT multi-turn):
+    multi  (default) -> one full multi-turn sample PER session; train with
+                        mask_history=false (loss on EVERY assistant turn).
+    single           -> one TRUNCATED multi-turn sample per assistant step t
+                        (real human/gpt prefix turns, ending at step t); train
+                        with mask_history=true (loss only on the final step t).
+                        K steps -> K examples, including the first (cold-start)
+                        step of each session. Same total supervised steps as
+                        multi, just one step per example.
+
 Target SFT turn formats (ShareGPT, from/value):
     human (task / observation)  ->  kept verbatim (paths normalized)
     gpt   (normal action)       ->  <think>\n{thought}\n</think>\n<bash>\n{cmd}\n</bash>
@@ -201,23 +219,26 @@ def merge_alternation(convo):
     return merged
 
 
-def convert(traj: dict, normalize: bool, max_obs: int):
-    msgs = traj.get("messages", [])
-    if not msgs:
-        return None
-    ws = (traj.get("environment", {}).get("config", {}) or {}).get("output_dir", "")
-    _norm = make_normalizer(ws) if normalize else (lambda s: s)
-    # secret redaction ALWAYS runs, independent of path normalization
-    norm = lambda s: redact_secrets(_norm(s))
+def build_convo(msgs, norm, max_obs):
+    """Convert ONE session's message list (system/user/assistant/exit) into a
+    clean ShareGPT convo (list of {from: human|gpt, value}). No system field —
+    the caller pairs it with the rewritten SYSTEM prompt.
 
+    A `trajectory.json` stores a compacted rollout as MULTIPLE sessions: the
+    earlier (pre-compaction) sessions live in `compacted_sessions` and the final
+    session in `messages`. Each session is fed here independently so its real
+    turns survive (the old converter read only `messages`, silently dropping
+    every step that had been compacted away — ~87% of all action steps)."""
     exit_final = ""
     for m in msgs:
-        if m.get("role") == "exit":
+        if isinstance(m, dict) and m.get("role") == "exit":
             exit_final = (m.get("extra", {}) or {}).get("final_response", "") or text_of(m.get("content", ""))
 
     convo = []
     have_final_answer = False
     for m in msgs:
+        if not isinstance(m, dict):
+            continue
         role = m.get("role")
         if role in ("system", "exit"):
             continue
@@ -242,15 +263,67 @@ def convert(traj: dict, normalize: bool, max_obs: int):
         convo.pop(0)
     while convo and convo[-1]["from"] != "gpt":
         convo.pop()
-    if len([t for t in convo if t["from"] == "gpt"]) < 1 or not convo:
-        return None
-    return {"conversations": convo, "system": SYSTEM}
+    return convo
+
+
+def iter_sessions(traj: dict):
+    """Yield the trajectory's sessions in CHRONOLOGICAL order: the compacted
+    (earlier) sessions first, oldest -> newest, then the final live `messages`.
+    So a compacted rollout of steps 1-10 (compacted) + 11-13 (final) emits the
+    1-10 session BEFORE the 11-13 session — in order, never shuffled."""
+    for sess in (traj.get("compacted_sessions") or []):
+        if sess:
+            yield sess
+    msgs = traj.get("messages") or []
+    if msgs:
+        yield msgs
+
+
+def convert_traj(traj: dict, normalize: bool, max_obs: int, turn_mode: str):
+    """Return a LIST of ShareGPT samples for one trajectory.json.
+
+    turn_mode="multi":  one full multi-turn sample PER session (steps in order);
+                        train with mask_history=false (loss on all turns).
+    turn_mode="single": one TRUNCATED multi-turn sample per assistant step t
+                        (real human/gpt prefix turns ending at step t); train
+                        with mask_history=true (loss only on step t). K steps ->
+                        K examples, incl. the cold-start first step of each
+                        session, using the limited data more finely."""
+    ws = (traj.get("environment", {}).get("config", {}) or {}).get("output_dir", "")
+    _norm = make_normalizer(ws) if normalize else (lambda s: s)
+    # secret redaction ALWAYS runs, independent of path normalization
+    norm = lambda s: redact_secrets(_norm(s))
+
+    samples = []
+    for sess in iter_sessions(traj):
+        convo = build_convo(sess, norm, max_obs)
+        if sum(1 for t in convo if t["from"] == "gpt") < 1:
+            continue
+        if turn_mode == "multi":
+            samples.append({"conversations": convo, "system": SYSTEM})
+        else:  # single
+            # One TRUNCATED multi-turn conversation per assistant step t: keep the
+            # real human/gpt role turns of the prefix (NOT flattened into one
+            # human turn) so the role structure matches inference, and end at the
+            # target step t. Train with mask_history=true so loss falls ONLY on
+            # the final gpt turn. convo[0] is always human (build_convo trims
+            # leading non-human), so every truncation is a valid human...gpt
+            # conversation. Includes the first step of each session (predict the
+            # cold-start action from the task / compact summary).
+            for i, turn in enumerate(convo):
+                if turn["from"] != "gpt":
+                    continue
+                truncated = [dict(t) for t in convo[: i + 1]]
+                samples.append({"conversations": truncated, "system": SYSTEM})
+    return samples
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--src", default="/data/t-yifeili/sft_data/pae_100",
-                    help="dir containing <task>/trajectory.json folders")
+    ap.add_argument("--src", nargs="+", default=["/data/t-yifeili/sft_data/pae_100"],
+                    help="one or more dirs, each containing <task>/trajectory.json "
+                         "folders. Multiple dirs are merged in the given order "
+                         "(e.g. pae_100 then N500_..._r2_success).")
     ap.add_argument("--out", default="data/web_agent_pae100.json")
     ap.add_argument("--no-normalize-paths", dest="normalize", action="store_false",
                     help="keep raw absolute workspace paths (NOT recommended)")
@@ -258,32 +331,51 @@ def main():
                     help="middle-truncate each observation/user turn to this many "
                          "chars (0 = no cap). Keeps long multi-turn convos under "
                          "the trainer cutoff and blunts boilerplate overfitting.")
+    ap.add_argument("--turn-mode", choices=["multi", "single"], default="multi",
+                    help="multi (default): one multi-turn sample per session, "
+                         "sessions emitted in chronological order (compacted "
+                         "sessions first, then the final one). single: split "
+                         "each session into one single-turn (context -> next "
+                         "step) sample per assistant step.")
     args = ap.parse_args()
 
-    files = sorted(glob.glob(os.path.join(args.src, "*", "trajectory.json")))
+    # merge multiple source dirs in the given order; sort within each dir for
+    # determinism (per-source ordering preserved across sources).
+    files = []
+    for src in args.src:
+        files.extend(sorted(glob.glob(os.path.join(src, "*", "trajectory.json"))))
     data, dropped = [], []
     n_gpt = 0
+    n_sessions = 0
     for f in files:
         try:
             traj = json.load(open(f))
         except Exception as e:
             dropped.append((f, f"load error: {e}"))
             continue
-        ex = convert(traj, args.normalize, args.max_obs_chars)
-        if ex is None:
+        samples = convert_traj(traj, args.normalize, args.max_obs_chars, args.turn_mode)
+        if not samples:
             dropped.append((f, "no usable turns"))
             continue
-        data.append(ex)
-        n_gpt += sum(1 for t in ex["conversations"] if t["from"] == "gpt")
+        n_sessions += len(traj.get("compacted_sessions") or []) + 1
+        for ex in samples:
+            data.append(ex)
+            # supervised targets: multi trains every gpt turn (mask_history=false);
+            # single trains only the LAST gpt turn per sample (mask_history=true).
+            if args.turn_mode == "single":
+                n_gpt += 1
+            else:
+                n_gpt += sum(1 for t in ex["conversations"] if t["from"] == "gpt")
 
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     with open(args.out, "w") as fh:
         json.dump(data, fh, ensure_ascii=False, indent=2)
 
-    print(f"scanned {len(files)} trajectory.json")
-    print(f"wrote   {len(data)} convos ({n_gpt} assistant turns) -> {args.out}")
+    print(f"scanned  {len(files)} trajectory.json ({n_sessions} sessions incl. compacted)")
+    print(f"mode     {args.turn_mode}")
+    print(f"wrote    {len(data)} samples ({n_gpt} SUPERVISED target steps) -> {args.out}")
     if dropped:
-        print(f"dropped {len(dropped)}:")
+        print(f"dropped  {len(dropped)}:")
         for f, why in dropped:
             print(f"  - {os.path.basename(os.path.dirname(f))}: {why}")
 

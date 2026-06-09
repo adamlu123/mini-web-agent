@@ -805,5 +805,65 @@
       "assistant_tag": "gpt",
       "observation_tag": "observation"
     }
+  },
+  "web_agent_merged_mt": {
+    "file_name": "web_agent_merged_mt.json",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "conversations",
+      "system": "system"
+    },
+    "tags": {
+      "role_tag": "from",
+      "content_tag": "value",
+      "user_tag": "human",
+      "assistant_tag": "gpt",
+      "observation_tag": "observation"
+    }
+  },
+  "web_agent_merged_st": {
+    "file_name": "web_agent_merged_st.json",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "conversations",
+      "system": "system"
+    },
+    "tags": {
+      "role_tag": "from",
+      "content_tag": "value",
+      "user_tag": "human",
+      "assistant_tag": "gpt",
+      "observation_tag": "observation"
+    }
+  },
+  "web_agent_all_mt": {
+    "file_name": "web_agent_all_mt.json",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "conversations",
+      "system": "system"
+    },
+    "tags": {
+      "role_tag": "from",
+      "content_tag": "value",
+      "user_tag": "human",
+      "assistant_tag": "gpt",
+      "observation_tag": "observation"
+    }
+  },
+  "web_agent_all_st": {
+    "file_name": "web_agent_all_st.json",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "conversations",
+      "system": "system"
+    },
+    "tags": {
+      "role_tag": "from",
+      "content_tag": "value",
+      "user_tag": "human",
+      "assistant_tag": "gpt",
+      "observation_tag": "observation"
+    }
   }
 }
