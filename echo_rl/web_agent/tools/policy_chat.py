@@ -35,14 +35,18 @@ def policy_url() -> str:
             "WEB_AGENT_POLICY_URL is not set. The web-agent harness exports it "
             "to subprocesses when the policy's HTTP endpoint is enabled. If "
             "you're running this outside of training, set "
-            "WEB_AGENT_POLICY_URL=http://host:port/chat/completions yourself."
+            "WEB_AGENT_POLICY_URL=http://host:port/v1/chat/completions yourself."
         )
-    # Be friendly about trailing path bits.
-    if url.endswith("/v1/chat/completions") or url.endswith("/chat/completions"):
+    # Normalize trailing path bits onto vLLM's OpenAI route. vLLM's build_app
+    # only mounts /v1/chat/completions (no bare /chat/completions), so a URL
+    # missing the /v1 prefix 404s -- coerce it here too as a backstop.
+    if url.endswith("/v1/chat/completions"):
         return url
+    if url.endswith("/chat/completions"):
+        return url[: -len("/chat/completions")].rstrip("/") + "/v1/chat/completions"
     if url.endswith("/v1") or url.endswith("/v1/"):
         return url.rstrip("/") + "/chat/completions"
-    return url.rstrip("/") + "/chat/completions"
+    return url.rstrip("/") + "/v1/chat/completions"
 
 
 def policy_model() -> str:
@@ -73,11 +77,15 @@ def chat(
     payload = {
         "model": model or policy_model(),
         "messages": messages,
-        "max_tokens": int(max_tokens),
+        "max_completion_tokens": int(max_tokens),
         "temperature": float(temperature),
     }
+    headers = {}
+    api_key = os.environ.get("OPENAI_GATEWAY_API_KEY", "").strip() or os.environ.get("PHYAGI_API_KEY", "").strip()
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
     with httpx.Client(timeout=timeout_s) as client:
-        resp = client.post(policy_url(), json=payload)
+        resp = client.post(policy_url(), json=payload, headers=headers)
         try:
             resp.raise_for_status()
         except httpx.HTTPStatusError as exc:

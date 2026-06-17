@@ -24,7 +24,12 @@ import re
 import sys
 from pathlib import Path
 
-from .policy_chat import chat, encode_image
+# Run either as a top-level module (`python -m image_qa` with this dir on
+# PYTHONPATH — how the web env invokes it) or inside a package.
+try:  # pragma: no cover - import shim
+    from policy_chat import chat, encode_image
+except ImportError:  # pragma: no cover - import shim
+    from .policy_chat import chat, encode_image
 
 _SYSTEM = (
     "You are a careful visual evaluator. Look at the supplied screenshot(s) and "
@@ -36,21 +41,32 @@ _SYSTEM = (
 )
 
 
+def _normalize(d: dict) -> dict:
+    """Guarantee the answer/evidence/unknown/confidence keys the SFT-aligned
+    instructions promise, without clobbering anything the model returned."""
+    d.setdefault("answer", "")
+    d.setdefault("evidence", "")
+    d.setdefault("confidence", "unknown")
+    # `unknown` = the model could not tell from the screenshots.
+    d.setdefault("unknown", str(d.get("confidence", "")).lower() == "unknown")
+    return d
+
+
 def _parse_reply(raw: str) -> dict:
     raw = (raw or "").strip()
     # If the model produced a clean JSON object, use it.
     try:
-        return json.loads(raw)
+        return _normalize(json.loads(raw))
     except Exception:
         pass
     # Try to extract the first {...} blob.
     match = re.search(r"\{.*\}", raw, re.DOTALL)
     if match:
         try:
-            return json.loads(match.group(0))
+            return _normalize(json.loads(match.group(0)))
         except Exception:
             pass
-    return {"answer": raw, "evidence": "", "confidence": "unknown", "raw": raw}
+    return {"answer": raw, "evidence": "", "unknown": True, "confidence": "unknown", "raw": raw}
 
 
 def run(images: list[str], question: str, *, max_tokens: int = 768) -> dict:
@@ -75,16 +91,26 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="image_qa", description=__doc__)
     parser.add_argument("--image", action="append", required=True, help="path to a screenshot (repeatable)")
     parser.add_argument("--question", required=True, help="the question to ground in the screenshots")
+    # The SFT-trained model passes --workspace-dir; relative --image paths are
+    # resolved against it (the subprocess cwd is already the workspace, so this
+    # is usually a no-op, but accept + honour it for byte-aligned invocations).
+    parser.add_argument("--workspace-dir", default="", help="workspace root; relative --image paths resolve against it")
     parser.add_argument("--max-tokens", type=int, default=768)
     args = parser.parse_args(argv)
 
+    ws = Path(args.workspace_dir).expanduser() if args.workspace_dir else None
+    images = []
     for p in args.image:
-        if not Path(p).is_file():
-            print(json.dumps({"error": f"image not found: {p}"}), file=sys.stderr)
+        pp = Path(p)
+        if ws is not None and not pp.is_absolute():
+            pp = ws / pp
+        if not pp.is_file():
+            print(json.dumps({"error": f"image not found: {pp}"}), file=sys.stderr)
             return 2
+        images.append(str(pp))
 
     try:
-        result = run(args.image, args.question, max_tokens=args.max_tokens)
+        result = run(images, args.question, max_tokens=args.max_tokens)
     except Exception as exc:
         print(json.dumps({"error": str(exc)}), file=sys.stderr)
         return 1

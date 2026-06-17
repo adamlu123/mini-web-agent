@@ -64,7 +64,7 @@ class TerminalAgentGeneratorConfig(GeneratorConfig):
     terminal_output_truncation: str = "start_end"
     max_commands_per_turn: int = 1
     command_selection: Literal["first", "last", "all"] = "first"
-    parser_name: Literal["xml", "hermes", "qwen35"] = "xml"
+    parser_name: Literal["xml", "hermes", "qwen35", "bash", "playwright_code"] = "xml"
     length_penalty_coef: float = 0.0
     length_penalty_threshold: int = 20000
     correct_threshold: float = 0.5

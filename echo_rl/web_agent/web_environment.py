@@ -674,6 +674,7 @@ class WebAgentEnvironment:
     async def _run_python_snippet(self, code: str) -> ExecResult:
         import io
         from contextlib import redirect_stdout, redirect_stderr
+        import re as _re
 
         out_buf, err_buf = io.StringIO(), io.StringIO()
         import os as _os
@@ -690,7 +691,9 @@ class WebAgentEnvironment:
         globals_dict: dict[str, Any] = {
             "asyncio": asyncio,
             "json": json,
+            "re": _re,
             "os": _os,
+            "playwright": self._playwright,
             "page": self._page,
             "context": self._context,
             "browser": self._browser,

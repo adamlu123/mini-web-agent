@@ -1,5 +1,6 @@
 import json
 import re
+import shlex
 from dataclasses import dataclass, field
 
 
@@ -32,7 +33,7 @@ def check_format_warnings(
 ) -> tuple[list[str], list[str]]:
     if not raw_response:
         return [], []
-    if thinking_enabled and parser_name in ("qwen35", "bash"):
+    if thinking_enabled and parser_name in ("qwen35", "bash", "playwright_code"):
         # The qwen3_5 chat template prefills `<think>\n` at the generation
         # prompt, so the model's completion starts AFTER the opening tag. Re-add
         # it before counting tags, else every turn falsely warns "Missing <think>".
@@ -225,7 +226,46 @@ class BashAnswerParser:
         return ParseResult(thinking=thinking, commands=commands, is_done=is_done, answer=answer)
 
 
-def get_parser(parser_name: str) -> "HFHermesParser | Qwen35XMLParser | XMLParser | BashAnswerParser":
+class PlaywrightCodeParser:
+    """Parser for the debug `<think>/<code>/<done>/<final_response>` format.
+
+    The rollout environment already knows how to run `python -c` snippets with
+    Playwright's `page`, `context`, `browser`, and the task string in scope, so
+    the parser maps each `<code>` body to a synthetic bash command that invokes
+    that path. `<done>true</done>` terminates the rollout and surfaces
+    `<final_response>` to the reward function.
+    """
+
+    format_tags = ["code", "done", "final_response"]
+    _CODE_RE = re.compile(r"<code>\n?(.*?)\n?</code>", re.DOTALL)
+    _DONE_RE = re.compile(r"<done>\s*(true|false)\s*</done>", re.DOTALL | re.IGNORECASE)
+    _FINAL_RESPONSE_RE = re.compile(r"<final_response>(.*?)</final_response>", re.DOTALL)
+
+    def parse_response(self, response: str | None, extract_answer_tags_for_done: bool = False) -> ParseResult:
+        del extract_answer_tags_for_done
+        if not response:
+            return ParseResult(thinking="", error="Empty response")
+        think_match = re.search(r"<think>(.*?)</think>", response, re.DOTALL)
+        thinking = think_match.group(1).strip() if think_match else ""
+        done_match = self._DONE_RE.search(response)
+        if not done_match:
+            return ParseResult(thinking=thinking, error="No <done>true/false</done> found in response.")
+        is_done = done_match.group(1).lower() == "true"
+        final_response_match = self._FINAL_RESPONSE_RE.search(response)
+        answer = final_response_match.group(1).strip() if final_response_match else ""
+
+        commands = []
+        for raw in self._CODE_RE.findall(response):
+            code = raw.strip()
+            if code:
+                command = "python -c " + shlex.quote(code)
+                commands.append(ParsedCommand(name="bash", arguments={"command": command}, raw=code))
+        if not commands and not is_done:
+            return ParseResult(thinking=thinking, error="No <code> block found while <done>false</done>.")
+        return ParseResult(thinking=thinking, commands=commands, is_done=is_done, answer=answer)
+
+
+def get_parser(parser_name: str) -> "HFHermesParser | Qwen35XMLParser | XMLParser | BashAnswerParser | PlaywrightCodeParser":
     if parser_name == "hermes":
         return HFHermesParser()
     if parser_name == "xml":
@@ -234,4 +274,8 @@ def get_parser(parser_name: str) -> "HFHermesParser | Qwen35XMLParser | XMLParse
         return Qwen35XMLParser()
     if parser_name == "bash":
         return BashAnswerParser()
-    raise ValueError(f"Unknown parser_name {parser_name!r}. Must be 'hermes', 'xml', 'qwen35', or 'bash'.")
+    if parser_name == "playwright_code":
+        return PlaywrightCodeParser()
+    raise ValueError(
+        f"Unknown parser_name {parser_name!r}. Must be 'hermes', 'xml', 'qwen35', 'bash', or 'playwright_code'."
+    )

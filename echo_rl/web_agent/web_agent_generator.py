@@ -126,7 +126,11 @@ class WebAgentGenerator(TerminalAgentGenerator):
         port = int(getattr(inference_engine_client, "http_endpoint_port", port) or port)
         if not enable_http:
             return "", ""
-        url = f"http://{host}:{port}/chat/completions"
+        # The SkyRL HTTP endpoint is vLLM's OpenAI app (build_app), which mounts
+        # chat completions at /v1/chat/completions -- there is NO bare
+        # /chat/completions route, so omitting /v1 yields 404 {"detail":"Not
+        # Found"} on every image_qa / self_reflection call.
+        url = f"http://{host}:{port}/v1/chat/completions"
         # Best-effort: scrape the model id from the engine init kwargs if set.
         engine_kwargs = getattr(infer_cfg, "engine_init_kwargs", {}) or {}
         model_name = str(engine_kwargs.get("model") or engine_kwargs.get("tokenizer") or "")

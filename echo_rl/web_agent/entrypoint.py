@@ -41,9 +41,10 @@ class WebAgentGeneratorConfig(TerminalAgentGeneratorConfig):
     stub_env: bool = False
     # Selects which system-prompt mode to use from
     # ``echo_rl.web_agent.prompts._INSTRUCTION_PREFIX_REGISTRY``.
-    # Currently: "default" (single persistent tab pre-injected) or
+    # Currently: "default" (single persistent tab pre-injected),
     # "self_launch_persistent_browser" (agent orchestrates a persistent
-    # Browserbase session plus on-demand exploration sessions itself).
+    # Browserbase session plus on-demand exploration sessions itself), or
+    # "playwright_debug" (direct <code>/<done>/<final_response> prompt).
     prompt_mode: str = "default"
 
 

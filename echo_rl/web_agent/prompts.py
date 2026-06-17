@@ -26,6 +26,58 @@ SFT_FIRST_USER_HEADER = (
 )
 
 
+PLAYWRIGHT_DEBUG_SYSTEM_PROMPT = """You are a coding agent. Each turn, you observe the live browser state and emit async Playwright code that makes progress on the user's task.
+
+Output exactly this structure each turn (any deviation breaks parsing):
+<think>
+...brief reasoning for the next browser action...
+</think>
+<code>
+...async Python for the next step...
+</code>
+<done>true/false</done>
+<final_response></final_response>
+
+Field semantics:
+- <think>: brief reasoning for the next browser action.
+- <code>: async Python for the next step. See "Available in scope" below.
+- <done>: `true` only when the task is actually completed (you have the requested answer, or the requested action is verifiably done). Otherwise `false`.
+- <final_response>: empty while <done>false</done>; when <done>true</done>, contains the answer the user asked for, or a short confirmation if the task was an action with no return value.
+
+Available in scope (do NOT write `import` for any of these; nothing outside this list is available):
+- Playwright session — call methods on these: `page`, `context`, `browser`, `playwright`.
+- User task string: `task`.
+- Stdlib modules: `asyncio`, `json`, `re`.
+
+Coding rules:
+- Write working async Python — `await` every coroutine. Use the in-scope objects however you need to: multi-statement blocks, DOM inspection (`page.content()`, `page.evaluate(...)`), explicit waits, dynamic locators — anything is fine as long as it runs and makes progress.
+- Write top-level `await` statements directly — do NOT define any function. The code block is already the body of an `async def`, so `await page.click(...)` just works.
+- Base all selectors on the ARIA snapshot: use the text, role, or label you can read from it. Do not guess selectors.
+- Always pass `exact=True` to every `get_by_*()` locator that takes a text or name argument (`get_by_role`, `get_by_text`, `get_by_label`, `get_by_placeholder`, etc.) to avoid strict mode violations from partial matches.
+- If the latest observation shows `Code execution status: error`, the previous step failed — change approach (different call, add a wait, navigate back) rather than retrying the same code verbatim.
+
+Example of correct format:
+<think>
+...brief reasoning for the next browser action...
+</think>
+<code>
+await page.get_by_role("textbox", name="Search", exact=True).fill("query")
+await page.get_by_role("button", name="Search", exact=True).click()
+</code>
+<done>false</done>
+<final_response></final_response>
+
+Decide each step from the ARIA snapshot and URL you receive.
+"""
+
+PLAYWRIGHT_DEBUG_USER_TEMPLATE = """Task: {task}
+
+Starting URL: {start_url}
+
+The browser is already open at the starting URL. On the first turn, inspect the current URL and ARIA snapshot before acting, for example by printing `page.url`, `await page.title()`, and `await page.locator("body").aria_snapshot()`.
+"""
+
+
 def format_sft_first_user(task: str, task_id: str, start_url: str) -> str:
     """Reconstruct the SFT first user turn byte-for-byte."""
     return (
@@ -388,7 +440,7 @@ _INSTANCE_TEMPLATE_REGISTRY = {
 
 
 def list_modes() -> list[str]:
-    return sorted(_INSTRUCTION_PREFIX_REGISTRY.keys())
+  return sorted([*_INSTRUCTION_PREFIX_REGISTRY.keys(), "playwright_debug"])
 
 
 def get_instance_template(mode: str = "default") -> str:
@@ -419,8 +471,19 @@ def format_web_task_prompt(
             {"role": "system", "content": SFT_SYSTEM},
             {"role": "user", "content": format_sft_first_user(task, task_id, start_url)},
         ]
+    if mode == "playwright_debug":
+        if parser_name != "playwright_code":
+            raise ValueError(
+                f"prompt mode 'playwright_debug' requires parser_name='playwright_code', got {parser_name!r}"
+            )
+        return [
+            {"role": "system", "content": PLAYWRIGHT_DEBUG_SYSTEM_PROMPT},
+            {"role": "user", "content": PLAYWRIGHT_DEBUG_USER_TEMPLATE.format(task=task, start_url=start_url)},
+        ]
     if parser_name not in ("qwen35", "hermes"):
-        raise ValueError(f"web_agent only supports qwen35, hermes and bash (sft mode) parsers, got {parser_name!r}")
+        raise ValueError(
+            f"web_agent only supports qwen35, hermes, playwright_code (playwright_debug mode), and bash (sft mode) parsers, got {parser_name!r}"
+        )
     if mode not in _INSTRUCTION_PREFIX_REGISTRY:
         raise ValueError(
             f"Unknown web_agent prompt mode {mode!r}. Available: {list_modes()}"

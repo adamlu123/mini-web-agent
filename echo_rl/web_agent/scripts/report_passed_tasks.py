@@ -62,14 +62,14 @@ def main():
         return sum(1 for k in data[name] if data[name][k] >= 1.0)
 
     L = []
-    L.append("# Online-Mind2Web (easy) — 통과 task 비교\n")
-    L.append(f"_생성: {datetime.date.today()} · eval-only pass@1 (eval_n_samples_per_prompt=1) · "
+    L.append("# Online-Mind2Web (easy) — 通过 task 对比\n")
+    L.append(f"_生成日期: {datetime.date.today()} · eval-only pass@1 (eval_n_samples_per_prompt=1) · "
              "o4-mini OSW judge · Browserbase Chromium_\n")
-    L.append("80 task = train 68 + val 12. 평가 entrypoint: "
-             "`echo_rl.web_agent.eval_entrypoint` (`colocate_all=false`).\n")
+    L.append("共 80 个 task = train 68 + val 12。评测入口: "
+             "`echo_rl.web_agent.eval_entrypoint` (`colocate_all=false`)。\n")
 
-    L.append("## 1. 요약\n")
-    L.append("| Model | Weights | all pass@1 (80) | train (68) | val (12) | avg turns | run dir |")
+    L.append("## 1. 汇总\n")
+    L.append("| 模型 | 权重 | all pass@1 (80) | train (68) | val (12) | 平均轮数 | run 目录 |")
     L.append("| --- | --- | --- | --- | --- | --- | --- |")
     for name, (mdl, w, rd) in RUNS.items():
         a = agg[name]
@@ -79,8 +79,8 @@ def main():
                  f"{a['eval/all/generate/avg_num_turns']:.1f} | `{os.path.basename(rd)}` |")
 
     passed_keys = sorted({k for name in data for k in data[name] if data[name][k] >= 1.0})
-    L.append("\n## 2. 통과 task별 모델 비교 (어느 모델이 풀었나)\n")
-    L.append("하나라도 통과한 task 합집합. ✅ = 통과, · = 실패/미통과.\n")
+    L.append("\n## 2. 各 task 的模型对比（哪个模型通过了）\n")
+    L.append("至少被一个模型通过的 task 的并集。✅ = 通过, · = 未通过/失败。\n")
     L.append("| Split | Task query | Starting URL | 4B base | 9B base | 4B ckpt |")
     L.append("| --- | --- | --- | :---: | :---: | :---: |")
     for (split, intent, url) in passed_keys:
@@ -90,10 +90,10 @@ def main():
         L.append(f"| {split} | {intent} | {url} | "
                  f"{cell('4B base')} | {cell('9B base')} | {cell('4B ckpt step_9')} |")
 
-    L.append("\n## 3. 모델별 통과 task 전체 목록\n")
+    L.append("\n## 3. 各模型通过的 task 完整列表\n")
     for name, (mdl, w, _) in RUNS.items():
         pk = sorted(k for k in data[name] if data[name][k] >= 1.0)
-        L.append(f"### {mdl} — {w}  ({len(pk)} passed)\n")
+        L.append(f"### {mdl} — {w}  (通过 {len(pk)} 个)\n")
         for (split, intent, url) in pk:
             L.append(f"- **[{split}]** {intent}  — `{url}`")
         L.append("")
