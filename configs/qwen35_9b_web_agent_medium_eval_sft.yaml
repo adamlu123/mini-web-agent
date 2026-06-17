@@ -1,6 +1,5 @@
 # SFT-ALIGNED eval-only config for the Qwen3.5-9B web-agent SFT checkpoint over
-# the FULL om2w 300 set: easy 80 + medium 143 + hard 77. Derived from
-# qwen35_9b_web_agent_easy_eval_sft.yaml (only val_data + run_name changed); the
+# om2w *easy* tasks. Derived from qwen35_9b_web_agent_easy_eval.yaml; the ONLY
 # differences make the ONLINE rollout prompt/format match the SFT TRAINING data
 # (LlamaFactory/data/web_agent_pae100_full.json) so train/inference are aligned:
 #
@@ -23,15 +22,9 @@ data:
   train_data:
     - name: web_agent_om2w_easy_train
       path: ${oc.env:ECHO_RL_DATA,/data/t-yifeili/mini-web-agent/data/web_agent}/om2w_easy_train.parquet
-  # Eval over the FULL Online-Mind2Web 300 set: easy 80 + medium 143 + hard 77.
-  # The driver forces generator.eval_n_samples_per_prompt=1 -> 300 rollouts/job.
   val_data:
-    - name: web_agent_om2w_easy_full
-      path: ${oc.env:ECHO_RL_DATA,/data/t-yifeili/mini-web-agent/data/web_agent}/om2w_easy_full.parquet
     - name: web_agent_om2w_medium_full
       path: ${oc.env:ECHO_RL_DATA,/data/t-yifeili/mini-web-agent/data/web_agent}/om2w_medium_full.parquet
-    - name: web_agent_om2w_hard_full
-      path: ${oc.env:ECHO_RL_DATA,/data/t-yifeili/mini-web-agent/data/web_agent}/om2w_hard_full.parquet
 
 tokenizer_path: ${oc.env:WEB_SFT_CKPT,/data/t-yifeili/ckpts/websft_32k}
 chat_template_path: ${oc.env:WEB_SFT_CKPT,/data/t-yifeili/ckpts/websft_32k}/chat_template.jinja
@@ -88,7 +81,7 @@ trainer:
   log_path: ${oc.env:OUTPUT_DIR}/skyrl_logs
   logger: wandb
   project_name: world_model
-  run_name: web_agent_qwen35_9b_all3_eval_sft
+  run_name: web_agent_qwen35_9b_easy_eval_sft
 
 generator:
   n_samples_per_prompt: 16
@@ -170,15 +163,12 @@ generator:
     # policy being evaluated, so the in-rollout self_reflection / image_qa CLIs
     # self-judge through the SAME weights (no external grader). WebAgentGenerator
     # scrapes host/port + engine_init_kwargs.model and exports them to the tool
-    # subprocesses as $WEB_AGENT_POLICY_URL / $WEB_AGENT_POLICY_MODEL. This
-    # num_engines=4 + enable_http_endpoint combo matches the proven
-    # qwen35_4b_web_agent_hard_4gpu_self_launch.yaml pattern.
+    # subprocesses as $WEB_AGENT_POLICY_URL / $WEB_AGENT_POLICY_MODEL.
     enable_http_endpoint: true
     http_endpoint_host: 127.0.0.1
     http_endpoint_port: 8000
     engine_init_kwargs:
       swap_space: 4
       # vLLM serves the model under this id; it MUST equal what policy_chat
-      # requests. The driver exports WEB_SFT_CKPT=$EVAL_CKPT, so this resolves
-      # to the ckpt under eval.
+      # requests, so point it at the same ckpt the policy loads.
       model: ${oc.env:WEB_SFT_CKPT,/data/t-yifeili/ckpts/websft_32k}

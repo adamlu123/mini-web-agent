@@ -48,6 +48,16 @@ echo "[submit_eval_q35_image] EVAL_CKPT=${EVAL_CKPT:-<base weights from config>}
 
 EXTRA_ENV="EVAL_CONFIG=${EVAL_CONFIG},EVAL_RUN_TAG=${EVAL_RUN_TAG}"
 [[ -n "${EVAL_CKPT:-}" ]] && EXTRA_ENV="${EXTRA_ENV},EVAL_CKPT=${EVAL_CKPT}"
+# Multi-engine data-parallel eval: one vLLM engine per GPU (tp=1). Set
+# EVAL_NUM_ENGINES=<#GPUs> to spread rollouts across all GPUs (default 1 in the
+# runner = old single-engine behavior). Integer-only -> safe through the
+# comma/`=`-split --extra-env-vars plumbing.
+[[ -n "${EVAL_NUM_ENGINES:-}" ]] && EXTRA_ENV="${EXTRA_ENV},EVAL_NUM_ENGINES=${EVAL_NUM_ENGINES}"
+# EVAL_EXEC_BACKEND=mp pins each engine to its own GPU via CUDA_VISIBLE_DEVICES
+# (robust on the cluster's vLLM 0.18); "ray" (default) relies on vLLM's ray
+# executor, which piles all engines on GPU0 on this image. Simple string -> safe
+# through the plumbing.
+[[ -n "${EVAL_EXEC_BACKEND:-}" ]] && EXTRA_ENV="${EXTRA_ENV},EVAL_EXEC_BACKEND=${EVAL_EXEC_BACKEND}"
 
 bash "$SUBMIT" \
     --upload "$MINI_WEB_AGENT_DIR" "$SKYRL_DIR" \

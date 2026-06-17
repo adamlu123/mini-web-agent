@@ -43,7 +43,7 @@ export PATH="$HOME/.krew/bin:$PATH"
 export WANDB_HOST="${WANDB_HOST:-https://api.wandb.ai}"
 export PRIORITY="${PRIORITY:-p0}"
 export PRIORITY_CLASS_NAME="${PRIORITY_CLASS_NAME:-high}"
-export PROJECT_NAME="${PROJECT_NAME:-rlscaling}"
+export PROJECT_NAME="${PROJECT_NAME:-cua}"
 
 echo "[submit_sft_eval_q35_image] GPUS=$GPUS IMAGE=$IMAGE"
 echo "[submit_sft_eval_q35_image] SFT_CONFIG=$SFT_CONFIG"

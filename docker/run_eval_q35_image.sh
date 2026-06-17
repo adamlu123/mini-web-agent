@@ -208,18 +208,33 @@ print("torch", torch.__version__, "| vllm", vllm.__version__, "| omegaconf", ome
 print("[eval] pre-flight OK")
 PY
 
-# vLLM engine setup for EVAL-ONLY (colocate_all=false). Two cluster-specific
-# pitfalls the training-tuned config hits here:
-#   1. num_engines=4 + colocate_all=false PILES all 4 vLLM engines onto GPU 0
-#      (Ray doesn't spread them on this eval path) -> CUDA OOM on GPU 0 while
-#      GPUs 1-3 sit idle. Fix: run a SINGLE engine (num_engines=1, tp=1); a 9B
-#      model fits with room to spare on one 180GB B200, and eval only scores ~80
-#      tasks so one engine is plenty.
-#   2. max_num_batched_tokens=262144 + enforce_eager=false (CUDA-graph capture)
-#      bloat memory and slow startup. Skip graphs and shrink the prefill batch
-#      (chunked prefill stays on).
-# All overridable via EVAL_ENGINE_OVERRIDES (space-separated dotlist; empty="").
-EVAL_ENGINE_OVERRIDES="${EVAL_ENGINE_OVERRIDES-generator.inference_engine.num_engines=1 generator.inference_engine.tensor_parallel_size=1 generator.inference_engine.enforce_eager=true generator.inference_engine.gpu_memory_utilization=0.85 generator.inference_engine.max_num_batched_tokens=32768}"
+# vLLM engine setup for EVAL-ONLY (colocate_all=false).
+#   - EVAL_NUM_ENGINES (default 1): how many data-parallel vLLM engines to run,
+#     one per GPU (tp=1). The old single-engine default was a workaround for a
+#     since-fixed SkyRL placement bug (num_engines>1 + colocate_all=false used
+#     to pile all engines onto GPU0 -> OOM). Verified locally on 4xH100 (9B,
+#     num_engines=4): engines now spread one-per-GPU, no OOM. Set
+#     EVAL_NUM_ENGINES=<#GPUs> (e.g. 8) to parallelize rollouts across all GPUs
+#     and cut wall-clock; rollout generation is load-balanced across engines by
+#     the router. Keep =1 to reproduce the old single-engine behavior.
+#   - enforce_eager + shrunk max_num_batched_tokens: skip CUDA-graph capture and
+#     the 262144 prefill batch, which bloat memory and slow startup.
+# Everything is overridable wholesale via EVAL_ENGINE_OVERRIDES (space-separated
+# dotlist; empty=""), which takes precedence over EVAL_NUM_ENGINES.
+# EVAL_EXEC_BACKEND (default "ray"): vLLM distributed_executor_backend.
+#   - "ray": SkyRL sets VLLM_RAY_BUNDLE_INDICES and lets vLLM's ray executor pin
+#     each engine to its bundle's GPU. This is version-dependent: on the cluster
+#     image (vLLM 0.18) it does NOT pin per-GPU, so multi-engine + multi-GPU
+#     piles ALL engines onto GPU0 -> OOM. (Locally on vLLM 0.19 it spread fine,
+#     which is why the bug didn't show in local validation.)
+#   - "mp": SkyRL explicitly sets CUDA_VISIBLE_DEVICES per engine to its bundle's
+#     probed physical GPU (vllm_server_actor._setup_mp_gpu_visibility), which is
+#     version-independent and the robust choice for multi-engine eval (tp=1, one
+#     GPU per engine). Allowed here because eval is colocate_all=false.
+EVAL_NUM_ENGINES="${EVAL_NUM_ENGINES:-1}"
+EVAL_EXEC_BACKEND="${EVAL_EXEC_BACKEND:-ray}"
+EVAL_ENGINE_OVERRIDES="${EVAL_ENGINE_OVERRIDES-generator.inference_engine.num_engines=${EVAL_NUM_ENGINES} generator.inference_engine.tensor_parallel_size=1 generator.inference_engine.distributed_executor_backend=${EVAL_EXEC_BACKEND} generator.inference_engine.enforce_eager=true generator.inference_engine.gpu_memory_utilization=0.85 generator.inference_engine.max_num_batched_tokens=32768}"
+echo "[eval] EVAL_NUM_ENGINES=$EVAL_NUM_ENGINES EVAL_EXEC_BACKEND=$EVAL_EXEC_BACKEND"
 # shellcheck disable=SC2206
 ENGINE_OVERRIDES=( $EVAL_ENGINE_OVERRIDES )
 

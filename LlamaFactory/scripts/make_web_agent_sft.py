@@ -193,27 +193,56 @@ def text_of(content) -> str:
     return str(content)
 
 
-def assistant_value(msg, exit_final, norm) -> str:
+def assistant_value(msg, exit_final, norm):
+    """Render ONE assistant turn, or return None to DROP it.
+
+    Cleaning (so the model never trains on malformed targets):
+      * placeholder/empty turns (no thought, no command, not a submission) are
+        retry/interrupt artifacts -> DROP (otherwise they become empty <think>
+        + a spurious mid-trajectory <answer> carrying the final submission).
+      * <answer> is emitted ONLY for a genuine terminal turn (done, or the turn
+        carries its own final_response). A mid-trajectory no-command turn does
+        NOT get exit_final fabricated into a premature <answer>; it is DROPPED.
+      * a thought-only turn (no command, no submission) has no actionable target
+        -> DROP.
+    Dropping these first also removes the consecutive-assistant runs that
+    merge_alternation used to fuse into double-<think>/double-<answer> targets."""
     thought = norm(text_of(msg.get("content", ""))).strip()
     extra = msg.get("extra", {}) or {}
     actions = extra.get("actions") or []
     bash_cmds = [norm(a.get("bash_command", "")).strip() for a in actions if a.get("bash_command", "").strip()]
-    think = f"<think>\n{thought}\n</think>"
     done = bool(extra.get("done"))
-    if done or not bash_cmds:
-        final = norm(extra.get("final_response", "") or exit_final or "").strip()
-        return f"{think}\n<answer>\n{final}\n</answer>"
-    body = "\n".join(f"<bash>\n{b}\n</bash>" for b in bash_cmds)
-    return f"{think}\n{body}"
+    own_final = norm(extra.get("final_response", "") or "").strip()
+
+    think = f"<think>\n{thought}\n</think>"
+    if bash_cmds:
+        body = "\n".join(f"<bash>\n{b}\n</bash>" for b in bash_cmds)
+        return f"{think}\n{body}"
+    # no command: only a GENUINE terminal turn becomes <answer>.
+    if done:
+        ans = own_final or norm(exit_final or "").strip()
+        if not ans:
+            return None  # done but empty submission -> nothing to learn
+        return f"{think}\n<answer>\n{ans}\n</answer>"
+    if own_final:  # not flagged done but carries its own submission -> terminal
+        return f"{think}\n<answer>\n{own_final}\n</answer>"
+    # no command, not terminal: placeholder / think-only retry artifact -> DROP
+    return None
 
 
 def merge_alternation(convo):
-    """Collapse consecutive same-role turns so the convo strictly alternates
-    human/gpt (LlamaFactory's ShareGPT converter requires it)."""
+    """Make the convo strictly alternate human/gpt (ShareGPT requirement).
+    Consecutive human turns (observations) are concatenated. Consecutive gpt
+    turns are a harness artifact (two actions with no observation between); keep
+    only the LATEST so we never fuse two <think>/<bash> blocks into one target
+    (which is what taught the model to emit multiple <think> per turn)."""
     merged = []
     for turn in convo:
         if merged and merged[-1]["from"] == turn["from"]:
-            merged[-1]["value"] += "\n" + turn["value"]
+            if turn["from"] == "human":
+                merged[-1]["value"] += "\n" + turn["value"]
+            else:
+                merged[-1] = dict(turn)
         else:
             merged.append(dict(turn))
     return merged
@@ -248,6 +277,8 @@ def build_convo(msgs, norm, max_obs):
                 convo.append({"from": "human", "value": val})
         elif role == "assistant":
             val = assistant_value(m, exit_final, norm)
+            if val is None:
+                continue  # placeholder / think-only / empty submission -> drop
             convo.append({"from": "gpt", "value": val})
             if "<answer>" in val:
                 have_final_answer = True
@@ -256,6 +287,15 @@ def build_convo(msgs, norm, max_obs):
     # submission, append it as the closing gpt <answer> turn.
     if not have_final_answer and exit_final and convo and convo[-1]["from"] == "human":
         convo.append({"from": "gpt", "value": f"<think>\nTask complete.\n</think>\n<answer>\n{norm(exit_final).strip()}\n</answer>"})
+
+    # Enforce a SINGLE terminal <answer>: drop any non-final gpt turn that emitted
+    # <answer> (a premature/spurious mid-trajectory submission that would teach
+    # the model to stop early). Done before merge so it can't strand the answer.
+    gpt_positions = [i for i, t in enumerate(convo) if t["from"] == "gpt"]
+    if gpt_positions:
+        last_gpt = gpt_positions[-1]
+        convo = [t for i, t in enumerate(convo)
+                 if not (t["from"] == "gpt" and i != last_gpt and "<answer>" in t["value"])]
 
     convo = merge_alternation(convo)
     # Must start with human and end with gpt; trim offending edges.

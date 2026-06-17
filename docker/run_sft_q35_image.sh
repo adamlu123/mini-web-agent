@@ -20,22 +20,46 @@ set -e
 echo "[boot] q35-image SFT pod $JOB_NAME on $(hostname)"
 echo "[boot] SFT_CONFIG=${SFT_CONFIG:?SFT_CONFIG not set}  NPROC=${NPROC:?NPROC not set}"
 
+# === multi-node wiring ========================================================
+# The volcano `pytorch` plugin injects MASTER_ADDR/MASTER_PORT plus WORLD_SIZE
+# (total nodes/pods) and RANK (this pod's node rank). LlamaFactory's launcher,
+# however, reads NNODES/NODE_RANK, so map them here. Single-node jobs get
+# WORLD_SIZE=1 / RANK=0 -> NNODES=1 / NODE_RANK=0 (identical to before).
+export NNODES="${WORLD_SIZE:-1}"
+export NODE_RANK="${RANK:-0}"
+IS_MASTER=0; [ "$NODE_RANK" = "0" ] && IS_MASTER=1
+echo "[boot] multi-node: NNODES=$NNODES NODE_RANK=$NODE_RANK MASTER_ADDR=${MASTER_ADDR:-127.0.0.1}:${MASTER_PORT:-?} IS_MASTER=$IS_MASTER"
+
 CODE_ROOT=$PVC_MOUNT/$USER_ALIAS/code
 UPLOAD_ROOT=$PVC_MOUNT/$USER_ALIAS/runs/$JOB_NAME
 OUTPUT_DIR=$PVC_MOUNT/$USER_ALIAS/outputs/$JOB_NAME
 LF_DIR=$CODE_ROOT/mini-web-agent/LlamaFactory
 mkdir -p "$CODE_ROOT" "$OUTPUT_DIR"
 
-echo '[boot] === copy uploaded code to stable PVC path ==='
+# Per-job sentinel so workers don't rsync the shared $CODE_ROOT concurrently
+# with the master (the dir lives on the shared PVC, seen by every pod).
+SYNC_SENTINEL="$OUTPUT_DIR/.code_synced"
+
 if ! command -v rsync >/dev/null 2>&1; then
   apt-get update -qq && apt-get install -y -qq rsync
 fi
-rsync -a --delete --no-perms --no-owner --no-group --no-times \
-    --exclude 'LlamaFactory/saves/' \
-    "$UPLOAD_ROOT/mini-web-agent/" "$CODE_ROOT/mini-web-agent/"
-# NOTE: --exclude 'LlamaFactory/saves/' keeps --delete from wiping a PRIOR run's
-# checkpoints (saves/ is gitignored -> not in the upload -> would otherwise be
-# deleted). Final ckpts are also copied to $PVC/.../models/ below for safety.
+
+if [ "$IS_MASTER" = "1" ]; then
+  echo '[boot] === [master] copy uploaded code to stable PVC path ==='
+  rm -f "$SYNC_SENTINEL"
+  rsync -a --delete --no-perms --no-owner --no-group --no-times \
+      --exclude 'LlamaFactory/saves/' \
+      "$UPLOAD_ROOT/mini-web-agent/" "$CODE_ROOT/mini-web-agent/"
+  # NOTE: --exclude 'LlamaFactory/saves/' keeps --delete from wiping a PRIOR run's
+  # checkpoints (saves/ is gitignored -> not in the upload -> would otherwise be
+  # deleted). Final ckpts are also copied to $PVC/.../models/ below for safety.
+  touch "$SYNC_SENTINEL"
+else
+  echo "[boot] === [worker rank $NODE_RANK] waiting for master to sync code to $CODE_ROOT ==="
+  for _ in $(seq 1 360); do [ -f "$SYNC_SENTINEL" ] && break; sleep 5; done
+  [ -f "$SYNC_SENTINEL" ] || { echo "[boot][error] timed out waiting for master code sync"; exit 1; }
+  echo "[boot] === [worker rank $NODE_RANK] code sync detected; continuing ==="
+fi
 
 echo '[boot] === install LlamaFactory + the few deps the image lacks (--no-deps) ==='
 echo "[boot] python -> $(command -v python) ; $(python -V 2>&1)"
@@ -101,6 +125,13 @@ echo "[boot] SFT exited rc=$RC"
 # HF model (output_dir root = config + safetensors + tokenizer) to a stable
 # per-model dir on the PVC that survives future jobs. Override dest via
 # SYNC_CKPT_DIR; disable entirely with SYNC_CKPT=0.
+# Only the master node post-processes (sync + vision-merge + eval). Workers'
+# torchrun procs have already exited; they must NOT race on the shared ckpt dir.
+if [ "$IS_MASTER" != "1" ]; then
+  echo "[boot] [worker rank $NODE_RANK] training done rc=$RC; skipping sync/eval (master handles it)"
+  exit "$RC"
+fi
+
 if [ "$RC" -eq 0 ] && [ "${SYNC_CKPT:-1}" = "1" ]; then
   CKPT_REL=$(grep -E '^[[:space:]]*output_dir:' "$LF_DIR/$SFT_CONFIG" | head -1 | sed 's/#.*//' | awk '{print $2}')
   if [ -n "$CKPT_REL" ] && [ -d "$LF_DIR/$CKPT_REL" ]; then
