@@ -10,12 +10,20 @@ requires-python = ">=3.10"
 dependencies = [
   "datasets",
   "harbor==0.6.6",
+  "httpx",
+  "jinja2",
   "loguru",
   "omegaconf",
+  "openai",
+  "platformdirs",
+  "pydantic",
+  "pyyaml",
   "ray",
+  "rich",
   "torch",
   "tqdm",
   "transformers",
+  "typer",
   "typing_extensions",
 ]
 
@@ -23,10 +31,18 @@ dependencies = [
 image_qa = "echo_rl.web_agent.tools.image_qa:main"
 self_reflection = "echo_rl.web_agent.tools.self_reflection:main"
 web_agent_policy_chat = "echo_rl.web_agent.tools.policy_chat:main"
+mini-web = "miniswewebagent.run.mini:app"
+mini-swe-webagent = "miniswewebagent.run.mini:app"
+mini-web-om2w = "miniswewebagent.run.benchmarks.om2w:app"
+mini-web-batch = "miniswewebagent.run.om2w_batch:app"
+mini-web-probe = "miniswewebagent.run.utilities.probe_website:app"
+mini-web-traces = "miniswewebagent.run.utilities.trace_viewer:app"
+mini-web-review = "miniswewebagent.run.utilities.review_viewer:app"
 
 [tool.setuptools.packages.find]
-where = ["."]
-include = ["echo_rl", "echo_rl.*"]
+where = [".", "src"]
+include = ["echo_rl", "echo_rl.*", "miniswewebagent", "miniswewebagent.*"]
 
 [tool.setuptools.package-data]
 echo_rl = ["terminal_agent/chat_templates/*.jinja"]
+miniswewebagent = ["config/**/*.yaml", "config/*.tcss", "run/benchmarks/*.json", "viewer/*", "review_viewer/*"]

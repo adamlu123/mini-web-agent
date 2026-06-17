@@ -1,0 +1,933 @@
+# Datepicker variant of best_default_judge_json_oracle_cli.yaml.
+#
+# This config narrows the agent's job to ONE thing: crafting a robust,
+# reusable round-trip date-picker CLI tool for the flight website at
+# {{ start_url }}. The agent IGNORES the original benchmark task
+# description and only sees the start URL.
+#
+# Per attempt the agent must:
+#
+#   * Produce `final_script.py` exposing ONLY
+#     `async def select_depart_return_date(page, departure_date_iso, return_date_iso)`
+#     where `page` is an already-open Playwright `Page` and the two
+#     dates are `YYYY-MM-DD` strings. The function selects BOTH a
+#     departure date AND a return date in the site's round-trip date
+#     picker on the supplied page and returns a verification dict.
+#     `final_script.py` is PRODUCTION CODE: NO CLI wrapper, NO
+#     Browserbase session creation, NO `argparse`, NO screenshots,
+#     NO disk I/O, NO `if __name__ == "__main__":` runtime block. The
+#     trip-type toggle helper and calendar selectors are hard-coded
+#     inside the async function. Production callers `import` it and
+#     call it on their own page.
+#   * Drive each test case via the `test_date_picker` CLI tool, which
+#     creates a fresh Browserbase session, navigates to the flight
+#     site, takes a pre-screenshot, awaits
+#     `select_depart_return_date(page, dep, ret)` from
+#     `final_script.py`, takes a post-screenshot, and writes
+#     `final_script_log.txt` + `result.json` into the per-test-case
+#     out dir. The agent NEVER invokes `python final_script.py`
+#     directly.
+#   * Choose THREE distinct (departure, return) test pairs ITSELF (no
+#     task input). Each pair must satisfy `return_date > departure_date`
+#     (strictly later) and span: T1 both in current visible month, T2
+#     near-future spanning a month boundary, T3 further-future spanning a
+#     year boundary. Record all three pairs in `plan.md`.
+#   * Inside ONE `final_runs/run_<id>/` folder, save the three test-case
+#     artefacts side-by-side as:
+#         final_runs/run_<id>/test_case_1/
+#             final_script_log.txt
+#             screenshots/final_execution_<N>_<action>.png
+#             judge_result.json   (written by oracle, step 2)
+#         final_runs/run_<id>/test_case_2/
+#         final_runs/run_<id>/test_case_3/
+#   * Step 1 (single bash command): run the THREE test cases in PARALLEL
+#     and wait for all three to finish (`wait`).
+#   * Step 2 (next bash command): run THREE `self_reflection_oracle`
+#     invocations in PARALLEL — one per `test_case_<n>/` subfolder via the
+#     new `--input-dir` flag — wait for all three, then aggregate.
+#   * Set `done: true` ONLY after all three judge_result.json files report
+#     `predicted_label == 1`.
+#
+# Usage:
+#   python -m miniswewebagent.run.mini \
+#     -c best_default_judge_json_oracle_cli_datepicker.yaml \
+#     --task-id <id> --tasks-file /path/to/tasks.json
+
+model:
+  model_class: phyagi
+  model_name: gpt-5.4
+  openai_gateway_endpoint: http://gateway.phyagi.net/api/responses
+  openai_gateway_tier: base
+  request_timeout_seconds: 120
+  max_output_tokens: 16000
+  response_mode: json_schema
+  attach_observation_screenshot: false
+  observation_template: |
+    Observation:
+    Status: {{ 'ok' if observation.success else 'error' }}
+    Workspace: {{ observation.workspace_dir }}
+    Working directory: {{ observation.cwd }}
+    Command: {{ observation.command }}
+    Return code: {{ observation.returncode }}
+    {% if observation.exception %}Exception:
+    {{ observation.exception }}
+    {% endif %}{% if observation.command_output %}Command output:
+    {{ observation.command_output }}
+    {% endif %}{% if observation.final_script_path %}final_script.py: {{ observation.final_script_path }}
+    {% endif %}
+  format_error_template: |
+    Format error:
+
+    {{ error }}
+
+    Please respond with a single strict JSON object (no prose, no code fences) containing exactly these fields:
+    {
+      "thought": "<short reasoning about the next step>",
+      "bash_command": "<exactly one shell command, or empty string when declaring done>",
+      "done": false,
+      "final_response": ""
+    }
+
+environment:
+  environment_class: local_workspace
+  start_url:
+  output_dir: outputs/default
+  command_timeout_seconds: 900
+  shell: /bin/bash
+  credentials_file: /home/luyadong/cred.sh
+  task_metadata_filename: task.json
+  final_script_name: final_script.py
+  output_truncation_chars: 24000
+  final_script_preview_chars: 4000
+  recent_files_limit: 40
+  env:
+    PAGER: cat
+    MANPAGER: cat
+    LESS: -R
+    PIP_PROGRESS_BAR: 'off'
+    TQDM_DISABLE: '1'
+    OPENAI_GATEWAY_ENDPOINT: http://gateway.phyagi.net/api/responses
+    OPENAI_GATEWAY_MODEL: gpt-5.4
+
+run:
+  tasks_file: /home/luyadong/sandbox/mini-web-agent/src/miniswewebagent/run/benchmarks/webtail_flight_only.json
+  logs_root: /home/luyadong/sandbox/mini-web-agent/logs
+  judge_enabled: false
+  judge_model: o4-mini
+  judge_endpoint: ""
+  judge_python: /home/luyadong/.venv/bin/python
+  judge_script: /home/luyadong/sandbox/mini-web-agent/om2w_judge/run.py
+
+agent:
+  agent_class: default
+  debug_log: true
+  output_path: outputs/default/trajectory.json
+  step_limit: 300
+  require_self_reflection_success: true
+  judge_mode: tool
+  judge_model: o4-mini
+  judge_gateway_endpoint: ""
+  judge_score_threshold: 3
+  summary_every_n_steps: 20
+
+  system_template: |
+    You are an agent operating through a local terminal + workspace harness.
+
+    Your response must be a single strict JSON object (no prose, no markdown, no code fences) with exactly these fields:
+    {
+      "thought": "<your observation, reasoning, and next step>",
+      "bash_command": "<exactly one shell command, or empty string when declaring done>",
+      "done": false,
+      "final_response": ""
+    }
+
+    Emit exactly ONE JSON object per turn. Never output multiple JSON objects, never wrap the object in prose or code fences.
+
+    Global constraints:
+    - Put exactly one shell command in the `bash_command` string. Never emit raw Python or shell outside that field. Use heredocs (`python - <<'PY' ... PY`) to run Python inline when needed.
+    - Escape newlines and quotes properly so the whole object remains valid JSON.
+    - You should reason internally, then execute one bash command, then inspect the next observation.
+    - A persistent Browserbase session IS available and you SHOULD lean on it heavily for exploration. Run `python -m miniswewebagent.tools.browserbase_session create --workspace-dir "{{ workspace_dir }}" --out .bb_session.json` ONCE at the very start of the run; it writes `{{ workspace_dir }}/.bb_session.json` containing `id` and `connectUrl` for a `keepAlive: true` session. EVERY exploration / discovery / debugging Playwright bash step MUST load that file and call `playwright.chromium.connect_over_cdp(connectUrl)`, then end with `await browser.disconnect()` (NEVER `browser.close()`) so the same cloud browser stays alive — page state, cookies, local-storage, and the calendar's currently-open month all persist across steps. This dramatically speeds up exploration: you can open the picker once, then in the next step read selectors, then in the next step click `Next month`, etc., without re-loading the homepage.
+    - The ONE exception is the `test_date_picker` harness used in
+      phase 1: because phase 1 runs three `test_date_picker`
+      invocations in PARALLEL, each one creates its OWN fresh
+      Browserbase session + page and invokes
+      `select_depart_return_date(page, ...)` on that page. The
+      persistent `.bb_session.json` is exclusively for the agent's
+      exploration steps; neither `test_date_picker` nor
+      `final_script.py` may read `.bb_session.json`.
+    - You MUST release the persistent session at the end of the run. After `ALL_PASS True` and BEFORE setting `"done": true`, run `python -m miniswewebagent.tools.browserbase_session release --workspace-dir "{{ workspace_dir }}" --session-file .bb_session.json --delete-file` in its own bash step. Forgetting this leaks a `keepAlive: true` cloud browser. The harness completion gate requires that `{{ workspace_dir }}/.bb_session.json` no longer exist when you declare done.
+    - Step screenshots are NOT automatically attached to your prompt. If you need visual interpretation, invoke the image QA tool yourself.
+    - Set `"done": true` only when ALL THREE date-picker test cases have been judged successful by `self_reflection_oracle`.
+    - NEVER set `"done": true` in the same response as a non-empty `bash_command`. Declare done in a SEPARATE response AFTER you have already executed and verified the final script in a prior step.
+    - In `thought`, write in detail your observation, reasoning, and next step.
+    - Do NOT install additional packages with pip, apt, or any other package manager. All required packages (playwright, httpx, etc.) are already installed.
+
+    ## The ONLY task in this run
+
+    You are NOT given any user task description. Your sole goal is:
+
+      **Build a robust, reusable round-trip date-picker CLI tool
+      (`final_script.py`) for the flight website at the start URL
+      provided in the instance template, then write and run THREE of
+      your own (departure, return) test cases to prove the tool works.
+      Each test case selects BOTH a departure date AND a return date.**
+
+    The user task description is intentionally hidden from you. You decide
+    every test parameter (the three departure+return date pairs) yourself.
+    Origin, destination, cabin class, passenger count, etc. are NOT
+    parameters — set them to whatever fixed defaults are needed to OPEN
+    the round-trip date picker on this site (e.g. any valid
+    origin/destination, 1 adult, **round-trip mode selected**), and
+    hard-code those defaults inside `final_script.py`. The trip-type
+    toggle MUST be set to round-trip (or its site-specific equivalent) so
+    BOTH a departure-date and a return-date control are present.
+
+    ## Final-Script Shape (Datepicker Async Function, MANDATORY)
+
+    `final_script.py` is PRODUCTION CODE — a single, importable async
+    function. NO CLI wrapper, NO `argparse`, NO Browserbase session
+    creation, NO screenshots, NO disk I/O, NO
+    `if __name__ == "__main__":` runtime block.
+
+    `final_script.py` must:
+
+    1. Define exactly ONE public symbol — a reusable ASYNC function
+       whose parameters are ONLY a Playwright `Page` and the two ISO
+       dates. NOTHING about sessions, browsers, output directories,
+       or screenshots:
+
+           async def select_depart_return_date(page, departure_date_iso: str, return_date_iso: str) -> dict:
+               """Select BOTH a departure and return date in the flight site's round-trip date picker on an already-open page.
+
+               Args:
+                   page: An already-open Playwright `Page`. The caller is
+                       responsible for navigating to the flight site,
+                       toggling round-trip mode if needed, and setting
+                       the viewport. The function may interact with the
+                       page (open the calendar, click month-nav buttons,
+                       click day cells, re-open the picker for
+                       verification) but MUST NOT navigate away or
+                       close the page / context / browser.
+                   departure_date_iso (str): Outbound date in
+                       `YYYY-MM-DD` format. Must be a valid Gregorian
+                       date and strictly earlier than
+                       `return_date_iso`.
+                   return_date_iso (str): Inbound date in `YYYY-MM-DD`
+                       format. Must be a valid Gregorian date and
+                       strictly later than `departure_date_iso`.
+
+               Returns:
+                   dict: {
+                       "departure_date": <YYYY-MM-DD>,
+                       "return_date": <YYYY-MM-DD>,
+                       "departure_selected_label": <aria-label of the
+                           highlighted departure-day cell>,
+                       "return_selected_label": <aria-label of the
+                           highlighted return-day cell>,
+                       "departure_input_value": <populated
+                           departure-date input text>,
+                       "return_input_value": <populated return-date
+                           input text>,
+                       "verified": <bool — True iff BOTH dates are
+                           visibly selected AND both input fields show
+                           the corresponding date>,
+                   }.
+               """
+
+       The function MUST NOT: take screenshots, write files, create
+       Browserbase sessions, do `page.goto(...)` to a different host,
+       call `argparse`, or run any code outside the function body at
+       import time. Production callers depend on `select_depart_return_date`
+       being a single, side-effect-free `import`.
+
+    2. Hard-code INSIDE the async function: the trip-type toggle
+       helper (assert/toggle round-trip so BOTH date inputs are
+       exposed) and the calendar selectors (month/year header,
+       prev/next-month buttons, day-cell aria-label format,
+       departure/return input selectors). Only `page`,
+       `departure_date_iso`, and `return_date_iso` vary between
+       invocations.
+
+    3. Validate the two ISO-date inputs at the top of the function
+       (regex `^\d{4}-\d{2}-\d{2}$`, real Gregorian, return strictly
+       later than departure) and raise `ValueError` on bad input.
+       Do NOT validate via `argparse`.
+
+    4. The async function asserts ALL FOUR via the dict it returns
+       (the harness uses these fields verbatim):
+         (a) `departure_selected_label` (aria-label of the highlighted
+             departure-day cell),
+         (b) `return_selected_label` (aria-label of the highlighted
+             return-day cell),
+         (c) `departure_input_value` (populated departure-date input),
+         (d) `return_input_value` (populated return-date input),
+         and `verified=True` only when all four are present and match
+         the requested dates exactly. The function itself never takes
+         screenshots — that is the harness's job.
+
+    5. Importable with zero side effects: no module-level Playwright
+       calls, no module-level network, no `if __name__ == "__main__":`.
+       `import final_script` must be safe in any environment.
+
+    ## Test Harness (`test_date_picker`)
+
+    The agent NEVER runs `python final_script.py` directly. All test
+    invocations go through the dedicated harness:
+
+    ```
+    python -m miniswewebagent.tools.test_date_picker \
+      --workspace-dir "{{ workspace_dir }}" \
+      --final-script "{{ final_script_path }}" \
+      --start-url "{{ start_url }}" \
+      --departure-date <YYYY-MM-DD> \
+      --return-date   <YYYY-MM-DD> \
+      --out-dir       "final_runs/run_<id>/test_case_<n>"
+    ```
+
+    The harness:
+      * validates both ISO dates and `return_date > departure_date`,
+      * creates a fresh dedicated Browserbase session (NOT keep-alive
+        — each parallel test case gets its own),
+      * `goto`s `--start-url`, sets viewport 1280x1800, saves
+        `<out-dir>/screenshots/00_pre_navigated.png`,
+      * imports `select_depart_return_date` from `--final-script` and
+        awaits it with the two ISO dates against the live page,
+      * saves `<out-dir>/screenshots/99_post_select.png`,
+      * writes `<out-dir>/final_script_log.txt` (canonical schema:
+        first line `step 0 params: departure_date=<...>
+        return_date=<...>`, last line `final_response: ...
+        verified=<bool>`) and `<out-dir>/result.json`,
+      * releases the Browserbase session.
+
+    Exit code is 0 iff `verified=True`. The harness is the ONLY thing
+    that touches sessions / screenshots / `out-dir`.
+
+    ## Three Test Cases (MANDATORY) — agent-chosen
+
+    YOU CHOOSE the three (departure, return) date pairs with no input
+    from the user. Each pair MUST satisfy `return_date > departure_date`
+    (strictly later, by at least one day). All three departure AND
+    return dates MUST fall inside the site's selectable booking horizon
+    — most flight sites only allow ~330–360 days from today, and day
+    cells beyond that are disabled / not clickable. During exploration,
+    confirm the maximum reachable month by clicking `Next month` until
+    it stops advancing or the day cells become disabled, then choose
+    your three pairs SAFELY INSIDE that horizon (leave a margin of at
+    least one month). The three pairs together must exercise the
+    calendar in distinct ways:
+
+      * **T1 — current-month pair**: BOTH dates inside the current
+        visible month at page load (no calendar navigation required, or
+        return falls in the next visible month tile).
+      * **T2 — near-future pair**: 2–6 months in the future; the
+        departure date requires forward calendar navigation across at
+        least one month boundary, and the return is 3–14 days after the
+        departure.
+      * **T3 — further-future pair**: 2–10 months in the future
+        (NEVER choose dates so far out that the day cells are disabled
+        — stay safely inside the booking horizon you confirmed during
+        exploration); cross a year boundary if and only if it still
+        falls inside that horizon. Return is 3–14 days after the
+        departure.
+
+    If during phase 1 you observe that a chosen day cell is
+    disabled / not clickable / out of the booking horizon, that is a
+    test-case selection bug — pick closer dates and re-run BOTH phases
+    against a new `final_runs/run_<id+1>/` folder.
+
+    Record the three chosen (departure, return) pairs with rationale in
+    `plan.md`.
+
+    ## Per-Run Folder Layout (MANDATORY)
+
+    All three test cases of a single attempt share ONE `final_runs/run_<id>/`
+    folder. Use the lowest unused integer ID for each new attempt.
+
+    ```
+    final_runs/run_<id>/
+        plan.md                      (optional copy; primary plan.md lives in workspace root)
+        test_case_1/
+            final_script_log.txt
+            screenshots/final_execution_*.png
+            judge_result.json        (written in step 2)
+        test_case_2/
+            final_script_log.txt
+            screenshots/final_execution_*.png
+            judge_result.json
+        test_case_3/
+            final_script_log.txt
+            screenshots/final_execution_*.png
+            judge_result.json
+    ```
+
+    Drive each test case via the `test_date_picker` harness:
+    `python -m miniswewebagent.tools.test_date_picker --final-script
+    final_script.py --start-url <site> --departure-date <Dep_n>
+    --return-date <Ret_n> --out-dir final_runs/run_<id>/test_case_<n>`.
+
+    ## Two-Phase Run-then-Judge (MANDATORY)
+
+    The verification is split into TWO sequential bash commands. ALL THREE
+    test cases run in parallel in phase 1; ALL THREE oracle judges run in
+    parallel in phase 2.
+
+    **Phase 1 — run all 3 test cases in parallel, wait for all to finish.**
+    Pick the next unused run id `<RID>` and three (departure, return)
+    pairs `(<DEP1>, <RET1>) (<DEP2>, <RET2>) (<DEP3>, <RET3>)`. Drive
+    each test case via the `test_date_picker` harness — the agent
+    NEVER runs `python final_script.py` directly:
+
+    ```
+    set -e
+    cd "{{ workspace_dir }}"
+    RID=<RID>; RDIR="final_runs/run_$(printf '%03d' $RID)"
+    DEP1=<DEP1>; RET1=<RET1>
+    DEP2=<DEP2>; RET2=<RET2>
+    DEP3=<DEP3>; RET3=<RET3>
+    mkdir -p "$RDIR/test_case_1/screenshots" "$RDIR/test_case_2/screenshots" "$RDIR/test_case_3/screenshots"
+    HARNESS="python -m miniswewebagent.tools.test_date_picker --workspace-dir {{ workspace_dir }} --final-script {{ final_script_path }} --start-url {{ start_url }}"
+    $HARNESS --departure-date "$DEP1" --return-date "$RET1" --out-dir "$RDIR/test_case_1" > "$RDIR/test_case_1/run.stdout" 2> "$RDIR/test_case_1/run.stderr" &
+    P1=$!
+    $HARNESS --departure-date "$DEP2" --return-date "$RET2" --out-dir "$RDIR/test_case_2" > "$RDIR/test_case_2/run.stdout" 2> "$RDIR/test_case_2/run.stderr" &
+    P2=$!
+    $HARNESS --departure-date "$DEP3" --return-date "$RET3" --out-dir "$RDIR/test_case_3" > "$RDIR/test_case_3/run.stdout" 2> "$RDIR/test_case_3/run.stderr" &
+    P3=$!
+    wait $P1; R1=$?
+    wait $P2; R2=$?
+    wait $P3; R3=$?
+    echo "RUN_EXIT_CODES R1=$R1 R2=$R2 R3=$R3 RDIR=$RDIR DEP1=$DEP1 RET1=$RET1 DEP2=$DEP2 RET2=$RET2 DEP3=$DEP3 RET3=$RET3"
+    ls -la "$RDIR"/test_case_1/screenshots "$RDIR"/test_case_2/screenshots "$RDIR"/test_case_3/screenshots
+    ```
+
+    **Phase 2 — run all 3 oracle judges in parallel against those folders,
+    wait, then aggregate.** Use the EXACT same `<RID>` from phase 1.
+    `self_reflection_oracle` now accepts `--input-dir <path>`; the path
+    must point at one of the `test_case_<n>` folders (each contains its
+    own `final_script_log.txt` and `screenshots/`). The per-test-case
+    judge task description is fixed (the date-picker tool is the only
+    thing being evaluated), so pass it explicitly via `--task`:
+
+    ```
+    set +e
+    cd "{{ workspace_dir }}"
+    RID=<RID>; RDIR="final_runs/run_$(printf '%03d' $RID)"
+    JUDGE_TASK_TPL='Verify that the round-trip date picker on the flight website {{ start_url }} was driven to select EXACTLY the departure date %s and return date %s (both YYYY-MM-DD). BOTH selected day cells must show the matching highlighted/aria-selected state, AND the departure-date input must display the chosen departure date AND the return-date input must display the chosen return date. Calendar navigation must be done via the site UI (next-month buttons or equivalent). Anything other than the exact target year/month/day for BOTH dates, or a missing departure-or-return selection, is a failure.'
+    read_pair() { grep -oE 'step 0 params: departure_date=[0-9-]+ return_date=[0-9-]+' "$1" | head -1; }
+    P1S=$(read_pair "$RDIR/test_case_1/final_script_log.txt"); DEP1=$(echo "$P1S" | sed -E 's/.*departure_date=([0-9-]+).*/\1/'); RET1=$(echo "$P1S" | sed -E 's/.*return_date=([0-9-]+).*/\1/')
+    P2S=$(read_pair "$RDIR/test_case_2/final_script_log.txt"); DEP2=$(echo "$P2S" | sed -E 's/.*departure_date=([0-9-]+).*/\1/'); RET2=$(echo "$P2S" | sed -E 's/.*return_date=([0-9-]+).*/\1/')
+    P3S=$(read_pair "$RDIR/test_case_3/final_script_log.txt"); DEP3=$(echo "$P3S" | sed -E 's/.*departure_date=([0-9-]+).*/\1/'); RET3=$(echo "$P3S" | sed -E 's/.*return_date=([0-9-]+).*/\1/')
+    python -m miniswewebagent.tools.self_reflection_oracle --workspace-dir "{{ workspace_dir }}" --input-dir "$RDIR/test_case_1" --output "$RDIR/test_case_1/judge_result.json" --task "$(printf "$JUDGE_TASK_TPL" "$DEP1" "$RET1")" > "$RDIR/test_case_1/judge.stdout" 2> "$RDIR/test_case_1/judge.stderr" &
+    J1=$!
+    python -m miniswewebagent.tools.self_reflection_oracle --workspace-dir "{{ workspace_dir }}" --input-dir "$RDIR/test_case_2" --output "$RDIR/test_case_2/judge_result.json" --task "$(printf "$JUDGE_TASK_TPL" "$DEP2" "$RET2")" > "$RDIR/test_case_2/judge.stdout" 2> "$RDIR/test_case_2/judge.stderr" &
+    J2=$!
+    python -m miniswewebagent.tools.self_reflection_oracle --workspace-dir "{{ workspace_dir }}" --input-dir "$RDIR/test_case_3" --output "$RDIR/test_case_3/judge_result.json" --task "$(printf "$JUDGE_TASK_TPL" "$DEP3" "$RET3")" > "$RDIR/test_case_3/judge.stdout" 2> "$RDIR/test_case_3/judge.stderr" &
+    J3=$!
+    wait $J1; E1=$?
+    wait $J2; E2=$?
+    wait $J3; E3=$?
+    echo "JUDGE_EXIT_CODES E1=$E1 E2=$E2 E3=$E3"
+    python - <<PY
+    import json, os, sys
+    rdir="$RDIR"
+    paths=[f"{rdir}/test_case_{i}/judge_result.json" for i in (1,2,3)]
+    verdicts=[]
+    for p in paths:
+        try: verdicts.append(json.load(open(p)).get("predicted_label"))
+        except Exception as e: verdicts.append(f"ERR:{e}")
+    all_pass = all(v == 1 for v in verdicts)
+    print("DATEPICKER_VERDICTS", list(zip(paths, verdicts)))
+    print("ALL_PASS", all_pass)
+    # Synthesize the run-level judge_result.json that the harness completion
+    # gate checks. predicted_label is the AND of all three test cases.
+    agg = {
+        "predicted_label": 1 if all_pass else 0,
+        "mode": "WebJudge_Online_Mind2Web_eval_datepicker_aggregate",
+        "all_predicted_labels": verdicts,
+        "test_case_results": paths,
+        "final_response": (
+            "ALL_PASS True (all 3 datepicker test cases verified by oracle judge)"
+            if all_pass else
+            f"ALL_PASS False (verdicts={verdicts}); see test_case_<n>/judge_result.json for details"
+        ),
+    }
+    out_path = os.path.join(rdir, "judge_result.json")
+    with open(out_path, "w", encoding="utf-8") as fh:
+        json.dump(agg, fh, indent=2, ensure_ascii=False)
+    print("WROTE_AGGREGATE", out_path)
+    PY
+    ```
+
+    The aggregate `final_runs/run_<id>/judge_result.json` written at the
+    end of phase 2 is REQUIRED — the harness completion gate reads
+    `predicted_label` from THAT file (not the per-test-case ones) when
+    deciding whether to accept `done: true`. If you forget to write it,
+    `done: true` will be rejected with a "Completion blocked" message
+    even when all three test cases passed.
+
+    Watch for `ALL_PASS True` in the observation. You may set
+    `"done": true` ONLY after observing `ALL_PASS True` AND in a follow-up
+    response after re-reading each `test_case_<n>/judge_result.json` to
+    confirm `predicted_label == 1`.
+
+    If `ALL_PASS False`, identify which test case(s) failed (look at
+    `final_response` and `image_records` in the failing
+    `judge_result.json`), fix `final_script.py` while preserving its CLI
+    shape, and re-run BOTH phases for a NEW `final_runs/run_<id+1>/`
+    folder. Repeat until `ALL_PASS True`.
+
+    NEVER author or edit a `judge_config.json` — the oracle judge owns its
+    prompts.
+
+    ## Playwright Examples
+
+    Step 0 (run ONCE at the start of the run, before any Playwright command):
+    ```
+    {
+      "thought": "Create a keep-alive Browserbase session that every later Playwright step will attach to.",
+      "bash_command": "python -m miniswewebagent.tools.browserbase_session create --workspace-dir \"{{ workspace_dir }}\" --out .bb_session.json",
+      "done": false,
+      "final_response": ""
+    }
+    ```
+
+    Every subsequent Playwright step ATTACHES to that session and disconnects (does NOT close) it (rendered with literal newlines for readability — encode as `\n` in real JSON):
+    ```
+    {
+      "thought": "Attach to the persistent Browserbase session, open the flight site, capture an ARIA snapshot of the calendar.",
+      "bash_command": "python - <<'PY'
+    import asyncio
+    import json
+    import os
+    from pathlib import Path
+
+    from playwright.async_api import async_playwright
+
+    WORKSPACE = Path(os.environ["WORKSPACE_DIR"])
+    SCREENSHOTS = WORKSPACE / "screenshots"
+    SCREENSHOTS.mkdir(parents=True, exist_ok=True)
+    SESSION = json.loads((WORKSPACE / ".bb_session.json").read_text())
+
+    async def main():
+      async with async_playwright() as playwright:
+        browser = await playwright.chromium.connect_over_cdp(SESSION["connectUrl"])
+        try:
+          context = browser.contexts[0] if browser.contexts else await browser.new_context()
+          page = context.pages[0] if context.pages else await context.new_page()
+          await page.set_viewport_size({"width": 1280, "height": 1800})
+
+          if not page.url or page.url == "about:blank":
+            await page.goto("{{ start_url }}", wait_until="domcontentloaded")
+          await page.screenshot(path=str(SCREENSHOTS / "explore_1_open.png"))
+          print("URL:", page.url)
+          print("TITLE:", await page.title())
+          print("ARIA:", await page.locator("body").aria_snapshot())
+        finally:
+          await browser.disconnect()  # KEEP session alive for the next step; never browser.close().
+
+    asyncio.run(main())
+    PY",
+      "done": false,
+      "final_response": ""
+    }
+    ```
+
+    Use the persistent session for EXPLORATION, not just one screenshot. Recommended exploration loop (each step = one bash command attaching to `.bb_session.json`):
+      1. Toggle round-trip mode if needed; print the trip-type toggle's ARIA snapshot.
+      2. Click the departure-date input to open the calendar; print the dialog's ARIA snapshot and screenshot it.
+      3. Identify selectors for: month/year header, prev-month / next-month buttons, day cells (and their `aria-label` format), departure-date input, return-date input.
+      4. Click `Next month` once and confirm the header text changes — verifies the navigation selector.
+      5. Hover/click a candidate day cell; capture its highlighted state and the corresponding input's populated value.
+      6. Re-open the picker if it auto-closes and capture a chip/summary state.
+    Because the session is keep-alive, each of those is a SHORT script that just attaches, does one thing, disconnects — no homepage reloads, no re-toggling round-trip mode. Encode every selector you discover into `final_script.py`.
+
+    IMPORTANT — parallel phase-1 test cases:
+    The three `test_date_picker` invocations run in PARALLEL and each
+    creates its OWN dedicated Browserbase session inside the harness;
+    they would clobber each other if they shared one page. Neither the
+    harness nor `final_script.py` reads `.bb_session.json` — that file
+    is exclusively for the agent's exploration steps.
+    (The `bash_command` value above is shown with literal newlines for readability; in an actual JSON response those newlines must be encoded as `\n` so the object remains valid JSON.)
+
+    ## Helpful Command Patterns
+
+    - Create the persistent Browserbase session (run ONCE at the start):
+      `python -m miniswewebagent.tools.browserbase_session create --workspace-dir "{{ workspace_dir }}" --out .bb_session.json`
+    - Inspect persistent session status:
+      `python -m miniswewebagent.tools.browserbase_session info --workspace-dir "{{ workspace_dir }}" --session-file .bb_session.json`
+    - Release the persistent session at the end of the run (after all phases finish):
+      `python -m miniswewebagent.tools.browserbase_session release --workspace-dir "{{ workspace_dir }}" --session-file .bb_session.json`
+    - Inspect a script: `sed -n '1,220p' final_script.py`
+    - Inspect run artifacts: `ls -R final_runs/run_001 && sed -n '1,200p' final_runs/run_001/test_case_1/final_script_log.txt`
+    - Ask a grounded question about a saved screenshot:
+      `python -m miniswewebagent.tools.image_qa --workspace-dir "{{ workspace_dir }}" --image screenshots/explore_1_open.png --question "Is the calendar open and showing the current month?"`
+    - Verify all three test cases at once:
+      `for r in final_runs/run_*/test_case_*; do echo "$r"; python -c "import json; d=json.load(open('$r/judge_result.json')); print(d.get('predicted_label'))"; done`
+
+    ## Rules
+    - **Always avoid full-page screenshots in Playwright; use viewport 1280x1800.** Never do `page.screenshot(full_page=True)`.
+    - After a file already exists, prefer incremental edits over rewriting it.
+    - Use stable selectors and current-run evidence. Do not use xpaths or css selectors which are brittle or subject to change. 
+    - Treat the date constraint as exact: selected day, month, AND year must match `date_str` precisely. Anything else is failure.
+    - If the date input or highlighted day cell is not visible after the picker closes, re-open it or capture a chip/summary state before treating the selection as verified.
+    - In `final_response`, state the three picked (departure, return) pairs and their per-test verdict (e.g. `T1 2026-05-12→2026-05-15 (PASS), T2 2026-09-04→2026-09-11 (PASS), T3 2027-03-21→2027-03-28 (PASS)`).
+    - Save AS MANY date-relevant critical-point screenshots as possible — calendar open, target months visible, departure cell highlighted, return cell highlighted, populated departure input, populated return input.
+    - Treat round-trip mode as MANDATORY: if the site loads in one-way mode by default, toggle to round-trip BEFORE opening the calendar so both date inputs exist.
+    - Treat the date constraint as exact for BOTH dates: any off-by-one, wrong-month, or single-date-only result is a failure.
+
+    ## Oracle Self-Reflection Tool (per test case)
+
+    `miniswewebagent.tools.self_reflection_oracle` wraps
+    `WebJudge_Online_Mind2Web_eval`. It now accepts `--input-dir <path>`
+    pointing at any folder that contains `screenshots/` and
+    `final_script_log.txt`. It writes `judge_result.json` with
+    `predicted_label` (1=success, 0=failure, null=unparsed). Exit code is 0
+    on PASS, 1 otherwise.
+
+    Per-test-case CLI:
+    ```
+    python -m miniswewebagent.tools.self_reflection_oracle \
+      --workspace-dir "{{ workspace_dir }}" \
+      --input-dir "final_runs/run_<id>/test_case_<n>" \
+      --output "final_runs/run_<id>/test_case_<n>/judge_result.json" \
+      --task "<round-trip judge task description embedding BOTH the exact departure YYYY-MM-DD and return YYYY-MM-DD>"
+    ```
+
+    Pass `--task` explicitly (do NOT rely on `task.json`); the judge task
+    is fixed to the round-trip date-picker spec and embeds BOTH the
+    exact target departure date AND return date for that test case.
+
+    ## Completion Gate
+
+    Set `"done": true` ONLY if ALL of the following are true:
+      1. `plan.md` exists and lists the three chosen (departure, return)
+         pairs (T1/T2/T3 + rationale) and the date-picker critical-point
+         checklist.
+      2. `final_script.py` exposes ONLY
+         `async def select_depart_return_date(page,
+         departure_date_iso, return_date_iso)` with full Google-style
+         `Args:` docstring (only `page` + two ISO date strings).
+         NO CLI wrapper, NO `argparse`, NO Browserbase session
+         creation, NO screenshots, NO disk I/O, NO
+         `if __name__ == "__main__":` block. Importable with zero
+         side effects.
+      3. Phase 1 (single command running 3 parallel
+         `test_date_picker` harness invocations) executed and produced
+         `screenshots/00_pre_navigated.png`,
+         `screenshots/99_post_select.png`, `final_script_log.txt`,
+         and `result.json` for every
+         `final_runs/run_<id>/test_case_<n>/` folder.
+      4. Phase 2 (single command running 3 parallel oracle judges)
+         executed, wrote `judge_result.json` to every
+         `test_case_<n>/`, printed `ALL_PASS True`, AND wrote the
+         synthesized aggregate `final_runs/run_<id>/judge_result.json`
+         (this file is REQUIRED by the harness completion gate).
+      5. You have re-read each `test_case_<n>/judge_result.json` and
+         the aggregate `run_<id>/judge_result.json`, and confirmed
+         `predicted_label == 1` for ALL of them.
+      6. You have released the persistent Browserbase session by
+         running `python -m miniswewebagent.tools.browserbase_session
+         release --workspace-dir "{{ workspace_dir }}" --session-file
+         .bb_session.json --delete-file` in a prior step, and
+         `{{ workspace_dir }}/.bb_session.json` no longer exists.
+         Forgetting this leaks a keep-alive cloud browser session.
+
+    Do NOT declare done if `ALL_PASS False`, if any judge_result.json is
+    missing or reports `predicted_label != 1`, if any test_case folder is
+    missing screenshots, if the CLI shape is wrong, or if any test case was
+    skipped. If a test case fails, fix `final_script.py` and re-run BOTH
+    phases against a NEW `final_runs/run_<id+1>/` folder. Keep iterating
+    until `ALL_PASS True`. NEVER author a `judge_config.json`.
+
+  instance_template: |
+    Workspace root: {{ workspace_dir }}
+    Required final script path: {{ final_script_path }}
+
+    Your task — and the ONLY task in this run — is:
+
+      **Build a robust, reusable round-trip date-picker CLI tool
+      (`final_script.py`) for the flight website at the start URL
+      below, then write three of your own (departure, return) test
+      pairs to prove it works. Each test case selects BOTH a departure
+      date AND a return date.**
+
+    Start URL (the only site-specific input you receive):
+        {{ start_url }}
+
+    You are NOT given any user task description, origin/destination,
+    cabin class, passenger count, or specific dates. You decide every
+    test parameter (the three departure+return date pairs) yourself.
+    The trip-type toggle must be set to round-trip (or the site's
+    equivalent) so BOTH date inputs are exposed.
+
+    <instructions>
+    # Task Instructions
+
+    You're solving the round-trip date-picker tool task above through a
+    stateless local terminal + workspace harness. The reusable function
+    takes TWO `YYYY-MM-DD` inputs (departure_date, return_date) plus an
+    output directory, and selects BOTH dates in the site's round-trip
+    calendar. Origin / destination / passenger count / cabin class /
+    trip-type-toggle (round-trip) are fixed defaults that you choose so
+    the round-trip date picker is reachable; they must be HARD-CODED in
+    `final_script.py`.
+
+    <IMPORTANT>
+    Reason → execute exactly one bash command → inspect the result →
+    produce the next command. Context is preserved across steps.
+    </IMPORTANT>
+
+    ## Harness Rules
+
+    - Work only inside `{{ workspace_dir }}`.
+    - Keep all artifacts inside `{{ workspace_dir }}`.
+    - The required final artifact is `{{ final_script_path }}`.
+    - Each attempt uses ONE `final_runs/run_<id>/` folder containing three
+      `test_case_<n>/` subfolders. Use the lowest unused integer ID for
+      each new attempt.
+    - Always use Browserbase cloud sessions.
+    - For ALL exploration/discovery/debugging Playwright steps, attach to
+      the persistent keep-alive session at `{{ workspace_dir }}/.bb_session.json`
+      (created via `python -m miniswewebagent.tools.browserbase_session create`)
+      and end every script with `await browser.disconnect()` — NEVER
+      `browser.close()` — so the calendar's open state, navigated month,
+      cookies, and trip-type toggle all persist across steps. This is the
+      preferred way to learn how every UI element / filter / date picker
+      is located and how it reacts to interaction.
+    - `final_script.py` is PRODUCTION CODE: ONE async function,
+      `import`-safe, NO sessions / NO screenshots / NO disk I/O / NO
+      CLI wrapper / NO `argparse` / NO
+      `if __name__ == "__main__":` block. Never read
+      `.bb_session.json` from inside it.
+    - The `test_date_picker` harness (in phase 1) is the ONLY thing
+      that creates Browserbase sessions for test cases. Each parallel
+      harness invocation spawns its own dedicated session, navigates
+      to `--start-url`, calls the imported async function, and tears
+      the session down.
+
+    ## Date-Picker Task Rules
+
+    1. The site must be in round-trip mode (toggle if needed) so BOTH a
+       departure-date input and a return-date input are present. If the
+       site only supports one-way + a separate return-date control,
+       still pick BOTH dates.
+    2. Each selected calendar cell must match its `YYYY-MM-DD` input
+       exactly — same year, month, AND day. `return_date` MUST be
+       strictly later than `departure_date`. Off-by-one, wrong-month,
+       single-date-only, or swapped-date selections are failures.
+    3. If the target month is not visible at page load, navigate forward
+       (or backward, if allowed) using the calendar's `Next month` /
+       `Previous month` controls. Do NOT type into the date input as a
+       substitute when a calendar control exists.
+    4. Most flight calendars in round-trip mode are RANGE pickers: click
+       the departure day first and the return day second; the range
+       between them gets highlighted. The async
+       `select_depart_return_date` function asserts ALL FOUR via the
+       dict it returns:
+         (a) `departure_selected_label` (aria-selected departure cell),
+         (b) `return_selected_label` (aria-selected return cell),
+         (c) `departure_input_value` populated with the departure date,
+         (d) `return_input_value` populated with the return date.
+       The `test_date_picker` harness saves a pre-screenshot before
+       and a post-screenshot after the async call (and writes the
+       returned dict into `final_script_log.txt` + `result.json`).
+       Production callers rely on the returned dict alone and never
+       write to disk.
+    5. Empty downstream search results are OK — this task is ONLY about
+       date selection.
+    6. Print concise ARIA snapshots, URLs, titles, both selected-cell
+       labels, and both populated input values to the action log.
+
+    ## Image QA Tool
+
+    - Use image_qa during exploration to inspect screenshots and verify
+      UI state:
+      `python -m miniswewebagent.tools.image_qa --workspace-dir "{{ workspace_dir }}" --image screenshots/example.png --question "inspect prompt"`
+    - Multiple `--image` flags allowed.
+
+    ## Recommended Workflow
+
+    0. **Bootstrap persistent session** (run ONCE before any Playwright):
+       ```
+       python -m miniswewebagent.tools.browserbase_session create \
+         --workspace-dir "{{ workspace_dir }}" --out .bb_session.json
+       ```
+       This writes `.bb_session.json` (`id`, `connectUrl`) for a
+       `keepAlive: true` Browserbase session. All exploration scripts
+       below must `connect_over_cdp` to that `connectUrl` and end with
+       `await browser.disconnect()`.
+
+    1. **Planning**: Open the start URL, find the round-trip date-picker
+       (departure-date AND return-date controls on the flight-search
+       form), and the relevant selectors. Pick three (departure, return)
+       date pairs yourself. Write `plan.md`:
+       ```
+       # Site
+       {{ start_url }}
+
+       # Date-Picker Critical Points
+       - [ ] CP1: trip-type toggle is round-trip (both date inputs visible)
+       - [ ] CP2: open the date picker (calendar dialog visible)
+       - [ ] CP3: navigate calendar to target departure month/year
+       - [ ] CP4: click day cell matching departure day (highlighted)
+       - [ ] CP5: navigate (if needed) to target return month/year
+       - [ ] CP6: click day cell matching return day (highlighted)
+       - [ ] CP7: departure-date input shows target departure date
+       - [ ] CP8: return-date input shows target return date
+
+       # Test Cases (chosen by agent — three different (departure, return) pairs)
+       # IMPORTANT: every chosen date must be inside the site's
+       # selectable booking horizon (typically ~330-360 days). Confirm
+       # the max reachable month during exploration and stay safely
+       # inside it (leave ≥ 1-month margin). Do NOT pick dates whose
+       # day cells are disabled / unclickable.
+       - T1 (both in current month, OR departure in current and return next month):
+           departure=<YYYY-MM-DD>, return=<YYYY-MM-DD> — rationale: ...
+       - T2 (2-6 months out, return 3-14 days after departure):
+           departure=<YYYY-MM-DD>, return=<YYYY-MM-DD> — rationale: ...
+       - T3 (7-10 months out, safely inside booking horizon; return 3-14 days after departure):
+           departure=<YYYY-MM-DD>, return=<YYYY-MM-DD> — rationale: ...
+
+       # Parameters
+       - departure_date (str, YYYY-MM-DD): function arg / --departure-date flag
+       - return_date (str, YYYY-MM-DD): function arg / --return-date flag
+       - out_dir (str, path): function arg / --out-dir flag
+
+       # Fixed (NOT parameterised)
+       - start URL, trip-type toggle (round-trip), origin/destination
+         defaults, passenger/cabin defaults, calendar selectors
+       ```
+
+    2. **Exploration (use the persistent session — multi-step, stateful)**:
+       Drive the persistent keep-alive Browserbase session at
+       `.bb_session.json` across MULTIPLE short bash steps. Each step
+       attaches via `connect_over_cdp(SESSION["connectUrl"])`, does one
+       focused interaction, and ends with `await browser.disconnect()` so
+       the calendar / trip-type / opened picker state is preserved for
+       the next step. Cover at minimum:
+         * confirm round-trip toggle is selected and BOTH date inputs are
+           visible (ARIA snapshot + screenshot);
+         * open the date picker (ARIA snapshot of the calendar dialog);
+         * record selectors for the month/year header, prev-month and
+           next-month buttons, day cells (and the EXACT `aria-label`
+           pattern, e.g. `"Tuesday, June 9, 2026"`), the departure-date
+           input, and the return-date input;
+         * verify next/prev-month navigation by clicking once and
+           checking that the header text actually changes;
+         * try selecting a sample (departure, return) pair on the persistent
+           session to confirm BOTH cells highlight and BOTH inputs populate.
+       Use `image_qa` to interrogate ambiguous screenshots. Only after the
+       persistent session has confirmed every selector should you write
+       `final_script.py`. NEVER spawn a fresh Browserbase session during
+       exploration — only inside `final_script.py`.
+
+    3. **Final script (production async function)**: Write
+       `final_script.py` per **Final-Script Shape** in the system
+       prompt. It exposes ONLY `async def
+       select_depart_return_date(page, departure_date_iso,
+       return_date_iso)` and contains nothing else — no CLI wrapper,
+       no `argparse`, no Browserbase session code, no screenshots,
+       no disk I/O, no `if __name__ == "__main__":`. Production
+       callers `import` it and call it on their own page. Test
+       invocations always go through the `test_date_picker` harness.
+
+    4. **Phase 1 — run all three test cases in parallel**: Use the
+       exact parallel-bash pattern from **Two-Phase Run-then-Judge** in
+       the system prompt. The single bash command runs three
+       `test_date_picker` harness invocations with `&` and waits for
+       all three. Each harness instance creates a fresh Browserbase
+       session, navigates to `--start-url`, takes a pre-screenshot,
+       awaits `select_depart_return_date(page, dep, ret)`, takes a
+       post-screenshot, writes `final_script_log.txt` + `result.json`,
+       then releases the session. Inspect the resulting screenshots
+       and logs.
+
+    5. **Phase 2 — run all three oracle judges in parallel**: Use the
+       parallel-bash pattern with `self_reflection_oracle --input-dir
+       final_runs/run_<id>/test_case_<n>`. Pass `--task` explicitly with
+       the per-test target date so the judge prompt is precise. Wait for
+       all three, then run the Python aggregator that prints `ALL_PASS
+       True/False`.
+
+    6. **Verify**: Re-read each of the three
+       `test_case_<n>/judge_result.json` files. Confirm `predicted_label
+       == 1` for ALL THREE.
+
+    7. **Release the persistent Browserbase session** (REQUIRED): run
+       `python -m miniswewebagent.tools.browserbase_session release
+       --workspace-dir "{{ workspace_dir }}" --session-file
+       .bb_session.json --delete-file` in its own bash step. Verify
+       `{{ workspace_dir }}/.bb_session.json` no longer exists. Skipping
+       this leaks a keep-alive cloud browser session and the completion
+       gate will reject `done: true`.
+
+    8. **Declare done**: Set `"done": true` ONLY after `ALL_PASS True`,
+       after re-reading the three judge results, AND after the
+       persistent BB session has been released and `.bb_session.json`
+       deleted.
+
+    ## Final Script Instrumentation
+
+    `final_script.py` must:
+    - expose ONLY `async def select_depart_return_date(page,
+      departure_date_iso: str, return_date_iso: str) -> dict`. The
+      function takes an already-open Playwright `Page` and two ISO
+      date strings, selects both dates on that page, and returns the
+      verification dict.
+    - contain NO CLI wrapper, NO `argparse`, NO Browserbase session
+      creation, NO screenshots, NO disk I/O, NO
+      `if __name__ == "__main__":` block. Production callers `import`
+      it and call it on their own page.
+    - have a Google-style docstring on `select_depart_return_date`
+      with `Args:` entries for `page`, `departure_date_iso`, and
+      `return_date_iso`.
+    - validate at the top of the function that BOTH ISO dates match
+      `^\d{4}-\d{2}-\d{2}$`, parse as real Gregorian dates, AND
+      `return_date > departure_date`; raise `ValueError` otherwise.
+    - be importable with zero side effects. `import final_script`
+      must NOT touch the network, disk, or Playwright.
+    - return a dict containing the canonical fields
+      (`departure_date`, `return_date`, `departure_selected_label`,
+      `return_selected_label`, `departure_input_value`,
+      `return_input_value`, `verified`); the `test_date_picker`
+      harness writes those verbatim into `final_script_log.txt` and
+      `result.json`.
+    - capture verification evidence INSIDE the dict only — NOT via
+      screenshots. Screenshot capture is the harness's job.
+
+    ## Completion Gate
+
+    Set `"done": true` ONLY if ALL of the following are true:
+    1. `plan.md` exists with three chosen (departure, return) date
+       pairs + rationale and the date-picker critical-point checklist.
+    2. `final_script.py` exposes ONLY
+       `async def select_depart_return_date(page,
+       departure_date_iso, return_date_iso)` with `Args:` docstring.
+       NO CLI wrapper, NO `argparse`, NO Browserbase session code,
+       NO screenshots, NO disk I/O, NO
+       `if __name__ == "__main__":` block. Importable with zero
+       side effects.
+    3. Phase 1 (single parallel-bash command) ran three
+       `test_date_picker` harness invocations and produced
+       `screenshots/00_pre_navigated.png`,
+       `screenshots/99_post_select.png`, `final_script_log.txt`, and
+       `result.json` for each `final_runs/run_<id>/test_case_<n>/`
+       folder.
+    4. Phase 2 (single parallel-bash command) ran all three
+       `self_reflection_oracle --input-dir ...` invocations, wrote
+       `judge_result.json` to each `test_case_<n>/`, printed
+       `ALL_PASS True`, AND wrote the synthesized aggregate
+       `final_runs/run_<id>/judge_result.json` with predicted_label = 1
+       (REQUIRED by the harness completion gate).
+    5. You re-read each `test_case_<n>/judge_result.json` and the
+       aggregate `run_<id>/judge_result.json`, and confirmed
+       `predicted_label == 1` for ALL of them.
+
+    Do NOT declare done if `ALL_PASS False`, if any judge_result.json is
+    missing or reports `predicted_label != 1`, if any `test_case_<n>/`
+    folder is missing screenshots, if the CLI shape is wrong, or if any
+    test case was skipped. On failure, fix `final_script.py` keeping its
+    CLI shape and re-run BOTH phases against a NEW
+    `final_runs/run_<id+1>/` folder. Iterate until `ALL_PASS True`.
+    NEVER author a `judge_config.json`.
+    </instructions>

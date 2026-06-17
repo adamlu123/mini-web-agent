@@ -1,0 +1,174 @@
+# OpenRouter Qwen3.5-9B + multi-CLI selection variant.
+#
+# Same flow as ``best_default_judge_json_openrouter_qwen36_cli.yaml`` (default
+# agent, JSON response shape, OpenRouter model), but designed to test the
+# model's ability to PICK THE RIGHT CLI when multiple oracle scripts coexist
+# in the workspace. For every task on a website that has more than one task in
+# the benchmark, the harness copies ALL of that website's oracle CLIs into the
+# workspace under anonymized filenames (``cli_tool_1.py``, ``cli_tool_2.py``,
+# ...). The agent must inspect each candidate (e.g. ``head -200`` /
+# ``--help``) and choose the one matching the current task before running it.
+#
+# Wiring (set in ``run`` below):
+#   cli_tool_dir              = .../outputs/cli/0426_oracle_cli
+#       Per-task oracle final_script.py files keyed by task_id.
+#   cli_tool_by_website_file  = .../benchmarks/om2w_260220_by_website.json
+#       Index file used by the harness to find sibling task_ids on the same
+#       website, copy each sibling's CLI into the workspace as
+#       ``cli_tool_<N>.py`` (deterministic alphabetical order, but filenames
+#       do NOT encode which CLI was authored for which task).
+#   tasks_file                = .../benchmarks/om2w_260220_multi_cli.json
+#       Subset of om2w_260220.json restricted to websites with >1 task (209
+#       tasks across 56 websites).
+#
+# The instance template exposes the copied list as the Jinja variable
+# ``{{ available_cli_tools }}`` (newline-separated absolute paths).
+#
+# Usage:
+#   source /home/luyadong/cred.sh
+#   python -m miniswewebagent.run.mini \
+#     -c best_default_judge_json_openrouter_qwen36_cli_multi.yaml \
+#     --task-id <id>
+
+model:
+  model_class: openrouter
+  model_name: qwen/qwen3.5-9b
+  openrouter_endpoint: https://openrouter.ai/api/v1/chat/completions
+  request_timeout_seconds: 180
+  max_output_tokens: 16000
+  response_mode: json_schema
+  attach_observation_screenshot: false
+  observation_template: |
+    Observation:
+    Status: {{ 'ok' if observation.success else 'error' }}
+    Workspace: {{ observation.workspace_dir }}
+    Working directory: {{ observation.cwd }}
+    Command: {{ observation.command }}
+    Return code: {{ observation.returncode }}
+    {% if observation.exception %}Exception:
+    {{ observation.exception }}
+    {% endif %}{% if observation.command_output %}Command output:
+    {{ observation.command_output }}
+    {% endif %}{% if observation.final_script_path %}final_script.py: {{ observation.final_script_path }}
+    {% endif %}
+  format_error_template: |
+    Format error:
+
+    {{ error }}
+
+    Please respond with a single strict JSON object (no prose, no code fences) containing exactly these fields:
+    {
+      "thought": "<short reasoning about the next step>",
+      "bash_command": "<exactly one shell command, or empty string when declaring done>",
+      "done": false,
+      "final_response": ""
+    }
+
+environment:
+  environment_class: local_workspace
+  start_url:
+  output_dir: outputs/openrouter_qwen36_cli_multi
+  command_timeout_seconds: 240
+  shell: /bin/bash
+  credentials_file: /home/luyadong/cred.sh
+  task_metadata_filename: task.json
+  final_script_name: final_script.py
+  output_truncation_chars: 24000
+  final_script_preview_chars: 4000
+  recent_files_limit: 40
+  env:
+    PAGER: cat
+    MANPAGER: cat
+    LESS: -R
+    PIP_PROGRESS_BAR: 'off'
+    TQDM_DISABLE: '1'
+
+run:
+  tasks_file: /home/luyadong/sandbox/mini-web-agent/src/miniswewebagent/run/benchmarks/om2w_260220_multi_cli.json
+  logs_root: /home/luyadong/sandbox/mini-web-agent/logs
+  judge_enabled: true
+  judge_model: o4-mini
+  judge_endpoint: ""
+  judge_python: /home/luyadong/.venv/bin/python
+  judge_script: /home/luyadong/sandbox/mini-web-agent/om2w_judge/run.py
+  # Source dir for per-task oracle CLI scripts.
+  cli_tool_dir: /home/luyadong/sandbox/mini-web-agent/outputs/cli/0426_oracle_cli
+  # When set, the harness copies the CLIs of ALL sibling tasks (same website
+  # as the current task_id) into the workspace as cli_tool_1.py, cli_tool_2.py,
+  # ... and exposes the list as {{ available_cli_tools }}.
+  cli_tool_by_website_file: /home/luyadong/sandbox/mini-web-agent/src/miniswewebagent/run/benchmarks/om2w_260220_by_website.json
+
+agent:
+  agent_class: default
+  debug_log: true
+  output_path: outputs/openrouter_qwen36_cli_multi/trajectory.json
+  step_limit: 20
+  require_self_reflection_success: false
+  summary_every_n_steps: 20
+
+  system_template: |
+    You are a benchmark-oriented Online-Mind2Web agent operating through a local terminal + workspace harness.
+
+    Your response must be a single strict JSON object (no prose, no markdown, no code fences) with exactly these fields:
+    {
+      "thought": "<your observation, reasoning, and next step>",
+      "bash_command": "<exactly one shell command, or empty string when declaring done>",
+      "done": false,
+      "final_response": ""
+    }
+
+    Emit exactly ONE JSON object per turn. Never output multiple JSON objects, never wrap the object in prose or code fences.
+
+    Global constraints:
+    - Put exactly one shell command in the `bash_command` string. Never emit raw Python or shell outside that field. Use heredocs (`python - <<'PY' ... PY`) to run Python inline when needed.
+    - Escape newlines and quotes properly so the whole object remains valid JSON.
+    - You should reason internally, then execute one bash command, then inspect the next observation.
+    - There is NO persistent browser state. Every Playwright run must create a fresh Browserbase cloud session, navigate from scratch, and reconstruct state via code.
+    - Step screenshots are NOT automatically attached to your prompt in this benchmark variant. If you need visual interpretation, you must invoke the image QA tool yourself.
+    - Set `"done": true` only when the task goal is complete and `final_script.py` is the final artifact.
+    - NEVER set `"done": true` in the same response as a non-empty `bash_command`. Declare done in a SEPARATE response AFTER you have already executed and verified the final script in a prior step.
+    - In `thought`, write in detail your observation, reasoning, and next step.
+    - Do NOT install additional packages with pip, apt, or any other package manager. All required packages (playwright, httpx, etc.) are already installed.
+
+  instance_template: |
+    Task: {{ task }}
+    Workspace: {{ workspace_dir }}
+
+    Pre-installed candidate CLI tools (one of these was authored specifically
+    for THIS task; the others were authored for OTHER tasks on the same
+    website and will NOT satisfy this task). The filenames are anonymized —
+    you must inspect each candidate yourself to figure out which one matches
+    the task above.
+
+    {{ available_cli_tools }}
+
+    Your job has TWO sub-steps:
+      (A) SELECT the correct CLI by reading each candidate's source / help
+          output and matching its behaviour to the task description.
+      (B) RUN the selected CLI with arguments you infer from its argparse /
+          click definitions. Do NOT plan, explore the website, or write your
+          own Playwright code. Do NOT copy, rename, or modify the candidate
+          files.
+
+    Run directory: `final_runs/run_1` (you must create it). Invoke the chosen
+    tool with `cwd = final_runs/run_1` so all artifacts (screenshots, logs)
+    land there.
+
+    Suggested workflow (keep it minimal, max ~8 turns):
+    1. Turn 1 — `bash_command`: `for f in {{ available_cli_tools }}; do echo "=== $f ==="; head -80 "$f"; done` (or similar) to skim every candidate's docstring / argparse so you can pick the right one.
+    2. Turn 2 (optional) — `bash_command`: `python <chosen_path> --help` to confirm flags.
+    3. Turn 3 — `bash_command`: `mkdir -p final_runs/run_1 && cd final_runs/run_1 && python <chosen_path> <args you inferred>`.
+    4. Turn 4 — `bash_command`: `ls final_runs/run_1/screenshots/ | head` to confirm screenshots were produced.
+    5. Final turn — `bash_command`: `""`, `done`: `true`.
+
+    Hard rules:
+    - Always invoke the chosen tool with its absolute path (one of the paths
+      listed above). Do NOT copy or rename any candidate file.
+    - Always run the tool from inside `final_runs/run_1` so its outputs are
+      captured there.
+    - Do NOT write `plan.md`, `judge_config.json`, or any other planning file.
+    - If your first selection errors or clearly does not match the task,
+      re-inspect the other candidates and pick a different one. State the
+      reason for switching in `thought`.
+    - If every candidate fails, set `done: true` with `final_response`
+      describing which candidate you tried and the error.

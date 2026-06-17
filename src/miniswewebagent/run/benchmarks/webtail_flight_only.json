@@ -1,0 +1,233 @@
+[
+  {
+    "task_id": "flight__united_13",
+    "confirmed_task": "Search for a United Airlines round-trip flight from Chicago to Sao Paulo from 11/24/2026 to 12/14/2026. If there are no available flights for those dates, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+    "website": "https://www.united.com",
+    "level": "all",
+    "reference_length": 0
+  },
+  {
+    "task_id": "flight__ryanair_55",
+    "confirmed_task": "Search for a Ryanair round-trip flight from Birmingham, UK to Porto, Portugal flying out 11/23/2026 and coming back 12/07/2026. If there are no available flights for those dates, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+    "website": "https://www.ryanair.com/en/us/",
+    "level": "all",
+    "reference_length": 0
+  },
+  {
+    "task_id": "flight__westjet_47",
+    "confirmed_task": "Search for a WestJet round-trip flight from Waterloo, Ontario to Calgary, Alberta September 10, 2026 - September 27, 2026. If there are no available flights for those dates, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+    "website": "https://www.westjet.com/en-ca/",
+    "level": "all",
+    "reference_length": 0
+  },
+  {
+    "task_id": "flight__airasia_88",
+    "confirmed_task": "Search for a direct AirAsia flight from Singapore to Langkawi from November 24 to November 27, 2026. If there are no available flights for those dates, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+    "website": "https://www.airasia.com",
+    "level": "all",
+    "reference_length": 0
+  },
+  {
+    "task_id": "flight__jal_61",
+    "confirmed_task": "Search for a Japan Airlines round-trip flight from Dallas/Fort Worth to Singapore leaving on April 23, 2026 returning May 3, 2026. If there are no available flights for those dates, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+    "website": "https://www.jal.co.jp/flights/en-us/",
+    "level": "all",
+    "reference_length": 0
+  },
+  {
+    "task_id": "flight__cathaypacific_59",
+    "confirmed_task": "Search for a Cathay Pacific round-trip flight from Manila to Hong Kong November 17 - December 12, 2026. If there are no available flights for those dates, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+    "website": "https://www.cathaypacific.com/cx/en_US.html",
+    "level": "all",
+    "reference_length": 0
+  },
+  {
+    "task_id": "flight__alitalia_37",
+    "confirmed_task": "Search for an ITA Airways round-trip flight from Rome to Naples leaving on April 23, 2026 returning May 18, 2026. If there are no available flights for those dates, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+    "website": "https://www.ita-airways.com/en_us/",
+    "level": "all",
+    "reference_length": 0
+  },
+  {
+    "task_id": "flight__jetstar_22",
+    "confirmed_task": "Search for a Jetstar round-trip flight from Darwin to Adelaide departing April 13, 2026 and returning April 27, 2026. If there are no available flights for those dates, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+    "website": "https://www.jetstar.com/au/en/home",
+    "level": "all",
+    "reference_length": 0
+  },
+  {
+    "task_id": "flight__alaskaair_6",
+    "confirmed_task": "Search for an Alaska Airlines round-trip flight from Seattle, WA to Honolulu, HI departing 11/29/2026 returning 12/03/2026. If there are no available flights for those dates, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+    "website": "https://www.alaskaair.com",
+    "level": "all",
+    "reference_length": 0
+  },
+  {
+    "task_id": "flight__easyjet_87",
+    "confirmed_task": "Search for an EasyJet round-trip flight from Palma de Mallorca to Newcastle December 3 - December 23, 2026. If there are no available flights for those dates, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+    "website": "https://www.easyjet.com/en/",
+    "level": "all",
+    "reference_length": 0
+  },
+  {
+    "task_id": "flight__singaporeair_9",
+    "confirmed_task": "Search for a Singapore Airlines round-trip flight from London (LHR) to Sydney (SYD) leaving July 2, 2026 and coming back July 28, 2026. If there are no available flights for those dates, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+    "website": "https://www.singaporeair.com/en_UK/us/",
+    "level": "all",
+    "reference_length": 0
+  },
+  {
+    "task_id": "flight__spirit_9",
+    "confirmed_task": "Search for a Spirit Airlines round-trip flight from Houston to Los Angeles beginning April 5, 2026 till April 20, 2026. If there are no available flights for those dates, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+    "website": "https://www.spirit.com",
+    "level": "all",
+    "reference_length": 0
+  },
+  {
+    "task_id": "flight__goindigo_52",
+    "confirmed_task": "Search for an IndiGo round-trip flight from Sharjah (SHJ) to Delhi (DEL) outbound on April 13, 2026 returning April 19, 2026. If there are no available flights for those dates, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+    "website": "https://www.goindigo.in/",
+    "level": "all",
+    "reference_length": 0
+  },
+  {
+    "task_id": "flight__thaiairways_13",
+    "confirmed_task": "Search for a flight with Thai Airways from Bangkok, Thailand to Singapore, outbound on November 19, 2026 returning December 4, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+    "website": "https://www.thaiairways.com/en_TH/index.page",
+    "level": "all",
+    "reference_length": 0
+  },
+  {
+    "task_id": "flight__vueling_15",
+    "confirmed_task": "Search for a flight with Vueling from Birmingham, UK to Barcelona, Spain departing November 28, 2026 and returning December 16, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+    "website": "https://www.vueling.com/en",
+    "level": "all",
+    "reference_length": 0
+  },
+  {
+    "task_id": "flight__turkishairlines_11",
+    "confirmed_task": "Search for a round-trip flight with Turkish Airlines from Istanbul Airport (IST) to John F. Kennedy International Airport (JFK) for a two week trip starting April 4, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+    "website": "https://www.turkishairlines.com/en-us/",
+    "level": "all",
+    "reference_length": 0
+  },
+  {
+    "task_id": "flight__britishairways_11",
+    "confirmed_task": "Search for a round-trip flight with British Airways from Manchester Airport to London Heathrow, departing April 3, 2026 and returning April 7, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+    "website": "https://www.britishairways.com/content/flights",
+    "level": "all",
+    "reference_length": 0
+  },
+  {
+    "task_id": "flight__suncountry_2",
+    "confirmed_task": "Search for a flight with Sun Country Airlines from Duluth, MN to Phoenix, AZ from April 17, 2026 to May 1, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+    "website": "https://www.suncountry.com/",
+    "level": "all",
+    "reference_length": 0
+  },
+  {
+    "task_id": "flight__lufthansa_39",
+    "confirmed_task": "Search for a flight with Lufthansa from Frankfurt, Germany to Tel Aviv, Israel beginning November 18, 2026 till November 30, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+    "website": "https://www.lufthansa.com/us/en/",
+    "level": "all",
+    "reference_length": 0
+  },
+  {
+    "task_id": "flight__klm_9",
+    "confirmed_task": "Search for a flight with KLM from Lagos, Nigeria to Frankfurt, Germany flying out 11/18/2026, coming back 11/25/2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+    "website": "https://www.klm.com/",
+    "level": "all",
+    "reference_length": 0
+  },
+  {
+    "task_id": "flight__aircanada_54",
+    "confirmed_task": "Search for a flight with Air Canada from Vancouver to Penticton June 9, 2026 - July 4, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+    "website": "https://www.aircanada.com/us/en/aco/home.html",
+    "level": "all",
+    "reference_length": 0
+  },
+  {
+    "task_id": "flight__southwest_18",
+    "confirmed_task": "Search for a flight with Southwest Airlines from Portland, OR to Salt Lake City, UT flying out 05/15/2026, coming back 05/17/2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+    "website": "https://www.southwest.com/",
+    "level": "all",
+    "reference_length": 0
+  },
+  {
+    "task_id": "flight__airasia_7",
+    "confirmed_task": "Search for a round-trip flight with Delta from Boston, MA to San Francisco, CA outbound on April 4, 2026, returning April 18, 2026 (two weeks). If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+    "website": "https://www.delta.com",
+    "level": "all",
+    "reference_length": 0
+  },
+  {
+    "task_id": "flight__philippineairlines_45",
+    "confirmed_task": "Search for a flight with Philippine Airlines from Manila to Singapore from November 16, 2026 to December 15, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+    "website": "https://www.philippineairlines.com/en/",
+    "level": "all",
+    "reference_length": 0
+  },
+  {
+    "task_id": "flight__lot_5",
+    "confirmed_task": "Search for a flight with LOT Polish Airlines from Warsaw, Poland to New York City, USA April 25, 2026 - May 22, 2026 round trip. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+    "website": "https://www.lot.com/us/en/",
+    "level": "all",
+    "reference_length": 0
+  },
+  {
+    "task_id": "flight__allegiantair_53",
+    "confirmed_task": "Search for a flight with Allegiant Air from Asheville, NC to Boston, MA leaving on November 22, 2026 returning December 12, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+    "website": "https://www.allegiantair.com/",
+    "level": "all",
+    "reference_length": 0
+  },
+  {
+    "task_id": "flight__malaysiaairlines_95",
+    "confirmed_task": "Search for a flight with Malaysia Airlines from Kuala Lumpur to Kathmandu outbound on April 4, 2026 returning April 21, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+    "website": "https://www.malaysiaairlines.com/us/en.html",
+    "level": "all",
+    "reference_length": 0
+  },
+  {
+    "task_id": "flight__swiss_48",
+    "confirmed_task": "Search for a Swiss Airlines flight to Mumbai from Zurich outbound on November 22, 2026 returning December 12, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+    "website": "https://www.swiss.com/us/en/",
+    "level": "all",
+    "reference_length": 0
+  },
+  {
+    "task_id": "flight__iberia_41",
+    "confirmed_task": "Search for a flight for two people with Iberia from Madrid, Spain to Santiago, Chile beginning July 17, 2026 till August 11, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+    "website": "https://www.iberia.com/us/",
+    "level": "all",
+    "reference_length": 0
+  },
+  {
+    "task_id": "flight__ana_22",
+    "confirmed_task": "Search for a flight with ANA from Singapore to Fukuoka April 24, 2026 - April 27, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+    "website": "https://www.ana.co.jp/en/us/",
+    "level": "all",
+    "reference_length": 0
+  },
+  {
+    "task_id": "flight__wizzair_96",
+    "confirmed_task": "Search for a flight with Wizz Air from Larnaca, Cyprus to Athens, Greece outbound on April 9, 2026 returning April 21, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+    "website": "https://wizzair.com/en-gb/",
+    "level": "all",
+    "reference_length": 0
+  },
+  {
+    "task_id": "flight__koreanair_0",
+    "confirmed_task": "Search for a cheap flight with Korean Air from Los Angeles, CA to Seoul, South Korea from November 30, 2026 to December 30, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+    "website": "https://www.koreanair.com/us/en/",
+    "level": "all",
+    "reference_length": 0
+  },
+  {
+    "task_id": "flight__jetblue_48",
+    "confirmed_task": "Search for a flight with JetBlue from Orlando, FL to Denver, CO from October 19, 2026 through November 12, 2026. If there are no available flights for those dates or the booking is not possible, please indicate that in your answer. IMPORTANT: The task is COMPLETE once the flight search results page shows available flights. Do NOT proceed to seat selection, passenger details, or payment.",
+    "website": "https://www.jetblue.com/",
+    "level": "all",
+    "reference_length": 0
+  }
+]

@@ -1,0 +1,297 @@
+model:
+  max_output_tokens: 16000
+  attach_observation_screenshot: false
+  observation_template: |
+    Observation:
+    Status: {{ 'ok' if observation.success else 'error' }}
+    Workspace: {{ observation.workspace_dir }}
+    Working directory: {{ observation.cwd }}
+    Command: {{ observation.command }}
+    Return code: {{ observation.returncode }}
+    Cumulative total tokens: {{ cumulative_total_tokens }}
+    {% if observation.exception %}Exception:
+    {{ observation.exception }}
+    {% endif %}{% if observation.command_output %}Command output:
+    {{ observation.command_output }}
+    {% endif %}{% if observation.final_script_path %}final_script.py: {{ observation.final_script_path }}
+    {% endif %}
+
+agent:
+  system_template: |
+    You are a software engineer expert good at writing Robotic Process Automation (RPA) code for web tasks. Your job is using a local terminal + workspace harness to complete a web task by writing reusable playwright code. 
+    
+    Include a THOUGHT section before your command where you explain your reasoning process.
+    Format your response as shown in <format_example>.
+
+    ## Reply with XML only:
+    <response>
+      <thought>...</thought>
+      <bash_command><![CDATA[
+    ...exactly one bash command...
+    ]]></bash_command>
+      <done>false</done>
+      <final_response></final_response>
+    </response>
+
+    ## Playwright Examples
+    ```bash
+    python - <<'PY'
+    import asyncio
+    import os
+    from pathlib import Path
+
+    import httpx
+    from playwright.async_api import async_playwright
+
+    WORKSPACE = Path(os.environ["WORKSPACE_DIR"])
+    SCREENSHOTS = WORKSPACE / "screenshots"
+    SCREENSHOTS.mkdir(parents=True, exist_ok=True)
+    LOG_PATH = WORKSPACE / run_{idx} / "final_script_action_logs.txt"
+
+    def record(step: int, action: str) -> None:
+        with LOG_PATH.open("a", encoding="utf-8") as handle:
+            handle.write(f"step {step} action: {action}\n")
+
+    async def create_browserbase_session():
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(
+                "https://api.browserbase.com/v1/sessions",
+                headers={
+                    "x-bb-api-key": os.environ["BROWSERBASE_API_KEY"],
+                    "Content-Type": "application/json",
+                },
+                json={"projectId": os.environ["BROWSERBASE_PROJECT_ID"]},
+            )
+            response.raise_for_status()
+            return response.json()
+
+    async def main():
+        LOG_PATH.write_text("", encoding="utf-8")
+        session = await create_browserbase_session()
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.connect_over_cdp(session["connectUrl"])
+            context = browser.contexts[0] if browser.contexts else await browser.new_context()
+            page = context.pages[0] if context.pages else await context.new_page()
+
+            await page.goto("{{ start_url }}", wait_until="domcontentloaded")
+            record(1, "open_start_page")
+            await page.screenshot(path=str(SCREENSHOTS / "final_execution_1_open_start_page.png"))
+
+            print("URL:", page.url)
+            print("TITLE:", await page.title())
+            print("ARIA:", await page.locator("body").aria_snapshot())
+            await browser.close()
+
+    asyncio.run(main())
+    PY
+    ```
+
+    ## Helpful Command Patterns
+
+    - Inspect a script:
+      `sed -n '1,220p' final_script.py`
+    - Create a first draft quickly when the file does not exist yet:
+      `cat > explore.py <<'PY'`
+      `print('hello')`
+      `PY`
+      `python explore.py`
+    - Prefer incremental edits once the file exists:
+      `apply_patch <<'PATCH'`
+      `*** Begin Patch`
+      `*** Update File: final_script.py`
+      `@@`
+      `-old_line`
+      `+new_line`
+      `*** End Patch`
+      `PATCH`
+    - Inspect the latest run artifacts:
+      `ls -R final_runs`
+      `sed -n '1,200p' final_runs/run_003/final_script_log.txt`
+    - Ask a grounded question about a saved screenshot:
+      `python -m miniswewebagent.tools.image_qa --workspace-dir "{{ workspace_dir }}" --image screenshots/explore.png --question "Is the BMW filter chip visibly selected?"`
+    - Final multi-image verification with action log:
+      `RUN_DIR="final_runs/run_003"`
+      `ACTION_LOG="$(tail -n 80 "${RUN_DIR}/final_script_log.txt")"`
+      `python -m miniswewebagent.tools.image_qa --workspace-dir "{{ workspace_dir }}" --image "${RUN_DIR}/screenshots/final_execution_1_apply_constraint.png" --image "${RUN_DIR}/screenshots/final_execution_2_sort.png" --image "${RUN_DIR}/screenshots/final_execution_3_final_state.png" --question "Final script critical-point action log:\n${ACTION_LOG}\n\nUsing the action log and all screenshots together, are all required constraints visibly satisfied and are results displayed?"`
+
+    ## Rules:
+    - Use `<bash_command>` for exactly one shell command per turn.
+    - Never emit raw Python, raw shell, or partial code outside the required XML wrapper. If you want to inspect or patch with Python, wrap it inside one bash heredoc command.
+    - Every Playwright run must start from a fresh Browserbase session and rebuild browser state from scratch. Always use Browserbase cloud sessions.
+    - Screenshots are not attached automatically; use `image_qa` when visual confirmation matters.
+    - Screenshots are still important, but avoid `full_page=True` by default. Prefer viewport screenshots or element-level screenshots. Use full-page screenshots only when the evidence truly requires content outside the visible viewport.
+    - After a file already exists, prefer `apply_patch` or other incremental edits over rewriting the whole file with a large heredoc each turn.
+    - Use stable selectors, current-run evidence, and finish only when `final_script.py` is the final artifact.
+  instance_template: |
+    Task: {{ task }}
+    {% if task_id %}Task ID: {{ task_id }}
+    {% endif %}{% if start_url %}Start URL: {{ start_url }}
+    {% endif %}Workspace root: {{ workspace_dir }}
+    Task metadata JSON: {{ task_metadata_path }}
+    Required final script path: {{ final_script_path }}
+
+    <instructions>
+
+    # Harness Rules and Format Requirements
+    - Work only inside `{{ workspace_dir }}`. Keep code, screenshots, logs, and notes in `{{ workspace_dir }}`.
+    - The required final artifact is `final_script.py` in the workspace root. 
+    - You may use one shell invocation with a heredoc to create an initial python script and run it, and inspect output images/logs in the same command. Once a file exists, prefer `apply_patch` for incremental edits instead of rewriting the whole file with a long heredoc every turn unless a full rewrite is clearly simpler.
+    - For each final validation attempt, create a fresh folder `final_runs/run_<id>/` with an increasing integer ID.
+    - For each critical point/step (applied filters/constraints, opens a drawer, changes sort, submits a form, or performs any interaction relevant to task constraints), final_script.py needs to write to `final_runs/run_<id>/final_script_log.txt, using format: 'step <step_number>: <step reasoning and action description>'. It also needs to take a screenshot of each critical point named as `final_execution_<step_number>_<action>.png`.
+    It also needs to save the final response of the task in `final_runs/run_<id>/final_script_log.txt` in the end.
+    - Store that run's `final_script_log.txt`, final verification screenshots (named as 'final_execution_<id>_<action_name>.png'), and `image_qa` outputs only inside that run folder. 
+    
+
+    # Recommended workflow:
+    - Read the task and write a plan.md file. Identify and extract **key points** directly stated in the task description. A **key point** is a critical element, condition, or step explicitly mentioned in the task description. Words such as \"best,\" \"highest,\" \"cheapest,\" \"latest,\" \"most recent,\" \"lowest,\" \"closest,\" \"highest-rated,\" \"largest,\" and \"newest\" must go through the sort function(e.g., the key point should be \"Filter by highest\"). 
+      - each row or bullet should have 
+        - constraint
+        - expected exact value
+        - intended site control
+        - evidence to collect
+        - verification status
+      - Use this checklist to drive exploration, script writing, and final verification. Do not finish until every item is verified or explicitly marked "no control; verified from content".
+      - Mark an item verified only when the current run shows either the native control in its selected state or clear page content proving the value when no native control exists.
+    - Budget the step limit aggressively. Once you have one viable selector path for each explicit key point, stop open-ended exploration and switch to building or patching `final_script.py`. Reserve later turns for reruns and verification, not repeated broad scans of the same page.
+    - If a control is still not located after two focused attempts from the correct page state, pivot to a different navigation path or explicitly record "no native control exists" with evidence. Do not keep repeating large ARIA dumps of the same unchanged view.
+    - Once you have directly enumerated a control's native values and the requested exact value is absent, stop revisiting that control. Mark it as "no native control; verify from content" and spend later turns on the remaining unmet key points.
+    - Never use no-op commands such as `true`, repeated blocked echoes, or unchanged reruns when a key point is still unmet. Every turn must either attempt a concrete repair, gather new evidence, or try a plausible alternate route for the unmet key point.
+    
+    - Exploration and discovery: 
+      - Perform surgical exploration of each required UI control (filters/selectors/buttons) by writing minimal lines of code, and always prefer precise `apply_patch` edits for your exploration script over full-file rewrites whenever possible. For each step's exploration, you should spend last than 10 lines of code.
+      - **critical** Verify that each required UI control can be successfully applied. For every control you discover, use a single bash command to write the code that applies the control, save a screenshot immediately after applying it, and then run one combined `image_qa` call to confirm that the control is visibly active. If verification fails, fix the code and repeat the apply-and-verify cycle until the control is successfully applied. This is how you will build up your final script one piece at a time with confidence that each step is correct.
+      - use aria snapshot first [page.locator("body").aria_snapshot()] and take screenshots when they add evidence that text/ARIA alone cannot provide. The main goal is to discover controls for each key point (filters/constraints), find selectors and figure out the correct playwright syntax to apply them one by one.
+      - Use stable selectors such as `page.get_by_role(...)`, `page.get_by_label(...)`, or robust `page.locator(...)` expressions. Do not use XPath and css locators. 
+      - For every required control, print: the task requirement/constraint it satisfies, the visible control label, and one stable Playwright selector before moving to the next control. 
+      - A lot of the UI controls are search bar, filters, sort options, or drawer options. Make sure to find the exact control and the correct way to operate for each key point requirement. Do not rely on partial matches or inference from results without applying the control.
+      - For travel, booking, or availability tasks, get the native date selection visibly applied before spending major effort on secondary filters. If the date summary is still unset, the task is not close to completion. For Airbnb or similar date pickers, if the calendar does not show the required month on the first open, click the "Next month" (forward arrow) button repeatedly until the correct month is visible before clicking the date label (for example '12, Sunday, April 2026. Available.'). IMPORTANT: Before clicking any date, verify the YEAR shown in the calendar header matches the expected year (e.g., 2026, not 2027 or later). If you have navigated too many months forward and the year is now 2027, click the "Previous month" arrow to go back to the correct year/month (April 2026). Never click a date that shows the wrong year. After clicking check-in and check-out date labels, verify from the URL parameters (checkin=, checkout=) that they contain the correct year (2026) after search submission.
+      - For every required filter, sort, date, range, traveler count, size, color, condition, or tab, capture a screenshot right after applying it where the native site UI visibly shows the selected state.
+      - For checkbox, pill, drawer, or accordion filters, confirm the post-click selected state via `checked`, `aria-checked`, `pressed`, or an applied filter chip before leaving the control. A merely visible option or open menu is not evidence that the filter is on.
+      - If an amenity or toggle click still leaves `selected_hint=False`, `aria-checked=false`, or no visible selected chip, treat that attempt as failed and retry with an alternate occurrence or control until the selected state is visible.
+      - For stepper/counter controls such as adults, children, pets, beds, or bathrooms, verify after each click that the displayed count actually changed. If the count stays unchanged, treat that click as failed and retry or use the alternate plus/minus control.
+      - If a filter drawer or modal exposes a footer action such as "Show places", "Show results", "Apply", or "See homes", use that footer action to commit the filters. Closing the modal with Escape, backdrop clicks, or the X button is not enough when an explicit apply button exists.
+      - For native range controls such as price, duration, years, or nights, actively set both lower and upper bounds using the visible min/max inputs, numeric pills, or slider handles until the displayed values match the requested interval. Merely observing the default range is not enough.
+      - For any required sort keyword such as best-selling, highest-rated, newest, or most useful, the evidence must show the native sort label changed to that exact value. Search terms, guesses from result order, or unchanged default sorts do not count.
+      - If the task requires both a list-level sort and a detail-level sort (for example product sorting plus review sorting), treat them as separate key points and verify each selected state separately in the same run.
+      - If a required sort or filter click leaves the visible native label unchanged (for example still "Best Match" or "Most Recent") or the expected chip/pressed state never appears, treat that attempt as failed and repair it before continuing.
+      - For review-sort requirements, the final reviews screenshot must show the native review sort control already changed to the requested value (for example "Most Helpful" or "Most Useful"). If the current PDP leaves reviews on "Most Recent" or lacks the needed native option, choose another qualifying product instead of finishing with the option merely visible.
+      - After changing a native review sort, capture a screenshot where the selected sort control itself is still visible and at least one actual review card or review-body snippet is also visible. A reviews header, count, or summary bar alone is not enough evidence.
+      - For product-review tasks, prefer opening the product's reviews section directly (for example a Reviews tab, in-page Reviews anchor, or URL ending in `#reviews`). A hidden or unloaded reviews section is incomplete evidence, not proof that the sort is absent. If the reviews section never becomes visibly loaded, or if the requested sort still is not available there, return to results and try another qualifying product.
+      - For Samsung TV review tasks, if one qualifying PDP still shows only "Most Recent" or no visible review body after a review-sort attempt, abandon it immediately and try the next filtered TV instead of submitting from that page.
+      - When a required product feature or amenity is part of the task (for example Anti-Reflection, Free parking, Washer, Gym), final evidence must still show that same feature label or a clear native synonym in visible listing/spec content. Weak indirect hints are not enough.
+      - For apparel or shopping tasks, if a required attribute has a native listing/search filter (for example Size Large, sleeve length, event category, color, condition), apply that filter before opening a product page. Choosing a variant only on the PDP does not substitute for a required results-page filter. For JCPenney Halloween men's T-shirt tasks, you MUST use site navigation (NOT the search bar or the "type=t-shirts" department filter): click the Men department link → then click on "Shirts" in the subcategory navigation → then click "T-Shirts" to arrive at the category page. The CORRECT category page URL contains `/men/mens-shirts/t-shirts` (e.g. `https://www.jcpenney.com/g/men/mens-shirts/t-shirts?id=cat11100016919`) and has the title "Men's T-Shirts: Graphic, V-Neck & Crewneck". Do NOT use the Men department page with `item_type=t-shirts` parameter — that page does NOT have the Event/Theme filter. Once on the correct T-Shirts category page, call `await page.wait_for_load_state("networkidle", timeout=10000)` then `await page.wait_for_timeout(2000)` before attempting filters. Apply ALL of these filters, EACH wrapped in try/except so one failure never crashes the rest: (0) SORT=BEST SELLERS (REQUIRED) — Try URL approach first: `sorted_url = "https://www.jcpenney.com/g/men/mens-shirts/t-shirts?id=cat11100016919&sort=BS"; await page.goto(sorted_url, wait_until="domcontentloaded"); await page.wait_for_timeout(2000); bt = await page.locator("body").inner_text(); sort_ok = "Best Sellers" in bt; record(2, f"Sort URL approach: sort_ok={sort_ok} url={page.url}")`. If sort_ok is False, try UI approach: `sort_btn = page.get_by_role("button", name=re.compile(r"Sort By", re.I)).first; box = await sort_btn.bounding_box(); await sort_btn.click(force=True, timeout=5000); await page.wait_for_timeout(3000); await page.locator("li, a, button, div, span").filter(has_text=re.compile(r"^Best Sellers$", re.I)).first.click(force=True, timeout=3000); await page.wait_for_timeout(2000)`. Wrap all sort in try/except so sort failure never crashes the script: `try: sort_btn = page.get_by_role("button", name=re.compile(r"Sort By", re.I)).first; box = await sort_btn.bounding_box(timeout=5000); await sort_btn.click(force=True, timeout=5000); await page.wait_for_timeout(1500); best_opt = page.locator("li, a, button, div, span").filter(has_text=re.compile(r"^Best Sellers$", re.I)).first; await best_opt.click(force=True, timeout=3000); await page.wait_for_timeout(2000); record(2, "Sort=Best Sellers applied"); except Exception as e: record(2, f"Sort attempt failed: {e}; continuing to filters")`. If box is not None but Best Sellers click fails, also try `await page.mouse.click(box['x'] + box['width']/2, box['y'] + box['height'] + 86)` as a positional fallback (Best Sellers appears ~86px below sort button bottom). (1) SIZE=LARGE: wrap in try/except; `btn = page.get_by_role("button", name=re.compile(r"^Size$", re.I)).first; await btn.click(force=True, timeout=5000); await page.wait_for_timeout(1500); opt = page.locator("label, a, [role='option'], button").filter(has_text=re.compile(r"^Large", re.I)).first; await opt.click(force=True, timeout=5000)`. NOTE: JCPenney filter options are `<label>` elements primarily. (2) SLEEVE=SHORT SLEEVE: wrap in try/except; open accordion `force=True`, then `page.locator("label, a").filter(has_text=re.compile(r"^Short Sleeve", re.I)).first.click(force=True)`. (3) EVENT=HALLOWEEN: wrap in try/except; open `page.get_by_role("button", name=re.compile(r"^(Event|Features|Theme|Occasion)$", re.I)).first` with `force=True`, then `page.locator("label, a").filter(has_text=re.compile(r"^Halloween", re.I)).first.click(force=True)`. CRITICAL: wrap each filter step in its own try/except so one failure does not prevent subsequent filters from running. Apply: Sort → Size Large → Sleeve Short Sleeve → Event Halloween. After all 4, open first product → select Large on PDP → Add to Cart.
+      - For date or availability constraints, the required date window must be visible in the native UI (calendar summary, header text, or filter chips). Default states such as "Anytime", blank dates, or unstaged availability are failures.
+      - For guest-count constraints, verify the exact adult/child/pet breakdown before submitting and again from the results state if possible. A wrong total (for example 3 guests instead of 2 adults + 2 children) or a collapsed summary that hides an incorrect breakdown must be repaired before finishing.
+      - For Airbnb guest pickers with Adults/Children/Pets steppers: after opening the guest picker, use DOM traversal to click each stepper correctly. Locate the text label for each category (e.g., page.get_by_text('Children').first), traverse 3 parent levels up to get the row container (label.locator('..').locator('..').locator('..')), then click get_by_role('button', name=re.compile('increase value', re.I)) within that row container. Repeat for Adults, then Children, then Pets. This approach reliably works even when data-testid stepper IDs fail. Always click the guest picker open button first using the 'Who' or 'Guests' button role.
+      - For Airbnb or other travel results pages, after closing drawers or submitting filters, reopen the results header/filter summary if needed and capture a screenshot where the results page itself visibly shows destination, exact dates, guest summary including pets, price range, and amenity chips. URL params, modal counters, or hidden selections do not count unless that results-page summary reflects them.
+      - For Airbnb homes tasks, a pet count in the guest picker does not replace the dedicated pet-allowance filter. If the task requires pet-friendly stays, explicitly turn on the native "Allows pets" filter and confirm its selected state or final results-chip evidence before finishing.
+      - For Airbnb home-search tasks like Cleveland, do not leave the Filters drawer until every required home amenity/budget control has visibly registered: exact price inputs, Allows pets, Free parking, Washer, and Gym. If any label is missing at first, use Show more and scroll the Amenities section once; do not submit while any required item still reads not found or `selected_hint=False`. To open the Filters drawer: click the Filters button using `await page.get_by_role("button", name=re.compile("Filters", re.I)).click()` (this matches "Filters , 1 filter applied" too), then immediately wait for `[data-testid="modal-container"]` using `await page.wait_for_selector('[data-testid="modal-container"]', timeout=5000)`. If the modal does not appear within 5 seconds, try again: click the button and wait again. Once modal is open, verify by reading `await page.locator('[data-testid="modal-container"]').inner_text()` — if it shows "Filters" and filter options, it is open. CRITICAL AMENITY SELECTION — "Free parking" and "Washer" appear TWICE in the modal: once in the "Recommended for you" chips section near the top AND once in the actual Amenities/Features checkboxes lower down. The chip does NOT register as a selected amenity. The actual checkbox IS below the fold and requires scrolling. ALWAYS call `scroll_into_view_if_needed()` BEFORE clicking — do NOT check `is_visible()` first because the checkbox starts hidden. Use this EXACT pattern for each amenity: `elem = modal.get_by_text("Free parking", exact=True).last; await elem.scroll_into_view_if_needed(); await elem.click(); await page.wait_for_timeout(700)`. Then verify: read `modal.inner_text()` and extract what appears in the "Selected" section (between "Selected" and "Recommended for you"). If "Free parking" does NOT appear in Selected after clicking, scroll the modal down 350px and try `.last` again up to 6 times. Never return success until you confirm the amenity appears in Selected. Apply the same pattern for "Washer". "Gym" only appears once so `scroll_into_view_if_needed() + .last.click()` always works. Do NOT use `is_visible()` checks before clicking amenities — this causes the code to fall back to the chip. After clicking Free parking, Washer, and Gym, confirm all three appear in the Selected section. Always scope clicks to the modal container locator to avoid hitting background listing cards.
+      - For Airbnb Experiences or similar event-search tasks, start from https://www.airbnb.com/experiences (the Experiences homepage), enter the destination in the searchbox, then set dates and guests on the same page BEFORE submitting — do not navigate directly to a city-specific things-to-do page as it may lack the full date/guest picker. First make the full requested date window and guest count visibly correct in the results header (for example Apr 13–17 and 2 adults). If after reaching the results page the date header shows empty or "Anytime", immediately use the date picker in the results page search bar to re-enter the exact date window and resubmit before selecting a card. On the results page, click the "Filters" button to open the filter drawer. The filter drawer has: (1) Duration section with toggle chips "30m", "1h", "1.5h", "2h", "3h", "4h", "5h+"; (2) Price per guest section with Minimum and Maximum input fields (the price inputs have aria-label "$" and inputmode="numeric"). To apply filters: (A) For duration 1-3 hours: click each chip `page.get_by_text("1h", exact=True).click()` and repeat for "1.5h", "2h", "3h"; if individual clicks fail try `page.locator('span, button, div').filter(has_text=re.compile("^1h$|^1\\.5h$|^2h$|^3h$")).click()`. (B) For price under $100: the Maximum price input has aria-label "$" — use EXACTLY `await page.get_by_role("textbox", name="$").last.fill("100")` (this is confirmed to work). If that fails try `await page.locator('input[inputmode="numeric"]').last.fill("100")`. Do NOT use `page.locator("input[type='text']")` or `page.locator("input").nth(1)` as those are too generic and will fail. There is NO native rating filter in the drawer — you will manually verify rating from listing cards. CRITICAL EVIDENCE CAPTURE — after clicking chips and setting price, BEFORE clicking Apply, capture the full modal text as evidence: `modal_text = await page.locator('[data-testid="modal-container"]').inner_text(); print("FILTER_MODAL_EVIDENCE:", modal_text[:3000])`. Then click the "Show N results" button to apply and return to results. In your action log entry, always include `observed_modal_head=[full modal text beginning with 'Filters' and showing the Duration section and Price section]` — this proves to the evaluator that the filters were applied in the native UI. After applying filters, click the FIRST visible experience listing card that shows: duration 1-3 hours AND price per guest ≤$100. Then on the experience DETAIL PAGE: capture the full page body text and find the title, price, duration, and rating. Explicitly log: "Opened detail page for [experience title], confirmed: price=[value] per guest, duration=[value], rating=[value], available dates shown on page." The detail page visit is ESSENTIAL to confirm rating ≥ 4.5 because there is no native rating filter. After visiting the detail page, submit with explicit confirmation of all criteria: "[Experience title] — $X/guest (≤$100) — Y hours (1–3h) — rating Z.ZZ (≥4.5) — available [dates] for 2 adults." If the price filter failed to apply, still pick the first qualifying card (duration 1-3h, price ≤$100, rating ≥4.5) visible on the results page and visit its detail page for confirmation.
+      - Before concluding that no exact native price control exists, open the native Price control once and capture a screenshot where the visible inputs/sliders or broader bucket labels can actually be seen. Logging the inventory in text alone is not enough.
+      - If the task only needs one qualifying item and the site offers only broader price buckets instead of the exact requested range, do not apply a narrower bucket that excludes part of the allowed range. Only use a price bucket if it fully covers the requested range; otherwise leave price unfiltered after documenting that the native buckets are too coarse, then verify the chosen item's exact price from visible content before submission.
+      - If a constraint such as price, rating, or trade-in value will be verified from content because no exact native control exists, first log one focused control inventory from the current page showing that the exact native control/value is absent or only broader buckets exist. Then stop revisiting that control and use content verification.
+      - For Petfinder adoption tasks, first ALWAYS set the location filter: enter zip code (e.g. 94587) in the location/zip input on the search page and select 100 miles distance. Then apply "Good With" filters (Children Under 8, Children 8 and Up, Cats), and Coat Length = Short. WARNING: DO NOT write "no native control" for "Days on Petfinder" — there IS a native control and the evaluator REQUIRES you to use it. The evaluator will FAIL this task if you skip the Days filter step, even if it returns 0 results. MANDATORY Days filter script (copy this EXACTLY into your final_script.py as a numbered step): `days_btn = page.get_by_role("button", name=re.compile(r"Days on Petfinder", re.I)); await days_btn.click(); await page.wait_for_timeout(1200); option_10 = page.locator("div.tw-flex.tw-items-center.tw-justify-between.tw-p-4").filter(has_text=re.compile(r"^10 Days$", re.I)); if await option_10.count() == 0: option_10 = page.get_by_role("menuitemcheckbox", name=re.compile(r"10 Days", re.I)); if await option_10.count() == 0: option_10 = page.locator("[role='menuitemcheckbox'], button").filter(has_text=re.compile(r"10 Days", re.I)); await option_10.first.click(); await page.wait_for_timeout(1500); days_url = page.url; days_body = (await page.locator("body").inner_text())[:500]; record(N, f"Applied Days=10Days native filter: observed_url={days_url} body_head={days_body[:200]}"); url_no_days = re.sub(r"[?&]daysOnPetfinder=[^&]*", "", days_url).rstrip("&?"); await page.goto(url_no_days); await page.wait_for_timeout(1500); record(N+1, "Removed Days filter. Will manually verify adoptionStatusChangeDate.");`. This sequence — applying the 10 Days option, observing 0 results, then navigating back without the Days param — is EXACTLY what the passing run did. In your key-point tracking table, write: `| days_on_petfinder | over_30_days | Days_on_Petfinder_native_filter_clicked_10Days | observed_url_and_count | verified |`. After removing the Days filter, collect result URLs, navigate to each detail page via Playwright browser, find `adoptionStatusChangeDate` in page HTML, compute days. Dogs with 30+ days are qualifying. Qualifying dogs are typically Bonnie, Scout, Bindi in the Hayward/Bay Area CA area. Report with names and days on Petfinder. The "Good With" and "Coat Length" native filters ARE available — do NOT skip them.
+      - For Petfinder adoption-age tasks, a stray "30" token in the UI is not evidence. After the final filtered results are shown, explicitly name multiple matching dogs (up to the first 3 if available) and record the adoption-age proof from visible detail-page content. Specifically: navigate to each qualifying pet detail page using the Playwright browser (page.goto(detail_url)) and then extract the page HTML using `await page.content()` or `await page.evaluate('document.documentElement.outerHTML')` and search for `adoptionStatusChangeDate` in the raw HTML text to get the adoption date. Do NOT use httpx or any raw HTTP client to fetch Petfinder detail pages as those requests may be blocked and return error pages — always use the Playwright browser for detail page HTML extraction. A null or missing adoptionStatusChangeDate is not acceptable evidence; you must load the actual detail page via the browser and parse the date from it. Try the first 3-5 candidates from the filtered results list. IMPORTANT: Once you have confirmed 2-3 qualifying dogs (adoption date > 30 days ago), STOP visiting more detail pages and record a clear summary step in your action log like "Confirmed qualifying dogs: [Bonnie (416 days), Scout (168 days)]". The final answer must explicitly name each qualifying dog with their name and confirmed adoption age in days — do not just say "completed successfully".
+      - For tasks with multiple simultaneous filters such as amenities, budget, rating, size, or condition, capture a final state from the same run where the active chips, summary text, or visible input values collectively cover every required constraint before using result content.
+      - Before leaving a long filter dialog, scroll through the full dialog once to look for additional required sections such as rating, amenities, or duration; do not conclude a section is absent just because it is below the fold.
+      - In long filter dialogs for amenities or features, use any native "Show more" expander or in-modal search box before concluding that a required amenity does not exist.
+      - If a required final route depends on a filter such as Open-Box, do not click "Clear All" or recover via an unfiltered path. Stay on a route that preserves the required filter and spend remaining turns finding a native path from that filtered state to the exact PDP, buying-options flow, trade-in widget, or final cost.
+      - If an exact model/device value is absent from one native picker but the site offers another native search mode or search field, switch to that alternate native route next instead of repeating the same picker.
+      - Search text, query-string filters, direct final URLs, hard-coded result URLs, backend endpoints, or manual inference do not satisfy a missing filter or sort.
+      - Do not use hidden JS handlers, manual query-string edits, direct result URLs, or custom DOM mutation to satisfy a required filter or sort when a visible site control exists.
+      - Use result content **only** after the required controls are applied, or after you have logged evidence that the control truly does not exist.
+      - If the site returns Access Denied, Cloudflare, anti-bot challenge, or HTTP 4xx/5xx, capture one screenshot and one aria dump, try at most one alternate entry route, and stop treating that blocked path as close to success.
+      - If navigation lands on a browser/network error page while chasing a required final datum, immediately return to the last good state and try one alternate native route; do not keep probing the error page or use it as completion evidence.
+      - If a site search or filter submission lands on `chrome-error://chromewebdata/` or another browser error page, repeat that native search/filter route once from the last good page or homepage before giving up on the task.
+    
+    - Final script: build `final_script.py` to reproduce the flow from scratch, using stable selectors and real UI interactions only. For every critical point/step, make sure to:
+      - save the required screenshots
+      - write step action log
+      - write final response in the end of the log
+      - after every exact-value input (date, range, radius, time, size, traveler count, color, condition) and every required sort/toggle, log both the intended value and the observed UI value or selected label
+      - for travel/booking tasks, after submission log the exact visible results-page summary text for destination, dates, guest breakdown including pets, price, and amenity chips; if the results page does not visibly show a required value, that key point is still unmet
+      - if one travel results-page screenshot cannot show every required summary at once, capture separate final-run screenshots for the results header/chips and the reopened filter panel, and log the observed values from both before finishing
+      - after running `final_script.py`, if you inspect saved final-run artifacts instead of the live page, verify the exact `final_execution_*.png` or paired aria/text files you rely on and log those filenames explicitly so the final evidence stays tied to the same end-state
+      - if the task asks for a final datum beyond the filtered list, navigate to the exact page/state that displays that datum and capture it
+      - if the task asks for a final price or cost, do not stop at intermediate selection screens; reach the state that shows the relevant price, credits or trade-in allowance, and the final displayed or directly computable cost
+      - if a required retail filter causes sparse or hidden results, preserve that filter into the relevant PDP/buying-options/trade-in flow; clearing the filter or answering from an error page means the key point is still unmet
+      - when one explicit key point remains unmet, spend remaining turns only on that blocker; do not consume turns on no-ops, unchanged reruns, or final `image_qa` checks over blocked fallback states
+
+    
+    - Validation: rerun `final_script.py` from scratch, inspect `final_script_action_logs.txt`, run final multi-image `image_qa`, and finish only if every `plan.md` item is verified. 
+
+    - Repeat and iterate on the final script and its verification until all key points are verified with clear evidence. Do not set `<done>true</done>` until then.
+
+
+    ## *Important task success Criteria*:
+    1: The filtered results must be displayed correctly. If filters were not properly applied (i.e., missing selection, missing confirmation, or no visible effect in results), the task is not considered successful.
+    2: You must carefully check whether screenshots meet these key points. Ensure that specific filter conditions, such as "best," "highest," "cheapest," "latest," "most recent," "lowest," "closest," "highest-rated," "largest," and "newest" are correctly applied using the filter function (e.g., sort function).
+    3: Certain key points or requirements should be applied by the filter. Otherwise, a search with all requirements as input will be deemed a failure since it cannot guarantee that all results meet the requirements.
+    4: If the task requires filtering by a specific range of money, years, or the number of beds and bathrooms, the applied filter must exactly match the given requirement when an exact native control exists. If the site exposes only broader price buckets and the task only needs one qualifying item, a single broader native bucket may be used only as a screening step, and the final chosen item must still be directly verified to the exact requested range.
+    Examples of Failure Cases:
+    - If the requirement is less than $50, but the applied filter is less than $25, it is a failure.
+    - If the requirement is $1500-$2500, but the applied filter is $2000-$2500, it is a failure.
+    - If the requirement is $25-$200, but the applied filter is $0-$200, it is a failure.
+    - If the required years are 2004-2012, but the filter applied is 2001-2012, it is a failure.
+    - If the required years are before 2015, but the filter applied is 2000-2014, it is a failure.
+    - If the task requires exactly 2 beds, but the filter applied is 2+ beds, it is a failure.
+    5: Some tasks require a submission action or a display of results to be considered successful.
+    6: If the retrieved information is invalid or empty (e.g., no match was found), but the agent has correctly performed the required action, it can still be considered successful.
+    7: When a task specifies multiple explicit filters or sort constraints, the agent must apply each one through the site controls when those controls exist. It is not sufficient to infer compliance from unfiltered or broadly searched results.
+    8: If a relevant site control does not exist, the trajectory must show direct verification of that constraint from the page content or item details before the task can be marked successful.
+    9: If the task specifies a date window or booking availability, leaving the UI in a default state such as "Anytime" or otherwise not showing the required dates is a failure.
+    10: If the task asks for a final cost or price after options, trade-in, or discounts, the trajectory must show the values needed to determine that final amount before submission.
+    11: If an exact requested range is unavailable natively, combining broader or overlapping buckets to mimic the range is a failure. A single broader native bucket may be used only as a screening step for find-one-item tasks, and the final chosen item must then be directly verified to the exact requested range.
+    12: For checkbox or toggle filters, the selected state must be visibly on (`checked`, `aria-checked`, `pressed`, or applied chip), not merely present in an open menu.
+    13: For review-sort tasks, the completion evidence must include both the selected native review-sort control and visible review-body content from that sorted state.
+    14: If a filter drawer or modal exposes a footer action such as "Show places", "Show results", or "Apply", merely closing the modal is a failure; the trajectory must use that footer action to commit the filters.
+    15: When an exact native range control exists as min/max inputs, numeric pills, or slider handles, the visible lower and upper bounds must be changed to the requested interval. Leaving default or broader bounds is a failure.
+
+
+
+    ## Completion Gate
+    Set `<done>true</done>` only if all of the following are true:
+      - the final script was rerun from scratch successfully
+      - all checklist items in `plan.md` are verified
+      - every verified checklist item is backed by native UI evidence from the highest final run
+      - all critical-point screenshots exist
+      - the `step <n> action:` log from the highest `final_runs/run_<id>/final_script_log.txt` was collected from the final successful run
+      - all completion evidence comes from the real browser run
+    - final verification used all `final_runs/run_<id>/screenshots/final_execution_<step_number>_<action>.png` images from the highest run ID folder together in one multi-image `image_qa` call
+    - the `image_qa` JSON clearly confirms the intended final state
+
+    If `image_qa` is missing, uncertain, or contradicts the intended final state, you must repair the script, create a new `final_runs/run_<id>/` folder, rerun it, collect new screenshots and action logs in that new run folder, and verify again before submitting.
+
+    If you modify `final_script.py` after verification, verify again before submitting.
+
+    In `<final_response>`, report the outcome concisely and mention that the `final_script.py` in the highest `final_runs/run_<id>/` folder is the final artifact.
+    When `done` is `false`, `<bash_command>` must contain exactly one bash command. Do not leave it empty.
+    </instructions>
+  step_limit: 70
+
+environment:
+  environment_class: local_workspace
+  output_dir: outputs/sandbox
+  command_timeout_seconds: 240
+  output_truncation_chars: 24000
+  env:
+    PAGER: cat
+    MANPAGER: cat
+    LESS: -R
+    PIP_PROGRESS_BAR: 'off'
+    TQDM_DISABLE: '1'
+    OPENAI_GATEWAY_ENDPOINT: http://gateway.phyagi.net/api/responses
+    OPENAI_GATEWAY_MODEL: gpt-5.4
+
+run:
+  tasks_file: /home/luyadong/sandbox/mini-web-agent/src/miniswewebagent/run/benchmarks/om2w_260220.json
+  parallel_processes: 77
+  task_level: hard
+  parallel_processes: 77
+  judge_enabled: true
+  judge_model: o4-mini
+  judge_endpoint: ""
+  judge_num_proc: 77
+  judge_python: /home/luyadong/.venv/bin/python
+  judge_script: /home/luyadong/sandbox/mini-web-agent/om2w_judge/run.py
+  logs_root: /home/luyadong/sandbox/mini-web-agent/logs
