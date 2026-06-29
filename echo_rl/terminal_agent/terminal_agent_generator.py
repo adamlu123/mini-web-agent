@@ -662,7 +662,7 @@ class TerminalAgentGenerator(GeneratorInterface):
                 )
                 continue
             cmd = parsed_cmd.arguments.get("command", "")
-            timeout = parsed_cmd.arguments.get("timeout", 30)
+            timeout = parsed_cmd.arguments.get("timeout", 120)
             if not cmd:
                 outputs.append(
                     f"Command '{raw_text}' skipped due to no command provided. Please provide a command in correct format to execute."

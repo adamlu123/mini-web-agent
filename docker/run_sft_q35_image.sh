@@ -95,6 +95,13 @@ export TRANSFORMERS_NO_ADVISORY_WARNINGS=1
 # `NCCL INFO Channel ...` lines and buries the training loss/progress. Drop it to
 # WARN so only real NCCL problems show. Override with NCCL_DEBUG_OVERRIDE=INFO.
 export NCCL_DEBUG="${NCCL_DEBUG_OVERRIDE:-WARN}"
+# Qwen3.5 full SFT on B200 hit intermittent NCCL/CUDA peer-memory failures in
+# the NVLink path after a few hundred steps. Prefer the slower host/shared-memory
+# fallback over direct GPU peer access unless explicitly overridden.
+export NCCL_P2P_DISABLE="${NCCL_P2P_DISABLE:-1}"
+export NCCL_NVLS_ENABLE="${NCCL_NVLS_ENABLE:-0}"
+export NCCL_CUMEM_ENABLE="${NCCL_CUMEM_ENABLE:-0}"
+export NCCL_CUMEM_HOST_ENABLE="${NCCL_CUMEM_HOST_ENABLE:-0}"
 
 echo '[boot] === pre-flight ==='
 nvidia-smi -L
@@ -110,6 +117,40 @@ print("torch", torch.__version__, "| transformers", transformers.__version__,
       "| llamafactory", llamafactory.__version__)
 print("SFT pre-flight OK (qwen3_5 arch supported)")
 PY
+
+push_ckpt_to_blob() {
+  src_dir="$1"
+  blob_name="$2"
+  account="${AZBLOB_ACCOUNT_NAME:-aifrontiers}"
+  container="${AZBLOB_CONTAINER_NAME:-data}"
+  alias="${USER_ALIAS:-${USER%@*}}"
+  prefix="${AZBLOB_PREFIX:-bonete/ckpts/${alias}}"
+  dest="https://${account}.blob.core.windows.net/${container}/${prefix}/${blob_name}"
+
+  command -v az >/dev/null 2>&1 || {
+    echo "[blob] az CLI not found; installing..."
+    command -v curl >/dev/null 2>&1 || { apt-get update -qq && apt-get install -y -qq curl; }
+    curl -sL https://aka.ms/InstallAzureCLIDeb | bash >/dev/null 2>&1
+  }
+  command -v az >/dev/null 2>&1 || { echo "[blob][error] az install failed"; return 1; }
+
+  echo "[blob] push: ${src_dir%/}/* -> ${dest}"
+  if [ -n "${AZBLOB_SAS_TOKEN:-}" ]; then
+    az storage copy -s "${src_dir%/}/*" -d "${dest}?${AZBLOB_SAS_TOKEN#\?}" --recursive
+  else
+    if ! az account show >/dev/null 2>&1; then
+      if [ -n "${AZURE_TENANT_ID:-}" ] && [ -n "${AZURE_CLIENT_ID:-}" ] && [ -r "${AZURE_FEDERATED_TOKEN_FILE:-/nonexistent}" ]; then
+        echo "[blob] az login via workload-identity (client=$AZURE_CLIENT_ID)"
+        az login --service-principal --tenant "$AZURE_TENANT_ID" --username "$AZURE_CLIENT_ID" \
+          --federated-token "$(cat "$AZURE_FEDERATED_TOKEN_FILE")" --allow-no-subscriptions --output none
+      else
+        echo "[blob][error] no auth: set AZBLOB_SAS_TOKEN or provide workload-identity env"
+        return 1
+      fi
+    fi
+    az storage copy -s "${src_dir%/}/*" -d "$dest" --recursive --auth-mode login
+  fi
+}
 
 echo "[boot] === launching SFT: $SFT_CONFIG on $NPROC GPUs ==="
 cd "$LF_DIR"
@@ -158,19 +199,18 @@ if [ "$RC" -eq 0 ] && [ "${SYNC_CKPT:-1}" = "1" ]; then
           echo "[merge][warn] base ('$BASE_DIR') or merge script not found; skipping vision merge"
         fi
       fi
-      # Optional: auto-upload to Azure Blob so a dev box can pull it (works even
-      # after a pod reschedule / node change). Auth = workload-identity if the
-      # federated-token env is present, else the injected AZBLOB_SAS_TOKEN.
-      if [ "${AZBLOB_AUTO_PUSH:-0}" = "1" ]; then
-        AZ="$CODE_ROOT/mini-web-agent/scripts/az_ckpt.sh"
-        echo "[sync] AZBLOB_AUTO_PUSH=1 -> uploading ckpt to blob"
-        if bash "$AZ" push "$SYNC_CKPT_DIR" "${CKPT_REL#saves/}"; then
+      # Auto-upload to Azure Blob so a dev box can pull the finished ckpt without
+      # needing a live pod. Auth = workload-identity if the federated-token env is
+      # present, else the injected AZBLOB_SAS_TOKEN. Disable with AZBLOB_AUTO_PUSH=0.
+      if [ "${AZBLOB_AUTO_PUSH:-1}" = "1" ]; then
+        echo "[sync] AZBLOB_AUTO_PUSH=${AZBLOB_AUTO_PUSH:-1} -> uploading ckpt to blob"
+        if push_ckpt_to_blob "$SYNC_CKPT_DIR" "${CKPT_REL#saves/}"; then
           echo "[sync] blob upload OK. pull on a dev box: bash scripts/az_ckpt.sh pull ${CKPT_REL#saves/} <dest>"
         else
           echo "[sync][warn] blob upload failed (auth/SAS?); ckpt still on PVC at $SYNC_CKPT_DIR"
         fi
       else
-        echo "[sync] pull to a dev box: bash scripts/az_ckpt.sh pull ${CKPT_REL#saves/} <dest>  (or set AZBLOB_AUTO_PUSH=1 to upload automatically)"
+        echo "[sync] AZBLOB_AUTO_PUSH=0; ckpt only on PVC. pull via a live pod or rerun upload manually: bash scripts/az_ckpt.sh push $SYNC_CKPT_DIR ${CKPT_REL#saves/}"
       fi
     else
       echo "[sync][warn] rsync failed; ckpt remains (volatile) at $LF_DIR/$CKPT_REL"

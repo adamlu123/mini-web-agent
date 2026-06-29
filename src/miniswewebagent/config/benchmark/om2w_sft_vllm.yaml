@@ -4,7 +4,7 @@ model:
   endpoint: http://127.0.0.1:8000/v1/chat/completions
   api_key: dummy
   request_timeout_seconds: 240
-  max_output_tokens: 16000
+  max_output_tokens: 12000
   response_mode: sft_bash
   attach_observation_screenshot: false
   observation_template: |
@@ -48,7 +48,7 @@ model:
 agent:
   agent_class: default
   prompt_mode: sft
-  step_limit: 20
+  step_limit: 30
   debug_log: true
   output_path:
   require_self_reflection_success: true

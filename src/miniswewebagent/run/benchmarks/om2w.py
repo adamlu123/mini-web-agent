@@ -76,11 +76,12 @@ def _read_eval_rows(result_file: Path) -> list[dict[str, Any]]:
 def _resolve_judge_api_key(*, endpoint_target_uri: str) -> str:
     if endpoint_target_uri:
         return (
-            os.environ.get("OPENAI_GATEWAY_API_KEY", "")
+            os.environ.get("OM2W_JUDGE_API_KEY", "")
             or os.environ.get("PHYAGI_API_KEY", "")
+            or os.environ.get("OPENAI_GATEWAY_API_KEY", "")
             or os.environ.get("OPENAI_API_KEY", "")
         )
-    return os.environ.get("OPENAI_API_KEY", "")
+    return os.environ.get("OM2W_JUDGE_API_KEY", "") or os.environ.get("OPENAI_API_KEY", "")
 
 
 def _resolve_run_one(iterative: bool):

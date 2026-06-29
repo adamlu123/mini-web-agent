@@ -60,6 +60,7 @@ import glob
 import json
 import os
 import re
+from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Rewritten system prompt: same harness conventions as the online rollouts, but
@@ -193,6 +194,268 @@ def text_of(content) -> str:
     return str(content)
 
 
+def workspace_from_traj(traj: dict, traj_path: str | None = None) -> str:
+    """Best-effort workspace path across old and new trajectory schemas."""
+    candidates = [
+        (((traj.get("environment") or {}).get("config") or {}).get("output_dir")),
+        ((((traj.get("info") or {}).get("config") or {}).get("environment") or {}).get("output_dir")),
+    ]
+    agent_output_path = ((((traj.get("info") or {}).get("config") or {}).get("agent") or {}).get("output_path"))
+    if agent_output_path:
+        candidates.append(str(Path(str(agent_output_path)).parent))
+    if traj_path:
+        candidates.append(str(Path(traj_path).resolve().parent))
+    for candidate in candidates:
+        if candidate:
+            return str(candidate)
+    return ""
+
+
+def assistant_count_in_messages(messages: list[dict]) -> int:
+    return sum(1 for message in messages if isinstance(message, dict) and message.get("role") == "assistant")
+
+
+def is_compact_summary_message(message: dict) -> bool:
+    if not isinstance(message, dict) or message.get("role") != "user":
+        return False
+    extra = message.get("extra") if isinstance(message.get("extra"), dict) else {}
+    if extra.get("interrupt_type") == "HistoryCompactionSummary":
+        return True
+    return str(text_of(message.get("content", ""))).lstrip().startswith("## Compacted History Summary")
+
+
+def initial_user_from_steps_md(task_dir: Path) -> str:
+    steps_md = task_dir / "debug" / "steps.md"
+    if not steps_md.is_file():
+        return ""
+    text = steps_md.read_text(encoding="utf-8", errors="replace")
+    marker = "### Model Input"
+    start = text.find(marker)
+    if start < 0:
+        return ""
+    start += len(marker)
+    end = text.find("### Thought", start)
+    value = text[start:end if end >= 0 else None].strip()
+    return value
+
+
+def fallback_initial_user(traj: dict, task_dir: Path) -> str:
+    value = initial_user_from_steps_md(task_dir)
+    if value:
+        return value
+    task_path = task_dir / "task.json"
+    if task_path.is_file():
+        try:
+            task = json.loads(task_path.read_text(encoding="utf-8", errors="replace"))
+        except Exception:
+            task = {}
+        parts = []
+        if task.get("task"):
+            parts.append(f"Task: {task.get('task')}")
+        if task.get("task_id"):
+            parts.append(f"Task ID: {task.get('task_id')}")
+        if task.get("start_url"):
+            parts.append(f"Start URL: {task.get('start_url')}")
+        if parts:
+            return "\n".join(parts)
+    for message in traj.get("messages") or []:
+        if isinstance(message, dict) and message.get("role") == "user":
+            return text_of(message.get("content", ""))
+    return "Task continuation."
+
+
+def original_task_from_initial_user(initial_user: str) -> str:
+    for line in str(initial_user or "").splitlines():
+        if line.startswith("Task: "):
+            return line[len("Task: "):].strip()
+    return ""
+
+
+def parse_raw_model_payload(raw_text: str) -> dict | None:
+    text = str(raw_text or "").strip()
+    if not text:
+        return None
+    candidates = [text]
+    if not text.startswith("{"):
+        match = re.search(r"\{.*\}", text, flags=re.DOTALL)
+        if match:
+            candidates.append(match.group(0))
+    for candidate in candidates:
+        try:
+            payload = json.loads(candidate)
+        except Exception:
+            continue
+        if isinstance(payload, dict):
+            return payload
+    return None
+
+
+def compact_summaries_from_raw_responses(task_dir: Path, step_numbers: set[int]) -> dict[int, str]:
+    raw_path = task_dir / "raw_responses.jsonl"
+    if not raw_path.is_file():
+        return {}
+    summaries: dict[int, str] = {}
+    for index, line in enumerate(raw_path.read_text(encoding="utf-8", errors="replace").splitlines(), start=1):
+        if index in step_numbers:
+            continue
+        try:
+            row = json.loads(line)
+        except Exception:
+            continue
+        payload = parse_raw_model_payload(str(row.get("raw_text") or ""))
+        if not payload:
+            continue
+        has_action = bool(str(payload.get("bash_command") or payload.get("python_code") or "").strip())
+        if has_action or payload.get("done"):
+            continue
+        summary = str(payload.get("thought") or payload.get("summary") or payload.get("final_response") or "").strip()
+        normalized = " ".join(summary.lower().split())
+        if len(normalized) >= 40 and any(
+            marker in normalized for marker in ("task goal", "original task", "critical point", "workspace")
+        ):
+            summaries[index] = summary
+    return summaries
+
+
+def render_compact_summary(*, original_task: str, step_index: int, summary: str) -> str:
+    return (
+        "## Compacted History Summary\n"
+        f"Original task: {original_task}\n"
+        f"(context was compacted after step {step_index}; earlier turns have been replaced by the summary below)\n\n"
+        f"{summary.strip()}\n\n"
+        "## End of Compacted Summary"
+    )
+
+
+def render_observation_from_debug(output: dict) -> str:
+    observation = output.get("observation") if isinstance(output.get("observation"), dict) else {}
+    success = observation.get("success")
+    status = "ok" if success else "error"
+    lines = ["Observation:", f"Status: {status}"]
+    workspace = observation.get("workspace_dir")
+    cwd = observation.get("cwd")
+    returncode = output.get("returncode", observation.get("returncode"))
+    exception = observation.get("exception") or output.get("exception_info") or ""
+    command_output = observation.get("command_output") or output.get("output") or ""
+    final_script_path = observation.get("final_script_path") or ""
+    if workspace:
+        lines.append(f"Workspace: {workspace}")
+    if cwd:
+        lines.append(f"Working directory: {cwd}")
+    if returncode is not None:
+        lines.append(f"Return code: {returncode}")
+    if exception:
+        lines.extend(["Exception:", str(exception)])
+    if command_output:
+        lines.extend(["Command output:", str(command_output)])
+    if final_script_path:
+        lines.append(f"final_script.py: {final_script_path}")
+    return "\n".join(lines)
+
+
+def assistant_message_from_debug_step(row: dict) -> dict:
+    bash_command = str(row.get("bash_command") or "").strip()
+    python_code = str(row.get("python_code") or "").strip()
+    command_text = str(row.get("command_text") or bash_command or python_code or "").strip()
+    actions = []
+    if command_text:
+        action = {"command": command_text}
+        if bash_command:
+            action["bash_command"] = bash_command
+        if python_code:
+            action["python_code"] = python_code
+        actions.append(action)
+    return {
+        "role": "assistant",
+        "content": str(row.get("thought") or ""),
+        "extra": {
+            "actions": actions,
+            "done": bool(row.get("done")),
+            "final_response": str(row.get("final_response") or ""),
+            "raw_response": row.get("raw_response") or {},
+        },
+    }
+
+
+def recover_sessions_from_debug_steps(traj: dict, traj_path: str | None) -> list[list[dict]]:
+    if not traj_path or traj.get("compacted_sessions"):
+        return []
+    task_dir = Path(traj_path).resolve().parent
+    steps_dir = task_dir / "debug" / "steps"
+    if not steps_dir.is_dir():
+        return []
+    step_rows: list[tuple[int, dict]] = []
+    for step_path in sorted(steps_dir.glob("step_*.json")):
+        try:
+            row = json.loads(step_path.read_text(encoding="utf-8", errors="replace"))
+        except Exception:
+            continue
+        try:
+            step_index = int(row.get("step") or step_path.stem.split("_")[-1])
+        except Exception:
+            continue
+        step_rows.append((step_index, row))
+    if not step_rows:
+        return []
+    messages = traj.get("messages") or []
+    current_assistant_count = assistant_count_in_messages(messages)
+    first_user_is_summary = any(is_compact_summary_message(message) for message in messages[:3])
+    if len(step_rows) <= current_assistant_count and not first_user_is_summary:
+        return []
+
+    step_numbers = {step for step, _row in step_rows}
+    summaries = compact_summaries_from_raw_responses(task_dir, step_numbers)
+    if not summaries and not first_user_is_summary:
+        return []
+
+    initial_user = fallback_initial_user(traj, task_dir)
+    original_task = original_task_from_initial_user(initial_user)
+    groups: list[list[tuple[int, dict]]] = []
+    current: list[tuple[int, dict]] = []
+    summary_indices = sorted(summaries)
+    summary_cursor = 0
+    active_summary_index: int | None = None
+    group_start_messages: list[dict] = []
+
+    def start_message_for(summary_index: int | None) -> dict:
+        if summary_index is None:
+            return {"role": "user", "content": initial_user, "extra": {}}
+        return {
+            "role": "user",
+            "content": render_compact_summary(
+                original_task=original_task,
+                step_index=summary_index,
+                summary=summaries[summary_index],
+            ),
+            "extra": {"interrupt_type": "HistoryCompactionSummary"},
+        }
+
+    group_start_messages.append(start_message_for(None))
+    for step_index, row in step_rows:
+        while summary_cursor < len(summary_indices) and summary_indices[summary_cursor] < step_index:
+            if current:
+                groups.append(current)
+                current = []
+            active_summary_index = summary_indices[summary_cursor]
+            group_start_messages.append(start_message_for(active_summary_index))
+            summary_cursor += 1
+        current.append((step_index, row))
+    if current:
+        groups.append(current)
+
+    sessions: list[list[dict]] = []
+    for index, group in enumerate(groups):
+        start_message = group_start_messages[min(index, len(group_start_messages) - 1)]
+        session: list[dict] = [start_message]
+        for _step_index, row in group:
+            session.append(assistant_message_from_debug_step(row))
+            for output in row.get("outputs") or []:
+                if isinstance(output, dict):
+                    session.append({"role": "user", "content": render_observation_from_debug(output), "extra": {}})
+        sessions.append(session)
+    return sessions
+
+
 def assistant_value(msg, exit_final, norm):
     """Render ONE assistant turn, or return None to DROP it.
 
@@ -306,11 +569,17 @@ def build_convo(msgs, norm, max_obs):
     return convo
 
 
-def iter_sessions(traj: dict):
+def iter_sessions(traj: dict, traj_path: str | None = None):
     """Yield the trajectory's sessions in CHRONOLOGICAL order: the compacted
     (earlier) sessions first, oldest -> newest, then the final live `messages`.
     So a compacted rollout of steps 1-10 (compacted) + 11-13 (final) emits the
     1-10 session BEFORE the 11-13 session — in order, never shuffled."""
+    recovered = recover_sessions_from_debug_steps(traj, traj_path)
+    if recovered:
+        for sess in recovered:
+            if sess:
+                yield sess
+        return
     for sess in (traj.get("compacted_sessions") or []):
         if sess:
             yield sess
@@ -319,7 +588,15 @@ def iter_sessions(traj: dict):
         yield msgs
 
 
-def convert_traj(traj: dict, normalize: bool, max_obs: int, turn_mode: str):
+def convert_traj(
+    traj: dict,
+    normalize: bool,
+    max_obs: int,
+    turn_mode: str,
+    traj_path: str | None = None,
+    *,
+    return_session_count: bool = False,
+):
     """Return a LIST of ShareGPT samples for one trajectory.json.
 
     turn_mode="multi":  one full multi-turn sample PER session (steps in order);
@@ -329,13 +606,15 @@ def convert_traj(traj: dict, normalize: bool, max_obs: int, turn_mode: str):
                         with mask_history=true (loss only on step t). K steps ->
                         K examples, incl. the cold-start first step of each
                         session, using the limited data more finely."""
-    ws = (traj.get("environment", {}).get("config", {}) or {}).get("output_dir", "")
+    ws = workspace_from_traj(traj, traj_path)
     _norm = make_normalizer(ws) if normalize else (lambda s: s)
     # secret redaction ALWAYS runs, independent of path normalization
     norm = lambda s: redact_secrets(_norm(s))
 
     samples = []
-    for sess in iter_sessions(traj):
+    session_count = 0
+    for sess in iter_sessions(traj, traj_path):
+        session_count += 1
         convo = build_convo(sess, norm, max_obs)
         if sum(1 for t in convo if t["from"] == "gpt") < 1:
             continue
@@ -355,7 +634,22 @@ def convert_traj(traj: dict, normalize: bool, max_obs: int, turn_mode: str):
                     continue
                 truncated = [dict(t) for t in convo[: i + 1]]
                 samples.append({"conversations": truncated, "system": SYSTEM})
+    if return_session_count:
+        return samples, session_count
     return samples
+
+
+def has_self_judge_label(traj_path: str, label: int) -> bool:
+    """Return true if any self_reflection judge_result under the task dir has label."""
+    task_dir = Path(traj_path).resolve().parent
+    for result_path in sorted(task_dir.glob("final_runs/run_*/judge_result.json")):
+        try:
+            result = json.loads(result_path.read_text(encoding="utf-8", errors="replace"))
+        except Exception:
+            continue
+        if result.get("predicted_label") == label:
+            return True
+    return False
 
 
 def main():
@@ -377,6 +671,9 @@ def main():
                          "sessions first, then the final one). single: split "
                          "each session into one single-turn (context -> next "
                          "step) sample per assistant step.")
+    ap.add_argument("--require-self-judge-label", type=int, choices=[0, 1], default=None,
+                    help="only include trajectories whose task dir has at least one "
+                         "final_runs/run_*/judge_result.json with this predicted_label")
     args = ap.parse_args()
 
     # merge multiple source dirs in the given order; sort within each dir for
@@ -388,16 +685,26 @@ def main():
     n_gpt = 0
     n_sessions = 0
     for f in files:
+        if args.require_self_judge_label is not None and not has_self_judge_label(f, args.require_self_judge_label):
+            dropped.append((f, f"self judge label != {args.require_self_judge_label}"))
+            continue
         try:
             traj = json.load(open(f))
         except Exception as e:
             dropped.append((f, f"load error: {e}"))
             continue
-        samples = convert_traj(traj, args.normalize, args.max_obs_chars, args.turn_mode)
+        samples, session_count = convert_traj(
+            traj,
+            args.normalize,
+            args.max_obs_chars,
+            args.turn_mode,
+            f,
+            return_session_count=True,
+        )
         if not samples:
             dropped.append((f, "no usable turns"))
             continue
-        n_sessions += len(traj.get("compacted_sessions") or []) + 1
+        n_sessions += session_count
         for ex in samples:
             data.append(ex)
             # supervised targets: multi trains every gpt turn (mask_history=false);
@@ -416,8 +723,10 @@ def main():
     print(f"wrote    {len(data)} samples ({n_gpt} SUPERVISED target steps) -> {args.out}")
     if dropped:
         print(f"dropped  {len(dropped)}:")
-        for f, why in dropped:
+        for f, why in dropped[:50]:
             print(f"  - {os.path.basename(os.path.dirname(f))}: {why}")
+        if len(dropped) > 50:
+            print(f"  ... {len(dropped) - 50} more")
 
 
 if __name__ == "__main__":

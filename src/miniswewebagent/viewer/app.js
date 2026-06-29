@@ -11,6 +11,8 @@ const state = {
 
 const runSelect = document.getElementById("runSelect");
 const taskSearch = document.getElementById("taskSearch");
+const traceStatusFilter = document.getElementById("traceStatusFilter");
+const judgeStatusFilter = document.getElementById("judgeStatusFilter");
 const refreshBtn = document.getElementById("refreshBtn");
 const statusText = document.getElementById("statusText");
 const rootDir = document.getElementById("rootDir");
@@ -33,6 +35,9 @@ const judgeStatus = document.getElementById("judgeStatus");
 const judgeFile = document.getElementById("judgeFile");
 const judgeUpdatedAt = document.getElementById("judgeUpdatedAt");
 const judgeResponse = document.getElementById("judgeResponse");
+const messageList = document.getElementById("messageList");
+const expandMessagesBtn = document.getElementById("expandMessagesBtn");
+const collapseMessagesBtn = document.getElementById("collapseMessagesBtn");
 
 const prevStepBtn = document.getElementById("prevStepBtn");
 const nextStepBtn = document.getElementById("nextStepBtn");
@@ -106,6 +111,7 @@ function renderTaskList() {
     button.innerHTML = `
       <span class="task-header">
         <span class="task-tag ${task.status}">${task.status}</span>
+        <span class="task-tag judge-${task.judgeStatus || "unknown"}">judge ${task.judgeStatus || "unknown"}</span>
         <strong>${escapeHtml(task.taskId)}</strong>
       </span>
       <span class="task-title">${escapeHtml(task.title || "(no task text)")}</span>
@@ -129,6 +135,7 @@ function renderTaskDetail() {
     taskWarnings.hidden = true;
     taskFinal.textContent = "-";
     renderJudgeDetail();
+    renderConversation();
     rawResult.textContent = "-";
     renderStep();
     return;
@@ -148,7 +155,74 @@ function renderTaskDetail() {
   taskWarningsText.textContent = warnings || "-";
 
   renderJudgeDetail();
+  renderConversation();
   renderStep();
+}
+
+function roleTitle(message) {
+  const role = message.role || "unknown";
+  const extra = message.interruptType ? ` · ${message.interruptType}` : "";
+  const command = message.command || message.bashCommand || message.pythonCode || "";
+  const preview = command || message.finalResponse || message.content || message.thought || "";
+  return `${message.index + 1}. ${role}${extra}${preview ? ` · ${preview.slice(0, 110).replace(/\s+/g, " ")}` : ""}`;
+}
+
+function detailBlock(title, value, className = "") {
+  const text = String(value ?? "").trim();
+  if (!text) return "";
+  return `
+    <details class="message-field ${className}" open>
+      <summary>${escapeHtml(title)}</summary>
+      <pre>${escapeHtml(text)}</pre>
+    </details>
+  `;
+}
+
+function renderConversation() {
+  const messages = state.taskDetail?.messages || [];
+  messageList.innerHTML = "";
+  if (!messages.length) {
+    messageList.innerHTML = '<p class="task-empty">No trajectory messages found for this task.</p>';
+    return;
+  }
+
+  for (const message of messages) {
+    const details = document.createElement("details");
+    details.className = `message-card role-${message.role || "unknown"}`;
+    details.open = message.role !== "system";
+
+    const summary = document.createElement("summary");
+    summary.textContent = roleTitle(message);
+    details.appendChild(summary);
+
+    const body = document.createElement("div");
+    body.className = "message-body";
+    if (message.role === "assistant") {
+      body.innerHTML = [
+        detailBlock("<think>", message.thought, "think-field"),
+        detailBlock("<bash>", message.bashCommand, "bash-field"),
+        detailBlock("python_code", message.pythonCode, "bash-field"),
+        detailBlock("<answer>", message.finalResponse, "answer-field"),
+        detailBlock("raw_text", message.rawText),
+      ].join("");
+    } else if (message.role === "user") {
+      body.innerHTML = [
+        detailBlock("message", message.content),
+        detailBlock("command", message.command, "bash-field"),
+        detailBlock("return_code", message.returnCode == null ? "" : String(message.returnCode)),
+        detailBlock("output", message.commandOutput, "output-field"),
+        detailBlock("exception", message.exception, "error-field"),
+        detailBlock("observation_json", JSON.stringify(message.observation || {}, null, 2)),
+      ].join("");
+    } else {
+      body.innerHTML = detailBlock(message.role === "system" ? "system prompt" : "message", message.content);
+    }
+    if (!body.innerHTML.trim()) {
+      body.innerHTML = '<p class="task-empty">No structured content.</p>';
+    }
+    details.appendChild(body);
+    messageList.appendChild(details);
+  }
 }
 
 function renderJudgeDetail() {
@@ -209,7 +283,8 @@ function renderStep() {
 
   state.stepIndex = Math.max(0, Math.min(state.stepIndex, steps.length - 1));
   const step = steps[state.stepIndex];
-  stepLabel.textContent = `Step ${state.stepIndex + 1} / ${steps.length}`;
+  const actualStep = step.step == null ? "" : ` · agent step ${step.step}`;
+  stepLabel.textContent = `Step ${state.stepIndex + 1} / ${steps.length}${actualStep}`;
   stepThought.textContent = formatMultiline(step.thought, "(no thought recorded)");
   stepAction.textContent = formatMultiline(step.action, "(no action recorded)");
   stepUrl.textContent = formatMultiline(step.url);
@@ -236,9 +311,13 @@ function renderStep() {
 
 function applyTaskFilter() {
   const query = taskSearch.value.trim().toLowerCase();
+  const traceStatus = traceStatusFilter.value;
+  const judgeStatus = judgeStatusFilter.value;
   state.filteredTasks = state.tasks.filter((task) => {
+    if (traceStatus !== "all" && task.status !== traceStatus) return false;
+    if (judgeStatus !== "all" && (task.judgeStatus || "unknown") !== judgeStatus) return false;
     if (!query) return true;
-    return [task.taskId, task.title, task.finalPreview].some((value) =>
+    return [task.taskId, task.title, task.finalPreview, task.status, task.judgeStatus].some((value) =>
       String(value || "").toLowerCase().includes(query)
     );
   });
@@ -342,6 +421,16 @@ taskSearch.addEventListener("input", () => {
   renderTaskDetail();
 });
 
+traceStatusFilter.addEventListener("change", () => {
+  applyTaskFilter();
+  renderTaskDetail();
+});
+
+judgeStatusFilter.addEventListener("change", () => {
+  applyTaskFilter();
+  renderTaskDetail();
+});
+
 refreshBtn.addEventListener("click", async () => {
   await loadRuns();
 });
@@ -366,6 +455,18 @@ nextStepBtn.addEventListener("click", () => {
 judgeSelect.addEventListener("change", () => {
   state.judgeIndex = Number.parseInt(judgeSelect.value || "0", 10) || 0;
   renderJudgeDetail();
+});
+
+expandMessagesBtn.addEventListener("click", () => {
+  messageList.querySelectorAll("details").forEach((node) => {
+    node.open = true;
+  });
+});
+
+collapseMessagesBtn.addEventListener("click", () => {
+  messageList.querySelectorAll("details").forEach((node) => {
+    node.open = false;
+  });
 });
 
 loadRuns().catch((error) => {

@@ -12,6 +12,10 @@ from typing import Any
 _SFT_ASSETS = Path(__file__).resolve().parent / "sft_assets"
 SFT_SYSTEM = (_SFT_ASSETS / "system.txt").read_text()
 SFT_INSTRUCTIONS = (_SFT_ASSETS / "instructions.txt").read_text()
+SFT_STATE_SYSTEM = (_SFT_ASSETS / "state_system.txt").read_text()
+SFT_STATE_INSTRUCTIONS = (_SFT_ASSETS / "state_instructions.txt").read_text()
+SFT_STATE_DEBUG_SYSTEM = (_SFT_ASSETS / "state_system_debug.txt").read_text()
+SFT_STATE_DEBUG_INSTRUCTIONS = (_SFT_ASSETS / "state_instructions_debug.txt").read_text()
 
 # Variable header prepended to the constant <instructions> block. Mirrors the
 # original benchmark harness first user turn exactly (the instructions body has

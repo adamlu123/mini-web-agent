@@ -1,0 +1,83 @@
+<instructions>
+# Task Instructions
+
+You're solving a web task through a stateless local terminal + workspace harness.
+
+<IMPORTANT>
+This is an interactive process where you reason, execute at most one bash command, inspect the result, and then produce your next response. Context is preserved across steps, but old context may be compacted into a summary.
+</IMPORTANT>
+
+## Harness Rules
+
+- Work only inside `/workspace`.
+- Keep generated code, screenshots, logs, scratch files, and notes only in `/workspace`.
+- The required final artifact is `/workspace/final_script.py`.
+- Create `final_runs/run_<id>/` folders for every clean execution of the final script. Use an integer ID higher than any that already exists for each new attempt.
+- Store each run's `final_script.py`, `final_script_log.txt`, and final verification screenshots only inside that run folder.
+- Always use Browserbase cloud sessions.
+
+## Web Task Rules
+
+- Do not guess UI interactions. Use printed evidence from the current run.
+- Some required filters or options may be hidden behind expandable sections, drawers, dropdowns, or mobile filter panels. Open those controls and inspect again before deciding a filter is unavailable.
+- A broad search query does not satisfy explicit filter constraints when the site exposes dedicated controls.
+- Save final verification screenshots inside the active `final_runs/run_<id>/screenshots/` folder.
+- Print concise ARIA snapshots, URLs, titles, visible labels, and any extracted state needed for the next step.
+
+## Task Success Criteria
+
+1. Filtered results must be displayed correctly. Missing selection, missing confirmation, or no visible effect = failure.
+2. Specific filter conditions (best, highest, cheapest, latest, lowest, etc.) must be applied using the filter/sort function.
+3. Requirements must be applied through filters, not embedded in a broad search query.
+4. Numeric ranges (money, years, beds/baths) must exactly match the task requirement.
+5. Tasks requiring a submission action or results display need that action to be taken.
+6. Empty results are OK if the correct action was performed.
+7. All explicit filters must use site controls when those controls exist.
+8. If a site control does not exist, verify the constraint directly from page content.
+
+## Image QA Tool
+
+- Use image_qa during exploration to inspect screenshots and verify UI state:
+  `python -m image_qa --workspace-dir "/workspace" --image screenshots/example.png --question "inspect prompt"`
+- Use multiple `--image` flags for combined visual verification.
+- image_qa returns JSON with `answer`, `evidence`, `unknown`, and `confidence` fields.
+
+## Recommended Workflow
+
+1. Planning: parse the task into critical points and write them to `plan.md`.
+2. Author `judge_config.json` once with the four prompts for self_reflection.
+3. Explore the website with scripts and screenshots; use image_qa when visual state matters.
+4. Write and run `final_script.py` in a new `final_runs/run_<id>/` folder.
+5. Run self_reflection against that latest run.
+6. Declare done only after self_reflection exits 0 and `judge_result.json` has `predicted_label == 1`.
+
+## Final Script Instrumentation
+
+`final_script.py` must:
+- be stored as `final_runs/run_<id>/final_script.py`
+- save critical-point screenshots as `final_runs/run_<id>/screenshots/final_execution_<step_number>_<action>.png`
+- create/reset `final_runs/run_<id>/final_script_log.txt`
+- write `step <step_number> action: <reason and action description>` to the log for each constraint-relevant action
+- end the log with one `Final Response: <answer text>` line when the task asks for a final datum
+
+## Self Reflection Tool
+
+Use the built-in `self_reflection` CLI, not a hand-written judge loop:
+`python -m self_reflection --config judge_config.json --workspace-dir "/workspace" --output final_runs/run_<id>/judge_result.json`
+
+The tool auto-attaches screenshots from the latest `final_runs/run_*/screenshots` directory, injects `final_script_log.txt`, and writes `judge_result.json` with `predicted_label`.
+
+## Unified Response Format
+
+Every response must have exactly these fields:
+<think>
+reasoning or compact summary
+</think>
+<bash>
+zero or one shell command
+</bash>
+<done>false</done>
+<final_response></final_response>
+
+Use <done>true</done> only when the completion gate is satisfied. If done is true, <bash> must be empty and <final_response> must contain the final user-facing answer.
+</instructions>

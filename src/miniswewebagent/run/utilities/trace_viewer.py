@@ -14,6 +14,7 @@ import typer
 from rich.console import Console
 
 from miniswewebagent import package_dir
+from miniswewebagent.models.phyagi_model import parse_bash_answer_output
 
 app = typer.Typer(rich_markup_mode="rich", add_completion=False)
 console = Console(highlight=False)
@@ -99,6 +100,244 @@ def _extract_observation(step_payload: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
+def _message_content_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") in {"text", "input_text"}:
+                parts.append(str(part.get("text") or ""))
+            elif part.get("type") in {"image_url", "input_image"}:
+                parts.append("[image]")
+        return "\n".join(part for part in parts if part)
+    return str(content or "")
+
+
+def _normalize_for_match(value: str) -> str:
+    return " ".join(str(value or "").split())
+
+
+def _parsed_sft_raw_responses(task_dir: Path) -> list[dict[str, Any]]:
+    raw_path = task_dir / "raw_responses.jsonl"
+    if not raw_path.exists():
+        return []
+    parsed_rows: list[dict[str, Any]] = []
+    try:
+        rows = _load_jsonl(raw_path)
+    except Exception:
+        return []
+    for row in rows:
+        raw_text = str(row.get("raw_text") or "")
+        if not raw_text:
+            continue
+        try:
+            parsed = parse_bash_answer_output(raw_text)
+            parsed["_raw_text"] = raw_text
+            parsed_rows.append(parsed)
+        except Exception:
+            continue
+    return parsed_rows
+
+
+def _raw_response_matches_step(parsed: dict[str, Any], *, command: str, final_response: str) -> bool:
+    parsed_command = str(parsed.get("bash_command") or parsed.get("command") or "")
+    if command and _normalize_for_match(parsed_command) == _normalize_for_match(command):
+        return True
+    parsed_final = str(parsed.get("final_response") or "")
+    if final_response and _normalize_for_match(parsed_final) == _normalize_for_match(final_response):
+        return True
+    return False
+
+
+def _raw_response_fallbacks_by_step(task_dir: Path, step_paths: list[Path]) -> dict[str, dict[str, Any]]:
+    raw_rows = _parsed_sft_raw_responses(task_dir)
+    if not raw_rows:
+        return {}
+    matched: dict[str, dict[str, Any]] = {}
+    raw_index = 0
+    for step_path in step_paths:
+        try:
+            step_payload = _load_json(step_path)
+        except Exception:
+            continue
+        raw_response = step_payload.get("raw_response") if isinstance(step_payload.get("raw_response"), dict) else {}
+        command = str(step_payload.get("bash_command") or step_payload.get("command_text") or raw_response.get("bash_command") or "")
+        final_response = str(step_payload.get("final_response") or raw_response.get("final_response") or "")
+        for index in range(raw_index, len(raw_rows)):
+            parsed = raw_rows[index]
+            if _raw_response_matches_step(parsed, command=command, final_response=final_response):
+                matched[step_path.name] = parsed
+                raw_index = index + 1
+                break
+    return matched
+
+
+def _merge_raw_response(raw_response: dict[str, Any], fallback: dict[str, Any] | None) -> dict[str, Any]:
+    if not fallback:
+        return raw_response
+    merged = dict(raw_response)
+    for key in ("thought", "bash_command", "python_code", "done", "final_response"):
+        if merged.get(key) in (None, "") and fallback.get(key) not in (None, ""):
+            merged[key] = fallback.get(key)
+    return merged
+
+
+def _raw_text_from_payload(step_payload: dict[str, Any], raw_fallback: dict[str, Any] | None = None) -> str:
+    raw_text = step_payload.get("raw_text")
+    if raw_text:
+        return str(raw_text)
+    if raw_fallback and raw_fallback.get("_raw_text"):
+        return str(raw_fallback.get("_raw_text"))
+    return ""
+
+
+def _normalize_trace_messages(trajectory: dict[str, Any]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for index, message in enumerate(trajectory.get("messages") or []):
+        if not isinstance(message, dict):
+            continue
+        role = str(message.get("role") or "").strip() or "unknown"
+        content_text = _message_content_text(message.get("content"))
+        extra = message.get("extra") if isinstance(message.get("extra"), dict) else {}
+        observation = extra.get("observation") if isinstance(extra.get("observation"), dict) else {}
+        actions = extra.get("actions") if isinstance(extra.get("actions"), list) else []
+        raw_response = extra.get("raw_response") if isinstance(extra.get("raw_response"), dict) else {}
+        raw_text = str(extra.get("raw_text") or "")
+
+        bash_command = ""
+        python_code = ""
+        if isinstance(raw_response, dict):
+            bash_command = str(raw_response.get("bash_command") or "")
+            python_code = str(raw_response.get("python_code") or "")
+        if not bash_command and actions:
+            action = actions[0] if isinstance(actions[0], dict) else {}
+            bash_command = str(action.get("bash_command") or action.get("command") or "")
+            python_code = str(action.get("python_code") or "")
+
+        normalized.append(
+            {
+                "index": index,
+                "role": role,
+                "content": content_text,
+                "thought": str(raw_response.get("thought") or content_text if role == "assistant" else ""),
+                "bashCommand": bash_command,
+                "pythonCode": python_code,
+                "done": bool(extra.get("done", False)),
+                "finalResponse": str(extra.get("final_response") or raw_response.get("final_response") or ""),
+                "interruptType": str(extra.get("interrupt_type") or ""),
+                "observation": observation,
+                "command": str(observation.get("command") or ""),
+                "returnCode": observation.get("returncode"),
+                "commandOutput": str(observation.get("command_output") or ""),
+                "exception": str(observation.get("exception") or ""),
+                "rawResponse": raw_response,
+                "rawText": raw_text,
+            }
+        )
+    return normalized
+
+
+def _system_message_from_trajectory(trajectory: dict[str, Any]) -> dict[str, Any] | None:
+    for message in trajectory.get("messages") or []:
+        if isinstance(message, dict) and message.get("role") == "system":
+            normalized = _normalize_trace_messages({"messages": [message]})
+            return normalized[0] if normalized else None
+    system_template = (
+        trajectory.get("info", {})
+        .get("config", {})
+        .get("agent", {})
+        .get("system_template", "")
+    )
+    if system_template:
+        return {
+            "index": 0,
+            "role": "system",
+            "content": str(system_template),
+            "thought": "",
+            "bashCommand": "",
+            "pythonCode": "",
+            "done": False,
+            "finalResponse": "",
+            "interruptType": "",
+            "observation": {},
+            "command": "",
+            "returnCode": None,
+            "commandOutput": "",
+            "exception": "",
+            "rawResponse": {},
+            "rawText": "",
+        }
+    return None
+
+
+def _messages_from_step_files(task_dir: Path, trajectory: dict[str, Any], step_paths: list[Path]) -> list[dict[str, Any]]:
+    messages: list[dict[str, Any]] = []
+    raw_fallbacks = _raw_response_fallbacks_by_step(task_dir, step_paths)
+    system_message = _system_message_from_trajectory(trajectory)
+    if system_message is not None:
+        messages.append({**system_message, "index": 0})
+
+    for step_position, step_path in enumerate(step_paths, start=1):
+        step_payload = _load_json(step_path)
+        raw_response = step_payload.get("raw_response") if isinstance(step_payload.get("raw_response"), dict) else {}
+        raw_fallback = raw_fallbacks.get(step_path.name)
+        display_raw_response = _merge_raw_response(raw_response, raw_fallback)
+        bash_command = str(step_payload.get("bash_command") or step_payload.get("command_text") or "")
+        python_code = str(step_payload.get("python_code") or "")
+        thought = str(step_payload.get("thought") or raw_response.get("thought") or (raw_fallback or {}).get("thought") or "")
+        assistant_index = len(messages)
+        messages.append(
+            {
+                "index": assistant_index,
+                "role": "assistant",
+            "content": thought,
+            "thought": thought,
+                "bashCommand": bash_command,
+                "pythonCode": python_code,
+                "done": bool(step_payload.get("done", False)),
+                "finalResponse": str(step_payload.get("final_response") or raw_response.get("final_response") or ""),
+                "interruptType": f"step_{step_payload.get('step') or step_position}",
+                "observation": {},
+                "command": "",
+                "returnCode": None,
+                "commandOutput": "",
+                "exception": "",
+                "rawResponse": display_raw_response,
+                "rawText": _raw_text_from_payload(step_payload, raw_fallback),
+            }
+        )
+        outputs = step_payload.get("outputs") if isinstance(step_payload.get("outputs"), list) else []
+        for output_index, output in enumerate(outputs, start=1):
+            if not isinstance(output, dict):
+                continue
+            observation = output.get("observation") if isinstance(output.get("observation"), dict) else {}
+            user_index = len(messages)
+            messages.append(
+                {
+                    "index": user_index,
+                    "role": "user",
+                    "content": _message_content_text([{"type": "input_text", "text": str(observation.get("command_output") or output.get("output") or "")}]),
+                    "thought": "",
+                    "bashCommand": "",
+                    "pythonCode": "",
+                    "done": False,
+                    "finalResponse": "",
+                    "interruptType": f"observation_{step_payload.get('step') or step_position}.{output_index}",
+                    "observation": observation,
+                    "command": str(observation.get("command") or ""),
+                    "returnCode": observation.get("returncode"),
+                    "commandOutput": str(observation.get("command_output") or output.get("output") or ""),
+                    "exception": str(observation.get("exception") or output.get("exception_info") or ""),
+                    "rawResponse": {},
+                    "rawText": "",
+                }
+            )
+    return messages
+
+
 def _step_files(task_dir: Path) -> list[Path]:
     steps_dir = task_dir / "debug" / "steps"
     if not steps_dir.exists():
@@ -116,14 +355,21 @@ def _raw_screenshot(task_dir: Path, index: int) -> Path | None:
     return candidate if candidate.exists() else None
 
 
-def _build_step_detail(task_dir: Path, step_index: int, step_payload: dict[str, Any]) -> dict[str, Any]:
+def _build_step_detail(
+    task_dir: Path,
+    step_index: int,
+    step_payload: dict[str, Any],
+    raw_fallback: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     observation = _extract_observation(step_payload)
     screenshot = _raw_screenshot(task_dir, step_index) or _trajectory_screenshot(task_dir, step_index)
     screenshot_rel = str(screenshot.relative_to(task_dir)) if screenshot else ""
+    raw_response = step_payload.get("raw_response") if isinstance(step_payload.get("raw_response"), dict) else {}
+    thought = str(step_payload.get("thought") or raw_response.get("thought") or (raw_fallback or {}).get("thought") or "").strip()
     return {
         "index": step_index,
         "step": int(step_payload.get("step") or step_index + 1),
-        "thought": str(step_payload.get("thought") or "").strip(),
+        "thought": thought,
         "action": str(
             step_payload.get("command_text")
             or step_payload.get("bash_command")
@@ -140,7 +386,8 @@ def _build_step_detail(task_dir: Path, step_index: int, step_payload: dict[str, 
         "recentConsole": str(observation.get("recent_console") or "").strip(),
         "ariaSnapshot": str(observation.get("aria_snapshot") or "").strip(),
         "screenshotRelPath": screenshot_rel,
-        "rawResponse": step_payload.get("raw_response"),
+        "rawResponse": _merge_raw_response(raw_response, raw_fallback),
+        "rawText": _raw_text_from_payload(step_payload, raw_fallback),
     }
 
 
@@ -172,6 +419,7 @@ def _build_fallback_steps(task_dir: Path, result: dict[str, Any]) -> list[dict[s
                 "ariaSnapshot": "",
                 "screenshotRelPath": screenshot_rel,
                 "rawResponse": None,
+                "rawText": "",
             }
         )
     return steps
@@ -184,17 +432,29 @@ class RunRef:
 
 
 class TraceCatalog:
+    ROOT_RUN_ID = "__root__"
+
     def __init__(self, root_dir: Path):
         self.root_dir = root_dir.resolve()
 
+    def _is_run_dir(self, path: Path) -> bool:
+        return path.is_dir() and any((child / "result.json").exists() for child in path.iterdir() if child.is_dir())
+
     def _run_dir(self, run_id: str) -> Path:
+        if run_id == self.ROOT_RUN_ID:
+            return self.root_dir
         return _safe_join(self.root_dir, run_id)
 
     def _task_dir(self, run_id: str, task_id: str) -> Path:
         return _safe_join(self._run_dir(run_id), task_id)
 
     def _judge_files(self, run_dir: Path) -> list[Path]:
-        return sorted(run_dir.glob("WebJudge_*_auto_eval_results.json"))
+        files = list(run_dir.glob("WebJudge_*_auto_eval_results.json"))
+        sibling_pattern = f"{run_dir.name}_eval_*"
+        for sibling in sorted(run_dir.parent.glob(sibling_pattern)):
+            if sibling.is_dir():
+                files.extend(sibling.glob("WebJudge_*_auto_eval_results.json"))
+        return sorted(files)
 
     def _judge_entries_for_task(self, run_dir: Path, *, task_key: str, task_id: str) -> list[dict[str, Any]]:
         judge_entries: list[dict[str, Any]] = []
@@ -240,17 +500,28 @@ class TraceCatalog:
         if not self.root_dir.exists():
             return []
 
+        if self._is_run_dir(self.root_dir):
+            task_count = sum(1 for item in self.root_dir.iterdir() if (item / "result.json").exists())
+            return [
+                {
+                    "id": self.ROOT_RUN_ID,
+                    "name": self.root_dir.name,
+                    "taskCount": task_count,
+                    "updatedAt": _isoformat_mtime(self.root_dir),
+                }
+            ]
+
+        run_dirs = [path for path in self.root_dir.rglob("*") if self._is_run_dir(path)]
         runs: list[dict[str, Any]] = []
-        for child in sorted(self.root_dir.iterdir(), key=lambda path: path.stat().st_mtime, reverse=True):
-            if not child.is_dir():
-                continue
+        for child in sorted(run_dirs, key=lambda path: path.stat().st_mtime, reverse=True):
             task_count = sum(1 for item in child.iterdir() if (item / "result.json").exists())
+            run_id = str(child.relative_to(self.root_dir))
             if not task_count:
                 continue
             runs.append(
                 {
-                    "id": child.name,
-                    "name": child.name,
+                    "id": run_id,
+                    "name": run_id,
                     "taskCount": task_count,
                     "updatedAt": _isoformat_mtime(child),
                 }
@@ -268,14 +539,22 @@ class TraceCatalog:
             if not result_path.exists():
                 continue
             result = _load_json(result_path)
+            resolved_task_id = str(result.get("task_id") or task_dir.name)
+            judges = self._judge_entries_for_task(run_dir, task_key=task_dir.name, task_id=resolved_task_id)
+            best_judge_status = "unknown"
+            if any(judge.get("status") == "success" for judge in judges):
+                best_judge_status = "success"
+            elif any(judge.get("status") == "failure" for judge in judges):
+                best_judge_status = "failure"
             step_count = len(_step_files(task_dir)) or len(result.get("action_history", []))
             final_text = str(result.get("final_result_response") or result.get("submission") or "")
             tasks.append(
                 {
                     "id": task_dir.name,
-                    "taskId": str(result.get("task_id") or task_dir.name),
+                    "taskId": resolved_task_id,
                     "title": str(result.get("task") or ""),
                     "status": _status_from_result(result),
+                    "judgeStatus": best_judge_status,
                     "stepCount": step_count,
                     "finalPreview": _preview_text(final_text),
                     "updatedAt": _isoformat_mtime(result_path),
@@ -291,9 +570,17 @@ class TraceCatalog:
             raise FileNotFoundError(f"Task '{task_id}' was not found in run '{run_id}'.")
 
         result = _load_json(result_path)
+        trajectory: dict[str, Any] = {}
+        trajectory_path = task_dir / "trajectory.json"
+        if trajectory_path.exists():
+            trajectory = _load_json(trajectory_path)
         step_paths = _step_files(task_dir)
         if step_paths:
-            steps = [_build_step_detail(task_dir, idx, _load_json(path)) for idx, path in enumerate(step_paths)]
+            raw_fallbacks = _raw_response_fallbacks_by_step(task_dir, step_paths)
+            steps = [
+                _build_step_detail(task_dir, idx, _load_json(path), raw_fallbacks.get(path.name))
+                for idx, path in enumerate(step_paths)
+            ]
         else:
             steps = _build_fallback_steps(task_dir, result)
 
@@ -315,6 +602,7 @@ class TraceCatalog:
             "judges": judges,
             "result": result,
             "steps": steps,
+            "messages": _messages_from_step_files(task_dir, trajectory, step_paths) if step_paths else _normalize_trace_messages(trajectory),
         }
 
     def artifact(self, run_id: str, task_id: str, file_rel_path: str) -> Path:

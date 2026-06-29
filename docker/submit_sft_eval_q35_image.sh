@@ -51,7 +51,8 @@ echo "[submit_sft_eval_q35_image] EVAL_CONFIG=$EVAL_CONFIG (EVAL_AFTER=1, tag=$E
 echo "[submit_sft_eval_q35_image] PRIORITY=$PRIORITY CLASS=$PRIORITY_CLASS_NAME PROJECT=$PROJECT_NAME"
 
 # Forward both phases' knobs. EVAL_AFTER=1 flips on the eval chaining inside
-# run_sft_q35_image.sh after a successful train + ckpt sync.
+# run_sft_q35_image.sh after a successful train + ckpt sync. The SFT driver
+# uploads the final ckpt to blob by default; set AZBLOB_AUTO_PUSH=0 to disable.
 EXTRA_ENV="SFT_CONFIG=${SFT_CONFIG},NPROC=${GPUS},EVAL_AFTER=1,EVAL_CONFIG=${EVAL_CONFIG},EVAL_RUN_TAG=${EVAL_RUN_TAG}"
 [[ -n "${AZBLOB_AUTO_PUSH:-}" ]] && EXTRA_ENV="${EXTRA_ENV},AZBLOB_AUTO_PUSH=${AZBLOB_AUTO_PUSH}"
 [[ -n "${AZBLOB_SAS_TOKEN:-}" ]] && EXTRA_ENV="${EXTRA_ENV},AZBLOB_SAS_TOKEN=${AZBLOB_SAS_TOKEN}"

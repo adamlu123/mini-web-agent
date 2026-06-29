@@ -1,0 +1,25 @@
+model:
+  model_class: openai_compatible
+  model_name: qwen35_9b_base
+  endpoint: http://127.0.0.1:8000/v1/chat/completions
+  api_key: dummy
+  request_timeout_seconds: 240
+  max_output_tokens: 12000
+  response_mode: json_schema
+  attach_observation_screenshot: false
+
+environment:
+  credentials_file:
+  browser_mode: local
+  env:
+    WEB_AGENT_POLICY_URL: http://127.0.0.1:8000/v1/chat/completions
+    WEB_AGENT_POLICY_MODEL: qwen35_9b_base
+    OPENAI_COMPATIBLE_ENDPOINT: http://127.0.0.1:8000/v1/chat/completions
+    OPENAI_COMPATIBLE_MODEL: qwen35_9b_base
+    OPENAI_COMPATIBLE_API_KEY: dummy
+    OPENAI_GATEWAY_ENDPOINT: http://127.0.0.1:8000/v1/chat/completions
+    OPENAI_GATEWAY_MODEL: qwen35_9b_base
+    MWA_BROWSER_BACKEND: local
+
+agent:
+  judge_mode: tool

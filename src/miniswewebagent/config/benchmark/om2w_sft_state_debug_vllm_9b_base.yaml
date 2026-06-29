@@ -1,0 +1,134 @@
+# OM2W eval config based on best_default_judge_json.yaml, but using the
+# train-aligned SFT state debug prompt assets:
+#   SFT_STATE_DEBUG_SYSTEM
+#   SFT_STATE_DEBUG_INSTRUCTIONS
+#
+# Runtime prompt replacement is handled by miniswewebagent.run.mini via
+# agent.prompt_mode: sft_state_debug.
+
+model:
+  model_class: openai_compatible
+  model_name: qwen35_9b_base
+  endpoint: http://127.0.0.1:8000/v1/chat/completions
+  api_key: dummy
+  request_timeout_seconds: 240
+  max_output_tokens: 4096
+  response_mode: sft_state
+  attach_observation_screenshot: false
+  observation_template: |
+    Observation:
+    Status: {{ 'ok' if observation.success else 'error' }}
+    Workspace: /workspace
+    Working directory: /workspace
+    Command: {{ observation.command }}
+    Return code: {{ observation.returncode }}
+    {% if observation.exception %}Exception:
+    {{ observation.exception }}
+    {% endif %}{% if observation.command_output %}Command output:
+    {{ observation.command_output }}
+    {% endif %}{% if observation.final_script_path %}final_script.py: /workspace/final_script.py
+    {% endif %}{% if observation.workspace_files %}Recent workspace files:
+    {{ observation.workspace_files | join('\n') }}
+    {% endif %}{% if observation.recent_screenshots %}Recent screenshots:
+    {{ observation.recent_screenshots | join('\n') }}
+    {% endif %}
+  format_error_template: |
+    Format error:
+
+    {{ error }}
+
+    Respond in exactly this unified SFT state format and nothing else:
+    <think>
+    reasoning
+    </think>
+    <bash>
+    exactly one shell command, or empty when done is true
+    </bash>
+    <done>false</done>
+    <final_response></final_response>
+
+    If the task is fully complete and verified, use:
+    <think>
+    final verification reasoning
+    </think>
+    <bash>
+    </bash>
+    <done>true</done>
+    <final_response>
+    final response
+    </final_response>
+
+environment:
+  environment_class: local_workspace
+  start_url:
+  output_dir: outputs/sft_state_debug_vllm_base
+  command_timeout_seconds: 240
+  shell: /bin/bash
+  credentials_file: /data/t-yifeili/webchain_sampling/cred.sh
+  task_metadata_filename: task.json
+  final_script_name: final_script.py
+  output_truncation_chars: 24000
+  final_script_preview_chars: 4000
+  recent_files_limit: 40
+  workspace_alias: /workspace
+  prepend_tools_to_pythonpath: true
+  prefer_current_python: true
+  env:
+    PAGER: cat
+    MANPAGER: cat
+    LESS: -R
+    PIP_PROGRESS_BAR: 'off'
+    TQDM_DISABLE: '1'
+    BROWSER_MODE: browserbase
+    MWA_BROWSER_BACKEND: browserbase
+    MWA_BROWSER_WIDTH: '1280'
+    MWA_BROWSER_HEIGHT: '1800'
+    WEB_AGENT_POLICY_URL: http://127.0.0.1:8000/v1/chat/completions
+    WEB_AGENT_POLICY_MODEL: qwen35_9b_base
+    OPENAI_COMPATIBLE_ENDPOINT: http://127.0.0.1:8000/v1/chat/completions
+    OPENAI_COMPATIBLE_MODEL: qwen35_9b_base
+    OPENAI_COMPATIBLE_API_KEY: dummy
+    OPENAI_GATEWAY_ENDPOINT: http://127.0.0.1:8000/v1/chat/completions
+    OPENAI_GATEWAY_MODEL: qwen35_9b_base
+
+run:
+  tasks_file: src/miniswewebagent/run/benchmarks/om2w_260220.json
+  task_level: all
+  parallel_processes: 1
+  judge_enabled: true
+  judge_model: o4-mini
+  judge_endpoint: http://gateway.phyagi.net/api/responses
+  judge_python: /data/t-yifeili/miniconda3/envs/echo-rl/bin/python
+  judge_script: /data/t-yifeili/mini-web-agent/om2w_judge/run.py
+  judge_runs: 1
+  logs_root: logs
+
+agent:
+  agent_class: default
+  prompt_mode: sft_state_debug
+  debug_log: true
+  output_path:
+  step_limit: 100
+  require_self_reflection_success: true
+  judge_mode: tool
+  judge_model: o4-mini
+  judge_gateway_endpoint: ""
+  judge_score_threshold: 3
+  summary_every_n_steps: 10
+  summary_max_output_tokens: 2048
+  summary_response_mode: summary_text
+  summary_user_prompt: |
+    You are about to have your working context compacted to save tokens.
+
+    Write a concise but COMPLETE summary of everything relevant from the conversation above so that a fresh
+    agent with only this summary (plus the original system prompt and task instructions) can continue the
+    task without losing progress. Include:
+
+    - The original task goal and all critical points / constraints.
+    - The workspace directory and key file paths (plan.md, judge_config.json, final_script.py, final_runs/).
+    - Which critical points have been satisfied, which are still open, and any known blockers.
+    - Key findings from prior exploration (working selectors, URLs, ARIA labels, pitfalls to avoid).
+    - The latest final_runs/run_<id> state, most recent self_reflection verdict, and the next action to take.
+
+    Write the summary as plain prose and bullet lists. Do NOT issue a new bash_command. Do NOT set done=true.
+    Put the entire summary in the `thought` field (or equivalent text field) and leave action fields empty.

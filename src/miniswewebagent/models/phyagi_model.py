@@ -167,6 +167,20 @@ def _strip_cdata(value: str) -> str:
     return stripped
 
 
+def _extract_sft_think_values(raw: str) -> list[str]:
+    values = _extract_xml_tag_values(raw, "think")
+    if values:
+        return values
+
+    # Some SFT checkpoints learn an assistant-prefill style where the opening
+    # <think> is omitted but the closing tag is still emitted before <bash>/<answer>.
+    match = re.search(r"(?is)^\s*(.*?)\s*</think\s*>", raw)
+    if not match:
+        return []
+    thought = match.group(1).strip()
+    return [thought] if thought else []
+
+
 def _parse_xml_bool(value: str) -> bool:
     normalized = value.strip().lower()
     if normalized in {"true", "1", "yes"}:
@@ -223,7 +237,7 @@ def parse_xml_output(raw: str) -> dict[str, Any]:
 
 
 def parse_bash_answer_output(raw: str) -> dict[str, Any]:
-    think_values = _extract_xml_tag_values(raw, "think")
+    think_values = _extract_sft_think_values(raw)
     bash_values = _extract_xml_tag_values(raw, "bash")
     answer_values = _extract_xml_tag_values(raw, "answer")
     thought = _strip_cdata(think_values[-1]) if think_values else ""
@@ -243,6 +257,31 @@ def parse_bash_answer_output(raw: str) -> dict[str, Any]:
         "python_code": "",
         "done": bool(final_responses),
         "final_response": final_responses[0] if final_responses else "",
+    }
+
+
+def parse_sft_state_output(raw: str) -> dict[str, Any]:
+    think_values = _extract_sft_think_values(raw)
+    bash_values = _extract_xml_tag_values(raw, "bash")
+    done_values = _extract_xml_tag_values(raw, "done")
+    final_response_values = _extract_xml_tag_values(raw, "final_response")
+    if not done_values:
+        raise ValueError("Unable to parse SFT state output: missing <done>.")
+    if not final_response_values:
+        raise ValueError("Unable to parse SFT state output: missing <final_response>.")
+    done = _parse_xml_bool(_strip_cdata(done_values[-1]))
+    bash_command = _strip_cdata(bash_values[-1]) if bash_values else ""
+    final_response = _strip_cdata(final_response_values[-1])
+    if done and bash_command:
+        raise ValueError("SFT state output with <done>true</done> must leave <bash> empty.")
+    if not done and not bash_command:
+        raise ValueError("SFT state output with <done>false</done> must contain one <bash> command.")
+    return {
+        "thought": _strip_cdata(think_values[-1]) if think_values else "",
+        "bash_command": bash_command,
+        "python_code": "",
+        "done": done,
+        "final_response": final_response,
     }
 
 
@@ -589,6 +628,16 @@ class PhyagiModel:
         }
 
     def _parse_model_output(self, raw_text: str) -> dict[str, Any]:
+        if self.config.response_mode == "summary_text":
+            return {
+                "thought": raw_text.strip(),
+                "bash_command": "",
+                "python_code": "",
+                "done": False,
+                "final_response": "",
+            }
+        if self.config.response_mode == "sft_state":
+            return parse_sft_state_output(raw_text)
         if self.config.response_mode in {"sft_bash", "bash_answer"}:
             return parse_bash_answer_output(raw_text)
         if self.config.response_mode == "xml":
@@ -763,6 +812,7 @@ class PhyagiModel:
                 "done": bool(parsed.get("done", False)),
                 "final_response": parsed.get("final_response", ""),
                 "raw_response": parsed,
+                "raw_text": raw_text,
                 "usage": self._usage_snapshot(),
             },
         )

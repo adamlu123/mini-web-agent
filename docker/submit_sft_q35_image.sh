@@ -40,9 +40,9 @@ export PROJECT_NAME="${PROJECT_NAME:-cua}"
 echo "[submit_sft_q35_image] NODES=$NODES GPUS=$GPUS (total $((NODES*GPUS)) GPUs) IMAGE=$IMAGE CONFIG=$CONFIG"
 echo "[submit_sft_q35_image] PRIORITY=$PRIORITY CLASS=$PRIORITY_CLASS_NAME PROJECT=$PROJECT_NAME"
 
-# Optional Azure-Blob auto-upload of the final ckpt (so a dev box can pull it
-# even after a pod reschedule). Set AZBLOB_AUTO_PUSH=1; for pods without
-# workload-identity also pass a SAS: AZBLOB_SAS_TOKEN=$(bash scripts/az_ckpt.sh sas | cut -d"'" -f2).
+# Azure-Blob auto-upload of the final ckpt is enabled by default in the training
+# driver. Set AZBLOB_AUTO_PUSH=0 to disable; for pods without workload-identity
+# also pass a SAS: AZBLOB_SAS_TOKEN=$(bash scripts/az_ckpt.sh sas | cut -d"'" -f2).
 # A SAS contains no commas and the submitter splits each pair on the first '=',
 # so it survives --extra-env-vars intact.
 EXTRA_ENV="SFT_CONFIG=${CONFIG},NPROC=${GPUS}"

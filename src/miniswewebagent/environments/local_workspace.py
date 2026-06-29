@@ -289,6 +289,9 @@ class LocalWorkspaceEnvironment:
             "workspace_dir": self._display_path(self._workspace_dir()),
             "task_metadata_path": self._display_path(self._task_metadata_path()),
             "final_script_path": self._display_path(self._final_script_path()),
+            "browser_mode": str(
+                self.config.env.get("BROWSER_MODE") or self.config.env.get("MWA_BROWSER_BACKEND") or ""
+            ),
             **kwargs,
         }
 

@@ -81,7 +81,7 @@ agent:
   agent_class: default
   debug_log: true
   output_path: outputs/default/trajectory.json
-  step_limit: 300
+  step_limit: 30
   require_self_reflection_success: true
   # Completion-gate judge. "tool" = read final_runs/run_<id>/judge_result.json
   # written by miniswewebagent.tools.self_reflection. "om2w" = run the upstream
@@ -93,7 +93,7 @@ agent:
   judge_model: o4-mini
   judge_gateway_endpoint: http://gateway.phyagi.net/api/responses
   judge_score_threshold: 3
-  summary_every_n_steps: 20
+  summary_every_n_steps: 10
 
   system_template: |
     You are a benchmark-oriented Online-Mind2Web agent operating through a local terminal + workspace harness.

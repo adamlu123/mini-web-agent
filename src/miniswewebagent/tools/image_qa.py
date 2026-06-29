@@ -6,6 +6,7 @@ import json
 import mimetypes
 import os
 import random
+import re
 import sys
 import time
 from pathlib import Path
@@ -64,17 +65,50 @@ def _normalize_image_paths(
 
 
 def _gateway_config(args: argparse.Namespace) -> tuple[str, str, str]:
+    endpoint = (
+        args.endpoint
+        or os.environ.get("WEB_AGENT_POLICY_URL", "")
+        or os.environ.get("OPENAI_COMPATIBLE_ENDPOINT", "")
+        or os.environ.get("OPENAI_GATEWAY_ENDPOINT", "")
+        or "http://gateway.phyagi.net/api/responses"
+    )
+    endpoint = _normalize_endpoint(endpoint)
+    model = (
+        args.model
+        or os.environ.get("WEB_AGENT_POLICY_MODEL", "")
+        or os.environ.get("OPENAI_COMPATIBLE_MODEL", "")
+        or os.environ.get("OPENAI_GATEWAY_MODEL", "gpt-5.4")
+    )
     api_key = (
         args.api_key
+        or os.environ.get("OPENAI_COMPATIBLE_API_KEY", "")
         or os.environ.get("OPENAI_GATEWAY_API_KEY", "")
         or os.environ.get("PHYAGI_API_KEY", "")
     )
+    if not api_key and _is_chat_completions_endpoint(endpoint):
+        api_key = "dummy"
     if not api_key:
         raise RuntimeError("Missing OPENAI_GATEWAY_API_KEY or PHYAGI_API_KEY.")
-
-    endpoint = args.endpoint or "http://gateway.phyagi.net/api/responses"
-    model = args.model or os.environ.get("OPENAI_GATEWAY_MODEL", "gpt-5.4")
     return api_key, endpoint, model
+
+
+def _is_chat_completions_endpoint(endpoint: str) -> bool:
+    return "/chat/completions" in endpoint
+
+
+def _normalize_endpoint(endpoint: str) -> str:
+    value = endpoint.strip()
+    if not value:
+        return value
+    if value.endswith("/v1/chat/completions") or value.endswith("/chat/completions"):
+        return value
+    if value.endswith("/responses") or value.endswith("/api/responses"):
+        return value
+    if value.endswith("/v1") or value.endswith("/v1/"):
+        return value.rstrip("/") + "/chat/completions"
+    if value.startswith("http://") or value.startswith("https://"):
+        return value.rstrip("/") + "/v1/chat/completions"
+    return value
 
 
 def _sleep_backoff(attempt: int, base_delay: float) -> float:
@@ -138,6 +172,18 @@ def run_image_qa(
     retry_base_delay: float = 1.0,
 ) -> dict[str, Any]:
     resolved_image_paths = _normalize_image_paths(image_path=image_path, image_paths=image_paths)
+    if _is_chat_completions_endpoint(endpoint):
+        return _run_image_qa_chat_completions(
+            image_paths=resolved_image_paths,
+            question=question,
+            api_key=api_key,
+            endpoint=endpoint,
+            model=model,
+            timeout_seconds=timeout_seconds,
+            max_attempts=max_attempts,
+            retry_base_delay=retry_base_delay,
+        )
+
     payload = {
         "model": model,
         "input": [
@@ -195,6 +241,99 @@ def run_image_qa(
     }
     if len(resolved_image_paths) == 1:
         result["image_path"] = str(resolved_image_paths[0])
+    return result
+
+
+def _extract_chat_text(payload: dict[str, Any]) -> str:
+    choices = payload.get("choices") or []
+    if not choices:
+        return ""
+    message = choices[0].get("message") or {}
+    content = message.get("content", "")
+    if isinstance(content, list):
+        return "\n".join(part.get("text", "") for part in content if isinstance(part, dict))
+    return str(content or "")
+
+
+def _parse_json_object(raw_text: str) -> dict[str, Any]:
+    raw_text = raw_text.strip()
+    try:
+        parsed = json.loads(raw_text)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", raw_text, re.DOTALL)
+        if not match:
+            raise
+        parsed = json.loads(match.group(0))
+    if not isinstance(parsed, dict):
+        raise ValueError("image_qa response was not a JSON object")
+    return parsed
+
+
+def _run_image_qa_chat_completions(
+    *,
+    image_paths: list[Path],
+    question: str,
+    api_key: str,
+    endpoint: str,
+    model: str,
+    timeout_seconds: int,
+    max_attempts: int,
+    retry_base_delay: float,
+) -> dict[str, Any]:
+    system_prompt = (
+        "Answer the user's question using only visible evidence from the provided image or images. "
+        "If the answer is not visible, say so instead of guessing. Reply with one JSON object only, "
+        "with keys answer, evidence, unknown, and confidence. Use evidence as a list of strings, "
+        "unknown as a boolean, and confidence as a number from 0 to 1."
+    )
+    content: list[dict[str, Any]] = [{"type": "text", "text": _build_prompt(question)}]
+    content.extend(
+        {
+            "type": "image_url",
+            "image_url": {"url": _high_detail_image_part_from_path(path)["image_url"]},
+        }
+        for path in image_paths
+    )
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": content},
+        ],
+        "max_completion_tokens": 1024,
+        "temperature": 0.0,
+    }
+
+    with httpx.Client(timeout=timeout_seconds) as client:
+        response = _post_with_retry(
+            client,
+            endpoint,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            json_body=payload,
+            max_attempts=max_attempts,
+            base_delay=retry_base_delay,
+        )
+        response_payload = response.json()
+
+    parsed = _parse_json_object(_extract_chat_text(response_payload))
+    evidence = parsed.get("evidence", [])
+    if isinstance(evidence, str):
+        evidence = [evidence]
+    elif not isinstance(evidence, list):
+        evidence = [str(evidence)]
+    result = {
+        "image_paths": [str(path) for path in image_paths],
+        "question": question,
+        "answer": str(parsed.get("answer", "")),
+        "evidence": evidence,
+        "unknown": bool(parsed.get("unknown", False)),
+        "confidence": parsed.get("confidence", 0),
+    }
+    if len(image_paths) == 1:
+        result["image_path"] = str(image_paths[0])
     return result
 
 

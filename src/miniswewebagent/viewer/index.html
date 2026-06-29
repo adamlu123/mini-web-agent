@@ -25,6 +25,25 @@
             <span>Search Tasks</span>
             <input id="taskSearch" type="search" placeholder="task id, title, or final response" />
           </label>
+          <label class="control">
+            <span>Trace</span>
+            <select id="traceStatusFilter">
+              <option value="all">All</option>
+              <option value="submitted">Submitted</option>
+              <option value="finished">Finished</option>
+              <option value="incomplete">Incomplete</option>
+              <option value="error">Error</option>
+            </select>
+          </label>
+          <label class="control">
+            <span>Judge</span>
+            <select id="judgeStatusFilter">
+              <option value="all">All</option>
+              <option value="success">Passed</option>
+              <option value="failure">Failed</option>
+              <option value="unknown">Unknown</option>
+            </select>
+          </label>
           <button id="refreshBtn" type="button">Refresh</button>
         </div>
         <div class="meta-row">
@@ -44,6 +63,8 @@
               <span class="legend-chip finished">Finished</span>
               <span class="legend-chip incomplete">Incomplete</span>
               <span class="legend-chip error">Error</span>
+              <span class="legend-chip success">Judge Pass</span>
+              <span class="legend-chip failure">Judge Fail</span>
             </div>
           </div>
           <ul id="taskList" class="task-list"></ul>
@@ -115,6 +136,20 @@
                 <pre id="judgeResponse">-</pre>
               </div>
             </div>
+          </section>
+
+          <section class="conversation-card card">
+            <div class="conversation-header">
+              <div>
+                <h2>Conversation</h2>
+                <p>System prompt, user observations, assistant thoughts, commands, and outputs.</p>
+              </div>
+              <div class="step-nav">
+                <button id="expandMessagesBtn" type="button">Expand</button>
+                <button id="collapseMessagesBtn" type="button">Collapse</button>
+              </div>
+            </div>
+            <div id="messageList" class="message-list"></div>
           </section>
 
           <section class="step-card card">

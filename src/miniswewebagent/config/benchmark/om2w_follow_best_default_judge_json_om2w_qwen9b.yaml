@@ -1,0 +1,39 @@
+# 覆盖配置：在 best_default_judge_json_om2w.yaml 基础上，将策略模型、image_qa、self_reflection 都切到本地 9B/vLLM。
+# 使用方式示例：
+# python -m miniswewebagent.run.benchmarks.om2w \
+#   -c best_default_judge_json_om2w.yaml \
+#   -c benchmark/om2w_follow_best_default_judge_json_om2w_qwen9b.yaml \
+#   --task-level easy --limit 3 --workers 1
+
+model:
+  model_class: openai_compatible
+  model_name: qwen35_9b_base
+  endpoint: http://127.0.0.1:8000/v1/chat/completions
+  api_key: dummy
+  request_timeout_seconds: 240
+  max_output_tokens: 12000
+  response_mode: json_schema
+  attach_observation_screenshot: false
+
+environment:
+  env:
+    WEB_AGENT_POLICY_URL: http://127.0.0.1:8000/v1/chat/completions
+    WEB_AGENT_POLICY_MODEL: qwen35_9b_base
+    OPENAI_COMPATIBLE_ENDPOINT: http://127.0.0.1:8000/v1/chat/completions
+    OPENAI_COMPATIBLE_MODEL: qwen35_9b_base
+    OPENAI_COMPATIBLE_API_KEY: dummy
+    OPENAI_GATEWAY_MODEL: qwen35_9b_base
+
+run:
+  tasks_file: src/miniswewebagent/run/benchmarks/om2w_260220.json
+  logs_root: logs
+  judge_model: o4-mini
+  judge_endpoint: ""
+  judge_python:
+  judge_script:
+
+agent:
+  step_limit: 30
+  judge_mode: tool
+  summary_every_n_steps: 10
+  judge_model: o4-mini

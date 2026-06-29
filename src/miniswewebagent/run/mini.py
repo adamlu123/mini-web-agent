@@ -58,11 +58,34 @@ def _apply_auto_model_overrides(
 
 def _apply_prompt_mode(config: dict[str, Any]) -> None:
     agent_cfg = config.setdefault("agent", {})
-    if str(agent_cfg.get("prompt_mode", "")).strip().lower() != "sft":
+    prompt_mode = str(agent_cfg.get("prompt_mode", "")).strip().lower()
+    if prompt_mode not in {"sft", "sft_state", "sft_state_debug"}:
         return
-    from echo_rl.web_agent.prompts import SFT_INSTRUCTIONS, SFT_SYSTEM
+    from echo_rl.web_agent.prompts import (
+        SFT_INSTRUCTIONS,
+        SFT_STATE_DEBUG_INSTRUCTIONS,
+        SFT_STATE_DEBUG_SYSTEM,
+        SFT_STATE_INSTRUCTIONS,
+        SFT_STATE_SYSTEM,
+        SFT_SYSTEM,
+    )
 
-    agent_cfg["system_template"] = SFT_SYSTEM
+    if prompt_mode == "sft_state_debug":
+        base_system = SFT_STATE_DEBUG_SYSTEM
+        base_instructions = SFT_STATE_DEBUG_INSTRUCTIONS
+    elif prompt_mode == "sft_state":
+        base_system = SFT_STATE_SYSTEM
+        base_instructions = SFT_STATE_INSTRUCTIONS
+    else:
+        base_system = SFT_SYSTEM
+        base_instructions = SFT_INSTRUCTIONS
+
+    extra_instructions = str(agent_cfg.get("sft_extra_instructions") or "").strip()
+    instructions = base_instructions
+    if extra_instructions:
+        instructions = f"{instructions.rstrip()}\n\n{extra_instructions}\n"
+
+    agent_cfg["system_template"] = base_system
     agent_cfg["instance_template"] = (
         "Task: {{ task }}\n"
         "Task ID: {{ task_id }}\n"
@@ -70,7 +93,7 @@ def _apply_prompt_mode(config: dict[str, Any]) -> None:
         "Workspace root: /workspace\n"
         "Task metadata JSON: /workspace/task.json\n"
         "Required final script path: /workspace/final_script.py\n\n"
-        + SFT_INSTRUCTIONS
+        + instructions
     )
 
 

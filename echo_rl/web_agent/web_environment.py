@@ -298,7 +298,7 @@ class WebAgentEnvironment:
         if not self._is_setup:
             raise RuntimeError("setup() must be called before exec().")
         self._turn += 1
-        timeout = float(timeout) if timeout is not None else 30.0
+        timeout = float(timeout) if timeout is not None else 120.0
         command = command.strip()
         # SFT alignment: the model was trained on a harness where the workspace
         # literally was `/workspace`. There is no container here, so map the

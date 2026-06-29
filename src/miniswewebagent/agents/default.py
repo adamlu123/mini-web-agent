@@ -31,6 +31,15 @@ task without losing progress. Include:
 Write the summary as plain prose and bullet lists. Do NOT issue a new bash_command. Do NOT set done=true.
 Put the entire summary in the `thought` field (or equivalent text field) and leave action fields empty."""
 
+_BAD_COMPACT_SUMMARIES = {
+    "",
+    "task complete.",
+    "task complete",
+    "done.",
+    "done",
+    "(empty summary)",
+}
+
 
 class AgentConfig(BaseModel):
     system_template: str
@@ -47,6 +56,8 @@ class AgentConfig(BaseModel):
     judge_score_threshold: int = 3
     summary_every_n_steps: int = 0
     summary_user_prompt: str = DEFAULT_SUMMARY_USER_PROMPT
+    summary_max_output_tokens: int = 0
+    summary_response_mode: str = ""
     output_path: Path | None = None
 
 
@@ -66,6 +77,24 @@ def _observation_for_markdown(observation: dict[str, Any], *, model_usage: dict[
     if model_usage:
         cloned["model_usage"] = copy.deepcopy(model_usage)
     return cloned
+
+
+def _message_content_for_markdown(content: Any) -> str:
+    if isinstance(content, list):
+        parts: list[str] = []
+        for part in content:
+            if not isinstance(part, dict):
+                parts.append(str(part))
+                continue
+            part_type = part.get("type")
+            if part_type in {"text", "input_text"}:
+                parts.append(str(part.get("text", "")))
+            elif part_type in {"image_url", "input_image"}:
+                parts.append("[image omitted]")
+            else:
+                parts.append(json.dumps(part, indent=2, ensure_ascii=False))
+        return "\n".join(part for part in parts if part)
+    return str(content or "")
 
 
 def _action_text(action: dict[str, Any]) -> str:
@@ -231,6 +260,7 @@ class DefaultAgent:
             "bash_command": bash_command_text,
             "command_text": action_text,
             "raw_response": extra.get("raw_response", {}),
+            "raw_text": extra.get("raw_text", ""),
             "done": extra.get("done", False),
             "final_response": extra.get("final_response", ""),
             "outputs": outputs or [],
@@ -273,6 +303,85 @@ class DefaultAgent:
                 handle.write(f"{json.dumps(markdown_observation, indent=2)}\n")
                 handle.write("```\n\n")
 
+    def _write_debug_request_artifact(self, *, step_index: int, messages: list[dict[str, Any]]) -> None:
+        if not self.config.debug_log:
+            return
+        debug_dir = self._debug_dir()
+        if debug_dir is None:
+            return
+
+        requests_dir = debug_dir / "requests"
+        user_messages_dir = debug_dir / "user_messages"
+        serialized_requests_dir = debug_dir / "serialized_requests"
+        requests_dir.mkdir(parents=True, exist_ok=True)
+        user_messages_dir.mkdir(parents=True, exist_ok=True)
+        serialized_requests_dir.mkdir(parents=True, exist_ok=True)
+
+        sanitized_messages = [_sanitize_message_for_disk(message) for message in messages]
+        user_messages = [
+            {
+                "message_index": message_index,
+                "content": message.get("content", ""),
+            }
+            for message_index, message in enumerate(sanitized_messages)
+            if message.get("role") == "user"
+        ]
+        latest_user_message = user_messages[-1] if user_messages else None
+        payload = {
+            "step": step_index,
+            "messages": sanitized_messages,
+            "user_messages": user_messages,
+            "latest_user_message": latest_user_message,
+        }
+        (requests_dir / f"request_{step_index:04d}.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+        request_markdown_path = requests_dir / f"request_{step_index:04d}.md"
+        with request_markdown_path.open("w", encoding="utf-8") as handle:
+            handle.write(f"# Step {step_index} Model Request\n\n")
+            for message_index, message in enumerate(sanitized_messages, start=1):
+                role = str(message.get("role", ""))
+                handle.write(f"## Message {message_index}: {role}\n\n")
+                handle.write("```text\n")
+                handle.write(_message_content_for_markdown(message.get("content", "")))
+                handle.write("\n```\n\n")
+
+        user_markdown_path = user_messages_dir / f"step_{step_index:04d}.md"
+        with user_markdown_path.open("w", encoding="utf-8") as handle:
+            handle.write(f"# Step {step_index} User Messages\n\n")
+            if not user_messages:
+                handle.write("No user messages in this request.\n")
+            else:
+                for user_message_index, message in enumerate(user_messages, start=1):
+                    handle.write(f"## User Message {user_message_index} (request index {message['message_index']})\n\n")
+                    handle.write("```text\n")
+                    handle.write(_message_content_for_markdown(message.get("content", "")))
+                    handle.write("\n```\n\n")
+
+        serialize_request_for_debug = getattr(self.model, "serialize_request_for_debug", None)
+        if not callable(serialize_request_for_debug):
+            return
+        try:
+            serialized_request = serialize_request_for_debug(messages)
+        except Exception as exc:  # noqa: BLE001 - debug logging must not break eval
+            serialized_request = {"error": repr(exc)}
+
+        (serialized_requests_dir / f"request_{step_index:04d}.json").write_text(
+            json.dumps(serialized_request, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        serialized_markdown_path = serialized_requests_dir / f"request_{step_index:04d}.md"
+        with serialized_markdown_path.open("w", encoding="utf-8") as handle:
+            handle.write(f"# Step {step_index} Serialized Model Request\n\n")
+            if "error" in serialized_request:
+                handle.write(f"Serialization error: {serialized_request['error']}\n")
+                return
+            for message_index, message in enumerate(serialized_request.get("messages", []), start=1):
+                role = str(message.get("role", ""))
+                handle.write(f"## Message {message_index}: {role}\n\n")
+                handle.write("```text\n")
+                handle.write(_message_content_for_markdown(message.get("content", "")))
+                handle.write("\n```\n\n")
+
     def get_template_vars(self, **kwargs) -> dict[str, Any]:
         return recursive_merge(
             self.config.model_dump(),
@@ -286,11 +395,47 @@ class DefaultAgent:
     def _render_template(self, template: str) -> str:
         return Template(template, undefined=StrictUndefined).render(**self.get_template_vars())
 
-    def _plan_md_message(self) -> dict[str, Any] | None:
+    def _host_workspace_dir(self) -> Path | None:
+        """Return the real filesystem workspace path, not the model-facing alias."""
+        try:
+            serialized = self.env.serialize()
+        except Exception:  # noqa: BLE001 - fall back to template vars for nonstandard envs
+            serialized = {}
+        env_info = serialized.get("environment", {}) if isinstance(serialized, dict) else {}
+        if isinstance(env_info, dict):
+            workspace_dir = env_info.get("workspace_dir")
+            if workspace_dir:
+                return Path(str(workspace_dir))
+
         workspace_dir = self.get_template_vars().get("workspace_dir")
         if not workspace_dir:
             return None
-        plan_path = Path(workspace_dir) / "plan.md"
+        return Path(str(workspace_dir))
+
+    def _agent_workspace_dir(self) -> str:
+        workspace_dir = self.get_template_vars().get("workspace_dir")
+        if workspace_dir:
+            return str(workspace_dir)
+        host_workspace_dir = self._host_workspace_dir()
+        return str(host_workspace_dir) if host_workspace_dir is not None else ""
+
+    def _agent_path(self, path: Path) -> str:
+        host_workspace_dir = self._host_workspace_dir()
+        agent_workspace_dir = self._agent_workspace_dir().rstrip("/")
+        if host_workspace_dir is not None and agent_workspace_dir:
+            try:
+                relative_path = path.resolve().relative_to(host_workspace_dir.resolve())
+            except (OSError, ValueError):
+                pass
+            else:
+                return str(Path(agent_workspace_dir) / relative_path)
+        return str(path)
+
+    def _plan_md_message(self) -> dict[str, Any] | None:
+        workspace_dir = self._host_workspace_dir()
+        if workspace_dir is None:
+            return None
+        plan_path = workspace_dir / "plan.md"
         if not plan_path.exists() or not plan_path.is_file():
             return None
         plan_text = plan_path.read_text(encoding="utf-8").strip()
@@ -309,13 +454,14 @@ class DefaultAgent:
 
     def _tool_gate_error(self) -> str | None:
         """Require final_runs/run_<latest>/judge_result.json with predicted_label == 1."""
-        workspace_dir = self.get_template_vars().get("workspace_dir")
-        if not workspace_dir:
+        workspace_dir = self._host_workspace_dir()
+        agent_workspace_dir = self._agent_workspace_dir()
+        if workspace_dir is None:
             return (
                 "Completion blocked: require_self_reflection_success is enabled but no workspace_dir is "
                 "available. Cannot locate final_runs/run_<id>/judge_result.json. Do not set done=true."
             )
-        final_runs_dir = Path(workspace_dir) / "final_runs"
+        final_runs_dir = workspace_dir / "final_runs"
         if not final_runs_dir.is_dir():
             return (
                 "Completion blocked: no final_runs/ directory exists yet. You must run final_script.py "
@@ -323,7 +469,7 @@ class DefaultAgent:
                 "`python -m miniswewebagent.tools.self_reflection --config judge_config.json "
                 "--workspace-dir \"{0}\" --output final_runs/run_<id>/judge_result.json` with "
                 "predicted_label == 1 before setting done=true."
-            ).format(workspace_dir)
+            ).format(agent_workspace_dir or str(workspace_dir))
         run_dirs: list[tuple[int, Path]] = []
         for entry in final_runs_dir.iterdir():
             if not entry.is_dir() or not entry.name.startswith("run_"):
@@ -343,11 +489,13 @@ class DefaultAgent:
         run_dirs.sort(key=lambda item: item[0])
         latest_run_id, latest_run_dir = run_dirs[-1]
         judge_path = latest_run_dir / "judge_result.json"
+        judge_path_for_agent = self._agent_path(judge_path)
         if not judge_path.is_file():
             return (
-                f"Completion blocked: {judge_path} does not exist. Run "
+                f"Completion blocked: {judge_path_for_agent} does not exist. Run "
                 f"`python -m miniswewebagent.tools.self_reflection --config judge_config.json "
-                f"--workspace-dir \"{workspace_dir}\" --output {judge_path}` against the latest run "
+                f"--workspace-dir \"{agent_workspace_dir or str(workspace_dir)}\" "
+                f"--output {judge_path_for_agent}` against the latest run "
                 f"(run_{latest_run_id}) and only set done=true after it exits 0 with "
                 f"predicted_label == 1."
             )
@@ -355,13 +503,13 @@ class DefaultAgent:
             judge_data = json.loads(judge_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             return (
-                f"Completion blocked: could not parse {judge_path}: {exc}. Re-run self_reflection "
+                f"Completion blocked: could not parse {judge_path_for_agent}: {exc}. Re-run self_reflection "
                 f"against run_{latest_run_id} and only set done=true after predicted_label == 1."
             )
         predicted_label = judge_data.get("predicted_label")
         if predicted_label != 1:
             return (
-                f"Completion blocked: {judge_path} has predicted_label={predicted_label!r} "
+                f"Completion blocked: {judge_path_for_agent} has predicted_label={predicted_label!r} "
                 f"(expected 1). Diagnose the failure from judge_result.json, fix final_script.py, "
                 f"re-run it in a new final_runs/run_{latest_run_id + 1}/ folder, and re-run "
                 f"self_reflection. Only set done=true after self_reflection exits 0 with "
@@ -377,13 +525,13 @@ class DefaultAgent:
         ``screenshots/final_execution_<N>*.png``, then calls the upstream judge.
         The verdict is cached in ``final_runs/run_<id>/om2w_judge_result.json``.
         """
-        workspace_dir = self.get_template_vars().get("workspace_dir")
-        if not workspace_dir:
+        workspace_dir = self._host_workspace_dir()
+        if workspace_dir is None:
             return (
                 "Completion blocked: judge_mode=om2w but no workspace_dir available. "
                 "Cannot locate final_runs/run_<id>/ artifacts."
             )
-        final_runs_dir = Path(workspace_dir) / "final_runs"
+        final_runs_dir = workspace_dir / "final_runs"
         if not final_runs_dir.is_dir():
             return (
                 "Completion blocked: no final_runs/ directory exists yet. Run final_script.py "
@@ -414,7 +562,7 @@ class DefaultAgent:
                 return None
             return (
                 f"Completion blocked: om2w judge reported predicted_label={predicted!r} for "
-                f"run_{latest_run_id}. See {result_path}. Diagnose the failure, fix "
+                f"run_{latest_run_id}. See {self._agent_path(result_path)}. Diagnose the failure, fix "
                 f"final_script.py, re-run it in final_runs/run_{latest_run_id + 1}/, and retry "
                 f"done=true."
             )
@@ -425,7 +573,7 @@ class DefaultAgent:
         screenshots = _om2w_load_screenshots(shots_dir)
         if not screenshots:
             return (
-                f"Completion blocked: no screenshots found under {shots_dir}. "
+                f"Completion blocked: no screenshots found under {self._agent_path(shots_dir)}. "
                 "final_script.py must save final_execution_<N>*.png screenshots before "
                 "done=true with judge_mode=om2w."
             )
@@ -476,7 +624,7 @@ class DefaultAgent:
             return None
         return (
             f"Completion blocked: om2w judge reported predicted_label={predicted_label!r} for "
-            f"run_{latest_run_id}. See {result_path} for the full response and per-image "
+            f"run_{latest_run_id}. See {self._agent_path(result_path)} for the full response and per-image "
             f"reasonings. Diagnose, fix final_script.py, re-run it in "
             f"final_runs/run_{latest_run_id + 1}/, and retry done=true."
         )
@@ -503,16 +651,36 @@ class DefaultAgent:
             extra={"interrupt_type": "HistoryCompactionRequest"},
         )
         summary_messages = list(self.messages) + [summary_request]
+        model_config = getattr(self.model, "config", None)
+        old_max_output_tokens: Any = None
+        old_response_mode: Any = None
+        should_restore_max_output_tokens = False
+        should_restore_response_mode = False
+        if self.config.summary_max_output_tokens > 0 and model_config is not None and hasattr(model_config, "max_output_tokens"):
+            old_max_output_tokens = getattr(model_config, "max_output_tokens")
+            setattr(model_config, "max_output_tokens", self.config.summary_max_output_tokens)
+            should_restore_max_output_tokens = True
+        if self.config.summary_response_mode and model_config is not None and hasattr(model_config, "response_mode"):
+            old_response_mode = getattr(model_config, "response_mode")
+            setattr(model_config, "response_mode", self.config.summary_response_mode)
+            should_restore_response_mode = True
         try:
             response = self.model.query(summary_messages)
         except Exception:  # noqa: BLE001 - never fail the run due to compaction
             return
+        finally:
+            if should_restore_max_output_tokens:
+                setattr(model_config, "max_output_tokens", old_max_output_tokens)
+            if should_restore_response_mode:
+                setattr(model_config, "response_mode", old_response_mode)
         # Count the compaction LLM call as one step toward api_calls / step_limit.
         self.n_calls += 1
-        summary_text = (response.get("content") or "").strip()
+        summary_text = self._extract_compaction_summary(response)
         if not summary_text:
-            extra = response.get("extra", {})
-            summary_text = (extra.get("final_response") or "").strip() or "(empty summary)"
+            # Compaction is an optimization. If the summarization call fails to
+            # produce a meaningful summary, preserve the existing history rather
+            # than replacing it with an empty or misleading placeholder.
+            return
         original_task = str(self.extra_template_vars.get("task") or "").strip()
         summary_message = self.model.format_message(
             role="user",
@@ -526,6 +694,94 @@ class DefaultAgent:
             extra={"interrupt_type": "HistoryCompactionSummary"},
         )
         self.messages = [system_message, summary_message]
+
+    def _extract_compaction_summary(self, response: dict[str, Any]) -> str:
+        extra = response.get("extra", {}) if isinstance(response.get("extra"), dict) else {}
+        raw_response = extra.get("raw_response", {}) if isinstance(extra.get("raw_response"), dict) else {}
+        candidates = [
+            str(extra.get("final_response") or ""),
+            str(response.get("content") or ""),
+            str(raw_response.get("final_response") or ""),
+            str(raw_response.get("thought") or ""),
+            str(extra.get("raw_text") or ""),
+        ]
+        for candidate in candidates:
+            summary = self._clean_compaction_summary(candidate)
+            if summary:
+                return summary
+        return ""
+
+    def _clean_compaction_summary(self, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+
+        json_summary = self._summary_from_json_payload(text)
+        if json_summary is not None:
+            return json_summary
+
+        # Prefer an explicit <answer> block only when it is substantive. SFT
+        # compact calls sometimes emit <answer>Task complete.</answer> and put
+        # the real continuation summary in <think>.
+        answer_values = re.findall(r"<answer>(.*?)</answer>", text, flags=re.DOTALL | re.IGNORECASE)
+        for answer in reversed(answer_values):
+            cleaned = self._strip_markup_summary(answer)
+            if self._is_valid_compaction_summary(cleaned):
+                return cleaned
+
+        final_response_values = re.findall(r"<final_response>(.*?)</final_response>", text, flags=re.DOTALL | re.IGNORECASE)
+        for final_response in reversed(final_response_values):
+            cleaned = self._strip_markup_summary(final_response)
+            if self._is_valid_compaction_summary(cleaned):
+                return cleaned
+
+        think_values = re.findall(r"<think>(.*?)</think>", text, flags=re.DOTALL | re.IGNORECASE)
+        for thought in reversed(think_values):
+            cleaned = self._strip_markup_summary(thought)
+            if self._is_valid_compaction_summary(cleaned):
+                return cleaned
+
+        cleaned = self._strip_markup_summary(text)
+        return cleaned if self._is_valid_compaction_summary(cleaned) else ""
+
+    def _summary_from_json_payload(self, value: str) -> str | None:
+        text = str(value or "").strip()
+        candidates = [text]
+        if not text.startswith("{"):
+            match = re.search(r"\{.*\}", text, flags=re.DOTALL)
+            if match:
+                candidates.append(match.group(0))
+        for candidate in candidates:
+            try:
+                payload = json.loads(candidate)
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            summary = str(
+                payload.get("thought")
+                or payload.get("summary")
+                or payload.get("final_response")
+                or ""
+            ).strip()
+            cleaned = self._strip_markup_summary(summary)
+            if self._is_valid_compaction_summary(cleaned):
+                return cleaned
+            return ""
+        return None
+
+    def _strip_markup_summary(self, value: str) -> str:
+        text = str(value or "").strip()
+        text = re.sub(r"<bash\b[^>]*>.*?</bash>", "", text, flags=re.DOTALL | re.IGNORECASE).strip()
+        text = re.sub(r"<python_code\b[^>]*>.*?</python_code>", "", text, flags=re.DOTALL | re.IGNORECASE).strip()
+        text = re.sub(r"</?(?:think|answer|bash|done|final_response|python_code)>", "", text, flags=re.IGNORECASE).strip()
+        return text
+
+    def _is_valid_compaction_summary(self, value: str) -> bool:
+        normalized = " ".join(str(value or "").strip().lower().split())
+        if normalized in _BAD_COMPACT_SUMMARIES:
+            return False
+        return len(normalized) >= 40
 
     def run(self, task: str = "", **kwargs) -> dict[str, Any]:
         self.extra_template_vars |= {"task": task, **kwargs}
@@ -581,6 +837,8 @@ class DefaultAgent:
                     extra={"exit_status": "LimitsExceeded", "submission": ""},
                 )
             )
+        step_index = self.n_calls + 1
+        self._write_debug_request_artifact(step_index=step_index, messages=self.messages)
         message = self.model.query(self.messages)
         self.n_calls += 1
         self.add_messages(message)

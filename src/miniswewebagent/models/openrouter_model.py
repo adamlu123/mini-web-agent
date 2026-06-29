@@ -39,14 +39,48 @@ def _serialize_chat_content_part(part: dict[str, Any]) -> dict[str, Any]:
     return {"type": "text", "text": part.get("text", "")}
 
 
-def _serialize_chat_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _sft_state_assistant_content(message: dict[str, Any]) -> str | None:
+    extra = message.get("extra")
+    if not isinstance(extra, dict):
+        return None
+    raw_response = extra.get("raw_response")
+    if not isinstance(raw_response, dict):
+        return None
+
+    thought = str(raw_response.get("thought") or "").strip()
+    bash_command = str(raw_response.get("bash_command") or raw_response.get("python_code") or "").strip()
+    done = "true" if bool(raw_response.get("done", False)) else "false"
+    final_response = str(raw_response.get("final_response") or "").strip()
+    return (
+        "<think>\n"
+        f"{thought}\n"
+        "</think>\n"
+        "<bash>\n"
+        f"{bash_command}\n"
+        "</bash>\n"
+        f"<done>{done}</done>\n"
+        "<final_response>\n"
+        f"{final_response}\n"
+        "</final_response>"
+    )
+
+
+def _message_content_for_chat(message: dict[str, Any], *, response_mode: str) -> Any:
+    if message.get("role") == "assistant" and response_mode == "sft_state":
+        restored_content = _sft_state_assistant_content(message)
+        if restored_content is not None:
+            return restored_content
+    return message.get("content", "")
+
+
+def _serialize_chat_messages(messages: list[dict[str, Any]], *, response_mode: str = "") -> list[dict[str, Any]]:
     """Convert harness messages to OpenAI chat-completions format."""
     serialized: list[dict[str, Any]] = []
     for message in messages:
         role = message["role"]
         if role == "exit":
             continue
-        content = message.get("content", "")
+        content = _message_content_for_chat(message, response_mode=response_mode)
         if isinstance(content, str):
             serialized.append({"role": role, "content": content})
             continue
@@ -170,8 +204,17 @@ class OpenRouterModel(PhyagiModel):
     def _build_payload(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
         return {
             "model": self.config.model_name,
-            "messages": _serialize_chat_messages(messages),
+            "messages": _serialize_chat_messages(messages, response_mode=self.config.response_mode),
             "max_tokens": self.config.max_output_tokens,
+        }
+
+    def serialize_request_for_debug(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
+        return {
+            "model": self.config.model_name,
+            "endpoint": self.config.openrouter_endpoint,
+            "response_mode": self.config.response_mode,
+            "max_tokens": self.config.max_output_tokens,
+            "messages": _serialize_chat_messages(messages, response_mode=self.config.response_mode),
         }
 
     async def _query_async(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
@@ -269,6 +312,7 @@ class OpenRouterModel(PhyagiModel):
                 "done": bool(parsed.get("done", False)),
                 "final_response": parsed.get("final_response", ""),
                 "raw_response": parsed,
+                "raw_text": raw_text,
                 "usage": self._usage_snapshot(),
             },
         )
