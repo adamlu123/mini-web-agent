@@ -1,0 +1,12 @@
+{
+  "source_json": "/data/t-yifeili/mini-web-agent/LlamaFactory/data/web_agent_seq_sessions_tools_label1_allwebchain_sr1k_0629.json",
+  "output_json": "/data/t-yifeili/mini-web-agent/LlamaFactory/data/web_agent_seq_sessions_tools_label1_allwebchain_sr1k_0629_portable_bundle/web_agent_seq_sessions_tools_label1_allwebchain_sr1k_0629_portable.json",
+  "dataset_name": "web_agent_seq_sessions_tools_label1_allwebchain_sr1k_0629_portable",
+  "bundle_root": "/data/t-yifeili/mini-web-agent/LlamaFactory/data/web_agent_seq_sessions_tools_label1_allwebchain_sr1k_0629_portable_bundle",
+  "images_dir": "/data/t-yifeili/mini-web-agent/LlamaFactory/data/web_agent_seq_sessions_tools_label1_allwebchain_sr1k_0629_portable_bundle/images",
+  "examples": 9367,
+  "image_references": 7379,
+  "unique_images_copied": 6233,
+  "missing_images": 0,
+  "missing_sample": []
+}

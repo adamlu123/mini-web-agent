@@ -1,0 +1,18 @@
+{
+  "web_agent_seq_sessions_tools_label1_allwebchain_sr1k_0629_portable": {
+    "file_name": "web_agent_seq_sessions_tools_label1_allwebchain_sr1k_0629_portable.json",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "conversations",
+      "system": "system",
+      "images": "images"
+    },
+    "tags": {
+      "role_tag": "from",
+      "content_tag": "value",
+      "user_tag": "human",
+      "assistant_tag": "gpt",
+      "observation_tag": "observation"
+    }
+  }
+}

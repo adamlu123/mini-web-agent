@@ -1,0 +1,50 @@
+### 9B full-SFT memory smoke: label=1 all-webchain auxiliary sessions, 40k context, 2 nodes.
+### Keep per-device batch size 1; use 2x8 GPUs to test global batch 16 without per-GPU bs=2 OOM.
+
+### model
+model_name_or_path: Qwen/Qwen3.5-9B
+image_max_pixels: 262144
+trust_remote_code: true
+enable_liger_kernel: false
+
+### method
+stage: sft
+do_train: true
+finetuning_type: full
+deepspeed: examples/deepspeed/ds_z2_config.json
+use_reentrant_gc: false
+
+### dataset
+dataset_dir: data/web_agent_seq_sessions_tools_label1_allwebchain_sr1k_40k_b2_smoke_bundle
+media_dir: data/web_agent_seq_sessions_tools_label1_allwebchain_sr1k_40k_b2_smoke_bundle
+dataset: web_agent_seq_sessions_tools_label1_allwebchain_sr1k_40k_b2_smoke
+template: qwen3_5
+cutoff_len: 40000
+overwrite_cache: true
+preprocessing_num_workers: 1
+dataloader_num_workers: 1
+mask_history: false
+enable_thinking: true
+
+### output
+output_dir: saves/qwen35_9b/full/web_agent_seq_label1_allwebchain_sr1k_40k_b1_2node_smoke
+logging_steps: 1
+save_strategy: "no"
+save_total_limit: 1
+save_only_model: true
+plot_loss: false
+overwrite_output_dir: true
+report_to: none
+run_name: qwen35_9b_web_agent_seq_label1_allwebchain_sr1k_40k_b1_2node_smoke
+
+### train
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 1
+learning_rate: 1.0e-5
+num_train_epochs: 1.0
+max_steps: 1
+lr_scheduler_type: cosine
+warmup_ratio: 0.0
+bf16: true
+ddp_timeout: 180000000
+resume_from_checkpoint: null
