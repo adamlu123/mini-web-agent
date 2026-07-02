@@ -109,11 +109,16 @@ def _run_id_sort_key(name: str) -> tuple[int, str]:
     return (0, name)
 
 
-def _sorted_image_paths(image_dir: Path) -> list[Path]:
+def _sorted_image_paths(image_dir: Path, require_known_suffix: bool = False) -> list[Path]:
     if not image_dir.is_dir():
         return []
+    if require_known_suffix:
+        return sorted(
+            [path for path in image_dir.iterdir() if path.is_file() and path.suffix.lower() in _IMAGE_SUFFIXES],
+            key=lambda path: _final_execution_sort_key(path.name),
+        )
     return sorted(
-        [path for path in image_dir.iterdir() if path.is_file() and path.suffix.lower() in _IMAGE_SUFFIXES],
+        [path for path in image_dir.iterdir() if path.is_file()],
         key=lambda path: _final_execution_sort_key(path.name),
     )
 
@@ -134,7 +139,7 @@ def _discover_latest_run_screenshots(
     # Walk from highest-numbered run downward and pick the first one with any screenshots.
     for run_dir in reversed(candidates):
         screenshots_dir = run_dir / "screenshots"
-        images = _sorted_image_paths(screenshots_dir)
+        images = _sorted_image_paths(screenshots_dir, require_known_suffix=False)
         if images:
             return run_dir, images
     return None, []

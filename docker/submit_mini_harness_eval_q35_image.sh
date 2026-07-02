@@ -22,6 +22,9 @@ TP="${TP:-8}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-65536}"
 MAX_OUTPUT_TOKENS="${MAX_OUTPUT_TOKENS:-4096}"
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.85}"
+EVAL_CPU="${EVAL_CPU:-32}"
+EVAL_MEMORY="${EVAL_MEMORY:-256Gi}"
+EVAL_SHM="${EVAL_SHM:-64Gi}"
 FOLLOW_LOGS="${FOLLOW_LOGS:-0}"
 
 [[ -d "$MINI_WEB_AGENT_DIR" ]] || { echo "[error] missing $MINI_WEB_AGENT_DIR"; exit 1; }
@@ -41,6 +44,7 @@ export PROJECT_NAME="${PROJECT_NAME:-cua}"
 echo "[submit_mini_harness_eval] GPUS=$GPUS IMAGE=$IMAGE"
 echo "[submit_mini_harness_eval] CKPT=$EVAL_CKPT"
 echo "[submit_mini_harness_eval] benchmark=$BENCHMARK_CONFIG level=$TASK_LEVEL limit=$LIMIT workers=$WORKERS tag=$EVAL_RUN_TAG"
+echo "[submit_mini_harness_eval] resources: cpu=$EVAL_CPU memory=$EVAL_MEMORY shm=$EVAL_SHM"
 echo "[submit_mini_harness_eval] credentials=$CREDENTIALS_FILE -> secret/$CREDENTIALS_SECRET"
 echo "[submit_mini_harness_eval] PRIORITY=$PRIORITY CLASS=$PRIORITY_CLASS_NAME PROJECT=$PROJECT_NAME"
 
@@ -76,7 +80,7 @@ bash "$SUBMIT" \
   --upload "$UPLOAD_DIR" \
   --image "$IMAGE" \
   --node 1 --gpu-per-node "$GPUS" \
-  --cpu 64 --memory 512Gi --shm 64Gi \
+  --cpu "$EVAL_CPU" --memory "$EVAL_MEMORY" --shm "$EVAL_SHM" \
   --secret-volume "$CREDENTIALS_SECRET:/run/secrets/webchain-sampling" \
   --extra-env-vars "$EXTRA_ENV" \
   "${FOLLOW_ARGS[@]}" \
