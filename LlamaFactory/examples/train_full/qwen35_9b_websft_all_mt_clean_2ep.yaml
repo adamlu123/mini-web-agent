@@ -1,0 +1,50 @@
+### Full SFT of Qwen3.5-9B on the CLEANED ALL-data, MULTI-TURN, 2 epochs.
+### Data: scripts/make_web_agent_sft.py --turn-mode multi over pae_100 +
+### N500_r2_success + webchain_423, with the format-noise cleaning applied:
+###   - drop empty/placeholder assistant turns (retry/interrupt artifacts)
+###   - <answer> ONLY on the genuine terminal turn (no premature mid-traj answers)
+###   - consecutive real assistant turns keep the latest (no double-<think>)
+### -> web_agent_all_mt_clean (1130 samples / 10258 steps). Anomalies driven to ~0
+### (empty_think / multiple_think / empty_answer / answer_not_last all ~0), to
+### avoid the 3-epoch format overfitting seen on the un-cleaned data.
+### mask_history=false (loss on every assistant turn); 2 epochs.
+
+### model
+model_name_or_path: Qwen/Qwen3.5-9B
+trust_remote_code: true
+
+### method
+stage: sft
+do_train: true
+finetuning_type: full
+deepspeed: examples/deepspeed/ds_z2_config.json   # ZeRO-2 (z3 breaks weight load on this Qwen3.5 VLM -> random init)
+
+### dataset
+dataset: web_agent_all_mt_clean   # cleaned 3-source multi-turn, obs NOT truncated (--max-obs-chars 0)
+template: qwen3_5
+cutoff_len: 32768
+overwrite_cache: true
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+mask_history: false
+enable_thinking: true
+
+### output
+output_dir: saves/qwen35_9b/full/websft_all_mt_clean_2ep
+logging_steps: 5
+save_strategy: epoch
+save_total_limit: 1               # keep only the last (2nd) epoch ckpt
+plot_loss: true
+overwrite_output_dir: true
+report_to: wandb
+run_name: qwen35_9b_websft_all_mt_clean_2ep
+
+### train
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 1
+learning_rate: 1.0e-5
+num_train_epochs: 2.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.05
+bf16: true
+ddp_timeout: 180000000

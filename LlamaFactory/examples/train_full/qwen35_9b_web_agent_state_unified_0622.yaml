@@ -1,0 +1,57 @@
+### Full SFT of Qwen3.5-9B on unified web-agent state data, 2026-06-22.
+### Format:
+###   <think>...</think>
+###   <bash>...</bash>
+###   <done>true/false</done>
+###   <final_response>...</final_response>
+### Data bundle includes main agent interactions plus sampled/constructed aux tools:
+###   - agent_interaction: 2201 from raw self-judge-label=1 trajectories
+###   - history_compaction: 501
+###   - self_reflection_image: 1000
+###   - self_reflection_final: 600
+###   - image_qa: 337
+
+### model
+model_name_or_path: Qwen/Qwen3.5-9B
+image_max_pixels: 262144
+trust_remote_code: true
+
+### method
+stage: sft
+do_train: true
+finetuning_type: full
+deepspeed: examples/deepspeed/ds_z2_config.json
+use_reentrant_gc: false
+
+### dataset
+dataset_dir: data/web_agent_state_mt_unified_0622_bundle
+media_dir: data/web_agent_state_mt_unified_0622_bundle
+dataset: web_agent_state_mt_unified_0622
+template: qwen3_5
+cutoff_len: 32768
+overwrite_cache: true
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+mask_history: false
+enable_thinking: true
+
+### output
+output_dir: saves/qwen35_9b/full/web_agent_state_unified_0622
+logging_steps: 5
+save_strategy: steps
+save_steps: 100
+save_total_limit: 2
+plot_loss: true
+overwrite_output_dir: true
+report_to: wandb
+run_name: qwen35_9b_web_agent_state_unified_0622
+
+### train
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 1
+learning_rate: 1.0e-5
+num_train_epochs: 2.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.05
+bf16: true
+ddp_timeout: 180000000
