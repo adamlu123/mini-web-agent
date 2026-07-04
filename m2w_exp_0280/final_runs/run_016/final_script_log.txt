@@ -1,0 +1,51 @@
+Run directory: /home/luyadong/sandbox/mini-web-agent/outputs/default/0601/N500_s100_agnostic_r2/m2w_exp_0280/final_runs/run_016
+Task: From Marriott.com, open Homes & Villas by Marriott Bonvoy and browse London homes with at least 2 bedrooms.
+Open Marriott homepage
+Navigate to Marriott homepage load cycle 1 attempt 1: https://www.marriott.com/default.mi
+Homepage cycle 1 title: 
+Homepage cycle 1 dedicated Homes & Villas entry count: 0
+Dedicated Homes & Villas entry not ready on this homepage load cycle; retrying homepage
+Navigate to Marriott homepage load cycle 2 attempt 1: https://www.marriott.com/default.mi
+Homepage cycle 2 title: Marriott Bonvoy Hotels | Book Directly & Get Exclusive Rates
+Homepage cycle 2 dedicated Homes & Villas entry count: 1
+Dedicated Homes & Villas entry href: https://homes-and-villas.marriott.com/en/collections
+Homepage title: Marriott Bonvoy Hotels | Book Directly & Get Exclusive Rates
+Dedicated Homes & Villas entry count: 1
+Dedicated entry click did not leave Marriott homepage; navigating to the dedicated Homes & Villas target href discovered on Marriott.com
+Navigate to dedicated Homes & Villas entry target from Marriott homepage attempt 1: https://homes-and-villas.marriott.com/en/collections
+After dedicated entry navigation URL: https://homes-and-villas.marriott.com/en/collections
+Collections title: Activities & Collections | Homes & Villas by Marriott Bonvoy
+Navigate to London results page attempt 1: https://homes-and-villas.marriott.com/en/search/vacation-rental-london?dateSelectionType=exact&locationName=London%2C+England%2C+Great+Britain%2C+United+Kingdom&lat=51.507351&lng=-0.127758
+London results URL: https://homes-and-villas.marriott.com/en/search/vacation-rental-london?dateSelectionType=exact&locationName=London%2C+England%2C+Great+Britain%2C+United+Kingdom&lat=51.507351&lng=-0.127758
+London results title: Marriott® London Home Rentals | Homes & Villas
+Opened Filter & Sort drawer
+Direct Beds=2 button click failed: Locator.click: Timeout 3000ms exceeded.
+Call log:
+  - waiting for locator("[data-testid=\"Filters|Menu|Beds|2\"]").first
+    - locator resolved to <button id="Filters|Menu|Beds|2" data-testid="Filters|Menu|Beds|2" data-locator="Filters|Menu|Beds|2" data-custom-click-track-value="Filters|Menu-Beds-2" class="index-styles__StyledButton-sc-647baa15-0 jOqntw index-styles__CarouselButton-sc-c54005de-1 dvVUiZ skip-flyout-drag index-styles__CarouselButton-sc-c54005de-1 dvVUiZ skip-flyout-drag">2</button>
+  - attempting click action
+    - scrolling into view if needed
+
+Wrapper Beds=2 click failed: Locator.click: Element is not visible
+Call log:
+  - waiting for locator("[data-locator=\"Filters|Menu|Beds|2\"]").first
+    - locator resolved to <div id="Filters|Menu|Beds|2" data-locator="Filters|Menu|Beds|2" data-custom-click-track-value="Filters|Menu-Beds-2" class="index-styles__ButtonDataWrapper-sc-647baa15-2 eMbIMo custom-click-track">…</div>
+  - attempting click action
+    - scrolling into view if needed
+
+Beds=2 JS click result: clicked [data-testid="Filters|Menu|Beds|2"]
+Beds=2 state after selection attempt: {"ariaPressed":null,"ariaSelected":null,"className":"index-styles__StyledButton-sc-647baa15-0 jOqntw index-styles__CarouselButton-sc-c54005de-1 kfRXOc skip-flyout-drag index-styles__CarouselButton-sc-c54005de-1 kfRXOc skip-flyout-drag","text":"2"}
+Show Homes click via Playwright failed: Locator.click: Timeout 5000ms exceeded.
+Call log:
+  - waiting for get_by_role("button", name=re.compile(r"Show .* Homes", re.IGNORECASE))
+    - locator resolved to <button id="filters-apply" data-testid="filters-apply" data-locator="filters-apply" data-custom-click-track-value="filters-apply" class="index-styles__StyledButton-sc-647baa15-0 dHnWjj">Show 674 Homes</button>
+  - attempting click action
+    - waiting for element to be visible, enabled and stable
+
+Show Homes JS click result: clicked filters-apply
+Final URL: https://homes-and-villas.marriott.com/en/search/vacation-rental-london?locationName=London%2C%20England%2C%20Great%20Britain%2C%20United%20Kingdom&lat=51.507351&lng=-0.127758&bedrooms=2&userFilter=true
+Final title: Marriott® London Home Rentals | Homes & Villas
+Final body contains London, England: True
+Final body contains 1 Bedrooms: False
+Final body contains 2 Bedrooms: True
+Final Response: London homes with at least 2 bedrooms are displayed on Homes & Villas by Marriott Bonvoy.

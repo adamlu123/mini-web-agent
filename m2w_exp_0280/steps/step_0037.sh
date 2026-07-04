@@ -1,0 +1,12 @@
+python - <<'PY'
+from pathlib import Path
+path = Path('final_script.py')
+text = path.read_text(encoding='utf-8')
+if 'async def goto_with_retry' not in text:
+    insert = '''\n\nasync def goto_with_retry(page, url: str, label: str, attempts: int = 2, timeout: int = 45000):\n    last_error = None\n    for attempt in range(1, attempts + 1):\n        try:\n            log(f"Navigate to {label} attempt {attempt}: {url}")\n            await page.goto(url, wait_until="domcontentloaded", timeout=timeout)\n            await page.wait_for_timeout(3000)\n            return True\n        except Exception as e:\n            last_error = e\n            log(f"Navigation to {label} failed on attempt {attempt}: {e}")\n            try:\n                await page.goto("https://homes-and-villas.marriott.com/", wait_until="domcontentloaded", timeout=timeout)\n                await page.wait_for_timeout(2000)\n                log("Reached Homes & Villas root as recovery step")\n            except Exception as e2:\n                log(f"Recovery step to Homes & Villas root failed: {e2}")\n    raise last_error\n'''
+    text = text.replace('async def click_if_visible(page, locator, label: str):\n    try:\n        if await locator.count() and await locator.first.is_visible():\n            await locator.first.click()\n            log(f"Clicked {label}")\n            await asyncio.sleep(1)\n            return True\n    except Exception as e:\n        log(f"Did not click {label}: {e}")\n    return False\n', 'async def click_if_visible(page, locator, label: str):\n    try:\n        if await locator.count() and await locator.first.is_visible():\n            await locator.first.click()\n            log(f"Clicked {label}")\n            await asyncio.sleep(1)\n            return True\n    except Exception as e:\n        log(f"Did not click {label}: {e}")\n    return False\n' + insert)
+text = text.replace('        await page.goto("https://www.marriott.com/default.mi", wait_until="domcontentloaded")\n        await page.wait_for_timeout(3000)\n', '        await goto_with_retry(page, "https://www.marriott.com/default.mi", "Marriott homepage", attempts=2, timeout=45000)\n')
+text = text.replace('        await page.goto(london_results_url, wait_until="domcontentloaded")\n        await page.wait_for_timeout(5000)\n', '        await goto_with_retry(page, london_results_url, "London results page", attempts=3, timeout=45000)\n        await page.wait_for_timeout(2000)\n')
+path.write_text(text, encoding='utf-8')
+print(path.read_text(encoding='utf-8'))
+PY

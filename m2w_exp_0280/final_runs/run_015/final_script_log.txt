@@ -1,0 +1,19 @@
+Run directory: /home/luyadong/sandbox/mini-web-agent/outputs/default/0601/N500_s100_agnostic_r2/m2w_exp_0280/final_runs/run_015
+Task: From Marriott.com, open Homes & Villas by Marriott Bonvoy and browse London homes with at least 2 bedrooms.
+Open Marriott homepage
+Navigate to Marriott homepage load cycle 1 attempt 1: https://www.marriott.com/default.mi
+Homepage cycle 1 title: Access Denied
+Homepage cycle 1 dedicated Homes & Villas entry count: 0
+Dedicated Homes & Villas entry not ready on this homepage load cycle; retrying homepage
+Navigate to Marriott homepage load cycle 2 attempt 1: https://www.marriott.com/default.mi
+Homepage cycle 2 title: Marriott Bonvoy Hotels | Book Directly & Get Exclusive Rates
+Homepage cycle 2 dedicated Homes & Villas entry count: 1
+Dedicated Homes & Villas entry href: https://homes-and-villas.marriott.com/en/collections
+Homepage title: Marriott Bonvoy Hotels | Book Directly & Get Exclusive Rates
+Dedicated Homes & Villas entry count: 1
+Dedicated entry click did not leave Marriott homepage; navigating to the dedicated Homes & Villas target href discovered on Marriott.com
+Navigate to dedicated Homes & Villas entry target from Marriott homepage attempt 1: https://homes-and-villas.marriott.com/en/collections
+After dedicated entry navigation URL: https://homes-and-villas.marriott.com/en/collections
+Collections title: Activities & Collections | Homes & Villas by Marriott Bonvoy
+Navigate to London results page attempt 1: https://homes-and-villas.marriott.com/en/search/vacation-rental-london?dateSelectionType=exact&locationName=London%2C+England%2C+Great+Britain%2C+United+Kingdom&lat=51.507351&lng=-0.127758
+London results URL: https://homes-and-villas.marriott.com/en/search/vacation-rental-london?dateSelectionType=exact&locationName=London%2C+England%2C+Great+Britain%2C+United+Kingdom&lat=51.507351&lng=-0.127758

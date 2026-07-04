@@ -1,0 +1,1 @@
+{"timestamp": "2026-06-03T21:25:40.306059+00:00", "source": "gateway", "event": "transient_gateway_error", "model_name": "gpt-5.4", "endpoint": "http://gateway.phyagi.net/api/responses", "attempt": 1, "error_type": "APIConnectionError", "error": "Connection error.", "status_code": null, "response_text": ""}

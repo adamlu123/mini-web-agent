@@ -1,0 +1,8 @@
+Run directory: /home/luyadong/sandbox/mini-web-agent/outputs/default/0601/N500_s100_agnostic_r2/m2w_exp_0280/final_runs/run_007
+Task: From Marriott.com, open Homes & Villas by Marriott Bonvoy and browse London homes with at least 2 bedrooms.
+Open Marriott homepage
+Homepage title: 
+Dedicated Homes & Villas entry count: 0
+Dedicated Homes & Villas entry href not found on homepage during this run
+After dedicated entry click URL: https://www.marriott.com/default.mi
+Collections title: 

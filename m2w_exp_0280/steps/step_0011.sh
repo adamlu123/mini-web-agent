@@ -1,0 +1,1 @@
+cd /home/luyadong/sandbox/mini-web-agent/outputs/default/0601/N500_s100_agnostic_r2/m2w_exp_0280 && ls -la && echo '--- plan.md ---' && sed -n '1,220p' plan.md && echo '--- judge_config.json ---' && sed -n '1,260p' judge_config.json && echo '--- final_script.py ---' && if [ -f final_script.py ]; then sed -n '1,260p' final_script.py; else echo 'MISSING'; fi
