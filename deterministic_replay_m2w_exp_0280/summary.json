@@ -1,0 +1,69 @@
+{
+  "n_scored": 74,
+  "n_skipped": 0,
+  "skipped_by_reason": {},
+  "by_case_type": {
+    "compact_summary": {
+      "count": 6,
+      "raw_exact": 0.0,
+      "norm_exact": 0.0,
+      "token_f1": 0.7887798533249369,
+      "think_exact": 0.0,
+      "bash_exact": 1.0,
+      "done_exact": 1.0,
+      "final_response_exact": 1.0,
+      "answer_exact": 1.0
+    },
+    "compact_to_main_agent": {
+      "count": 6,
+      "raw_exact": 0.0,
+      "norm_exact": 0.0,
+      "token_f1": 0.9928014016597727,
+      "think_exact": 0.0,
+      "bash_exact": 1.0,
+      "done_exact": 1.0,
+      "final_response_exact": 1.0,
+      "answer_exact": 1.0
+    },
+    "main_agent_next_turn": {
+      "count": 54,
+      "raw_exact": 0.0,
+      "norm_exact": 0.0,
+      "token_f1": 0.7071485262575009,
+      "think_exact": 0.0,
+      "bash_exact": 0.46296296296296297,
+      "done_exact": 1.0,
+      "final_response_exact": 1.0,
+      "answer_exact": 1.0
+    },
+    "self_reflection_final": {
+      "count": 1,
+      "raw_exact": 0.0,
+      "norm_exact": 0.0,
+      "token_f1": 0.9986468200270636,
+      "think_exact": 1.0,
+      "bash_exact": 1.0,
+      "done_exact": 1.0,
+      "final_response_exact": 1.0,
+      "answer_exact": 1.0
+    },
+    "self_reflection_image": {
+      "count": 7,
+      "raw_exact": 0.0,
+      "norm_exact": 0.0,
+      "token_f1": 0.9578458688537379,
+      "think_exact": 1.0,
+      "bash_exact": 1.0,
+      "done_exact": 1.0,
+      "final_response_exact": 1.0,
+      "answer_exact": 1.0
+    }
+  },
+  "data": "LlamaFactory/data/web_agent_debug_m2w_exp_0280_bundle/web_agent_debug_m2w_exp_0280.json",
+  "endpoint": "http://127.0.0.1:8000/v1/chat/completions",
+  "model": "policy",
+  "media_dir": "/mnt/pvc/experiments/t-yifeili/runs/t-yifeili-p0-cua-manual-eval-d85a0/mini-web-agent",
+  "case_type_filter": null,
+  "start_index": 0,
+  "max_cases": 0
+}
