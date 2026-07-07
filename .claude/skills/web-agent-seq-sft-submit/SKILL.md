@@ -6,8 +6,11 @@ description: >-
   the user wants to: train on a seq/om2w4000-style ShareGPT dataset, package a
   portable image bundle, pick the upload-vs-PVC data strategy, launch the 4-node
   submit_job.sh command, monitor the run, or serve/eval the resulting checkpoint
-  with correct <think> alignment. Complements web-agent-sft-cluster (single-node
-  train→eval pipeline + eval gotchas) and docs/qwen3_5_think_alignment.md.
+  with correct <think> alignment. Also covers GUEST SUBMISSION: another user
+  submitting from yifeili's sandbox (/data/t-yifeili) with their own
+  USER_ALIAS / quota / dashboard / W&B attribution. Complements
+  web-agent-sft-cluster (single-node train→eval pipeline + eval gotchas) and
+  docs/qwen3_5_think_alignment.md.
 ---
 
 # Seq-SFT 训练提交 recipe（以 om2w4000_run1 为例）
@@ -121,6 +124,79 @@ manifest 里 `missing_images` 必须为 0。
    `/mnt/pvc/t-yifeili/runs/<旧JOB_NAME>/mini-web-agent/LlamaFactory/data/<bundle>`，
    然后 `--upload` 一个**不含 bundle 的轻量代码树**（rsync 排除 `LlamaFactory/data`
    到 /tmp 再上传）。不要用 `cp -a` 往 PVC 拷数据（权限报错，`013704` 的教训）。
+
+## Guest 提交 — 别人从 yifeili 的 sandbox 提交，归属记在自己名下
+
+适用场景：另一个用户直接登录 yifeili 的 sandbox、`cd /data/t-yifeili/mini-web-agent`
+提交 job（共享工作树、数据、aifsdk、kubectl 凭证都用现成的——这些已被接受），
+但 **job 命名 / quota bucket / GPU dashboard / submitter label / W&B run 必须
+记在 guest 自己名下**。做法：提交时覆盖归属相关的环境变量。
+
+### 第一步（每个新 guest 一次性）：验证 USER_ALIAS 可覆盖
+
+`submit_job.sh` 用 `USER_ALIAS` 拼 job 名（`<alias>-<PRIORITY>-<PROJECT_NAME>-job-<rand>`）、
+`submitter=` label、PVC 上传路径 `/mnt/pvc/<alias>/runs/<JOB_NAME>/`。先确认它接受
+环境变量覆盖而不是硬编码 `whoami`：
+
+```bash
+grep -n "USER_ALIAS" /data/t-yifeili/aifsdk/clusters/lambda/submission/submit_job.sh | head
+```
+
+- 形如 `USER_ALIAS="${USER_ALIAS:-$(whoami)}"` → 直接 export 覆盖即可（走下面的命令）。
+- 若是硬编码 `$(whoami)` → 不要改 aifsdk 源码，写个 wrapper 或让 guest 先
+  `USER_ALIAS=<guest> bash -c '...'` 验证 job 名后再提正式任务。
+
+### Guest 提交命令
+
+与 TL;DR 的命令相同，只把归属相关的 env 换成 guest 的：
+
+```bash
+cd /data/t-yifeili/mini-web-agent
+
+USER_ALIAS=<guest-alias> \
+WANDB_HOST=<guest 的 W&B endpoint> \
+WANDB_API_KEY=<guest 的 key> \
+WANDB_PROJECT=<guest 的项目> \
+PRIORITY=p1 PROJECT_NAME=<guest 的 workstream> PRIORITY_CLASS_NAME=medium \
+bash /data/t-yifeili/aifsdk/clusters/lambda/submission/submit_job.sh \
+  --upload /data/t-yifeili/mini-web-agent \
+  --image aifrontiers.azurecr.io/nvidia25.11-pytorch2.10.0-te2.13-deepspeed0.18.9-fa2main-vllm0.18.0:20260415 \
+  --node 4 --gpu-per-node 8 --cpu 64 --memory 512Gi --shm 64Gi \
+  --secret-volume echo-rl-creds:/run/secrets/echo-rl-creds \
+  --extra-env-vars 'SFT_CONFIG=examples/train_full/qwen35_9b_web_agent_seq_om2w4000_run1_40k_4node.yaml,NPROC=8,AZBLOB_AUTO_PUSH=0' \
+  --follow-logs \
+  --cmd 'exec bash $PVC_MOUNT/$USER_ALIAS/runs/$JOB_NAME/mini-web-agent/docker/run_sft_q35_image.sh'
+```
+
+覆盖 `USER_ALIAS` 后自动跟着走 guest 名下的东西（`--cmd` 里全是 `$USER_ALIAS`/`$JOB_NAME`
+变量，不用改）：
+
+| 项 | 变成 |
+|---|---|
+| job/pod 名、dashboard bucket、quota | `<guest-alias>-p1-<workstream>-job-...` |
+| `submitter=` label（`kubectl get jobs -l submitter=<guest>`） | guest |
+| 代码上传路径 | `/mnt/pvc/<guest-alias>/runs/<JOB_NAME>/mini-web-agent` |
+| 训后 ckpt PVC 同步路径 | `/mnt/pvc/<guest-alias>/models/<output_dir>` |
+| W&B run | guest 的 entity/project |
+
+### Guest 提交的注意事项
+
+1. **W&B 三件套必须一起换**（HOST + API_KEY + PROJECT），只换 alias 不换 key 的话
+   run 仍会记到 yifeili 的 W&B 账号；key 无效会在 trainer 初始化后 401 打挂 job
+   （`af8b0` 教训）。第一次先 `--node 1` smoke 一把再上 4 节点。
+2. **`PROJECT_NAME` 用 guest 自己的 workstream**（见 bonete-submit skill 的已知
+   bucket 列表），否则 dashboard 进 "Other"。`PRIORITY`/`PRIORITY_CLASS_NAME`
+   按 guest 自己的配额来，别默认 `p0/high`。
+3. **PVC 引用路径不用改**：pvcdata 类配置里指向 `/mnt/pvc/t-yifeili/...` 的
+   dataset 路径跨用户可读，guest 的 pod 读它没问题；只有**写入**（上传、ckpt sync）
+   走 guest 目录。
+4. **共享工作树纪律**：提交前 `git status` 确认树的状态是双方预期的（`--upload`
+   打包的是当前实时状态）；guest 改配置用**新文件名**（复制 yaml 改名），不要在
+   原 yaml 上就地改；`output_dir`/`run_name` 用 guest 专属名字。
+5. **k8s 层的审计身份仍是 yifeili**（kubectl 凭证没换）——label/命名归 guest，
+   集群审计日志归 yifeili，这点双方知情即可。
+6. 收尾：guest 的 ckpt 在 `/mnt/pvc/<guest-alias>/models/...`，拷回 dev box 的
+   方法见 bonete-submit skill Step 6。
 
 ## Step 4 — 监控
 
