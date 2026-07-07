@@ -154,9 +154,7 @@ grep -n "USER_ALIAS" /data/t-yifeili/aifsdk/clusters/lambda/submission/submit_jo
 cd /data/t-yifeili/mini-web-agent
 
 USER_ALIAS=<guest-alias> \
-WANDB_HOST=<guest 的 W&B endpoint> \
-WANDB_API_KEY=<guest 的 key> \
-WANDB_PROJECT=<guest 的项目> \
+WANDB_HOST=https://api.wandb.ai WANDB_PROJECT=web-agent-sft \
 PRIORITY=p1 PROJECT_NAME=<guest 的 workstream> PRIORITY_CLASS_NAME=medium \
 bash /data/t-yifeili/aifsdk/clusters/lambda/submission/submit_job.sh \
   --upload /data/t-yifeili/mini-web-agent \
@@ -177,25 +175,36 @@ bash /data/t-yifeili/aifsdk/clusters/lambda/submission/submit_job.sh \
 | `submitter=` label（`kubectl get jobs -l submitter=<guest>`） | guest |
 | 代码上传路径 | `/mnt/pvc/<guest-alias>/runs/<JOB_NAME>/mini-web-agent` |
 | 训后 ckpt PVC 同步路径 | `/mnt/pvc/<guest-alias>/models/<output_dir>` |
-| W&B run | guest 的 entity/project |
+| W&B run 名 | 带 guest alias 的 `JOB_NAME`（账号仍是 yifeili 的，见下） |
 
 ### Guest 提交的注意事项
 
-1. **W&B 三件套必须一起换**（HOST + API_KEY + PROJECT），只换 alias 不换 key 的话
-   run 仍会记到 yifeili 的 W&B 账号；key 无效会在 trainer 初始化后 401 打挂 job
-   （`af8b0` 教训）。第一次先 `--node 1` smoke 一把再上 4 节点。
-2. **`PROJECT_NAME` 用 guest 自己的 workstream**（见 bonete-submit skill 的已知
+1. **W&B 沿用 yifeili 的账号/项目**（`flyhero99/web-agent-sft`，key 来自 sandbox
+   环境，不用另配）。run 名 = `JOB_NAME` 已带 guest alias，在同一 project 里
+   天然可区分。guest **不要** export 自己的 `WANDB_API_KEY`——key 与 HOST 不匹配
+   会在 trainer 初始化后 401 打挂 job（`af8b0` 教训）。第一次先 `--node 1`
+   smoke 一把再上 4 节点。
+2. **训练 pod 的运行环境与 sandbox 无关，谁提交都一样**。python/torch 栈分三层：
+   ①容器镜像（`--image` 那个 `nvidia25.11-pytorch2.10.0-...` 镜像，烧好
+   python + torch 2.10 / transformers / deepspeed / accelerate）；
+   ②in-pod bootstrap（`docker/run_sft_q35_image.sh` 开头：
+   `pip install --no-deps -e LlamaFactory` + trl==0.24.0 + peft 等，装的是
+   **上传快照里的 LlamaFactory 源码**）；③上传的代码快照本身。
+   sandbox 的 `/data/t-yifeili/miniconda3` 只用于本地脚本/eval，训练 pod 不碰它。
+   所以 guest "用 yifeili 的环境"仅指提交时的本地工具（aifsdk、kubectl 凭证）
+   和代码快照来源。
+3. **`PROJECT_NAME` 用 guest 自己的 workstream**（见 bonete-submit skill 的已知
    bucket 列表），否则 dashboard 进 "Other"。`PRIORITY`/`PRIORITY_CLASS_NAME`
    按 guest 自己的配额来，别默认 `p0/high`。
-3. **PVC 引用路径不用改**：pvcdata 类配置里指向 `/mnt/pvc/t-yifeili/...` 的
+4. **PVC 引用路径不用改**：pvcdata 类配置里指向 `/mnt/pvc/t-yifeili/...` 的
    dataset 路径跨用户可读，guest 的 pod 读它没问题；只有**写入**（上传、ckpt sync）
    走 guest 目录。
-4. **共享工作树纪律**：提交前 `git status` 确认树的状态是双方预期的（`--upload`
+5. **共享工作树纪律**：提交前 `git status` 确认树的状态是双方预期的（`--upload`
    打包的是当前实时状态）；guest 改配置用**新文件名**（复制 yaml 改名），不要在
    原 yaml 上就地改；`output_dir`/`run_name` 用 guest 专属名字。
-5. **k8s 层的审计身份仍是 yifeili**（kubectl 凭证没换）——label/命名归 guest，
+6. **k8s 层的审计身份仍是 yifeili**（kubectl 凭证没换）——label/命名归 guest，
    集群审计日志归 yifeili，这点双方知情即可。
-6. 收尾：guest 的 ckpt 在 `/mnt/pvc/<guest-alias>/models/...`，拷回 dev box 的
+7. 收尾：guest 的 ckpt 在 `/mnt/pvc/<guest-alias>/models/...`，拷回 dev box 的
    方法见 bonete-submit skill Step 6。
 
 ## Step 4 — 监控
