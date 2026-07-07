@@ -131,6 +131,12 @@ class OpenRouterModelConfig(BaseModel):
     response_mode: str = "xml"
     format_error_template: str = DEFAULT_XML_FORMAT_ERROR_TEMPLATE
     attach_observation_screenshot: bool = True
+    # Sliding-window context guard: when the estimated prompt tokens exceed
+    # max_context_tokens (0 = disabled), drop the oldest assistant/observation
+    # turns (keeping the system prompt and the first user message) until under
+    # budget, but never fewer than sliding_window_keep_turns assistant turns.
+    max_context_tokens: int = 0
+    sliding_window_keep_turns: int = 10
 
     @field_validator(
         "model_name",
@@ -201,7 +207,63 @@ class OpenRouterModel(PhyagiModel):
             response_text=response_text,
         )
 
+    @staticmethod
+    def _estimate_tokens(messages: list[dict[str, Any]]) -> int:
+        # Rough upper-ish bound without a tokenizer: ~3 chars per token for the
+        # mixed English/code/aria text these prompts contain.
+        total_chars = 0
+        for message in messages:
+            content = message.get("content", "")
+            if isinstance(content, list):
+                content = "".join(str(part.get("text", "")) for part in content if isinstance(part, dict))
+            total_chars += len(str(content))
+        return total_chars // 3
+
+    def _apply_sliding_window(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        budget = int(getattr(self.config, "max_context_tokens", 0) or 0)
+        if budget <= 0 or self._estimate_tokens(messages) <= budget:
+            return messages
+        keep_turns = max(1, int(getattr(self.config, "sliding_window_keep_turns", 10) or 10))
+
+        # Head = leading system message(s) + the first user message (the task
+        # prompt or latest compacted-history summary). Body = everything after.
+        head_end = 0
+        seen_user = False
+        for index, message in enumerate(messages):
+            role = message.get("role")
+            if role == "system" and not seen_user:
+                head_end = index + 1
+                continue
+            if role == "user" and not seen_user:
+                seen_user = True
+                head_end = index + 1
+                continue
+            break
+        head = list(messages[:head_end])
+        body = list(messages[head_end:])
+
+        dropped = 0
+        while body and self._estimate_tokens(head + body) > budget:
+            assistant_positions = [i for i, m in enumerate(body) if m.get("role") == "assistant"]
+            if len(assistant_positions) <= keep_turns:
+                break
+            # Drop the oldest assistant turn plus its trailing observation(s).
+            cut = assistant_positions[1] if len(assistant_positions) > 1 else len(body)
+            dropped += cut
+            body = body[cut:]
+        if not dropped:
+            return messages
+        notice = {
+            "role": "user",
+            "content": (
+                f"[Context truncated: {dropped} earlier message(s) omitted to fit the "
+                f"context window; the most recent turns are retained.]"
+            ),
+        }
+        return head + [notice] + body
+
     def _build_payload(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
+        messages = self._apply_sliding_window(messages)
         return {
             "model": self.config.model_name,
             "messages": _serialize_chat_messages(messages, response_mode=self.config.response_mode),
