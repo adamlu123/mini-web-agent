@@ -163,6 +163,33 @@ def _recovery_summaries_by_end(task_dir: Path) -> dict[int, str]:
     return out
 
 
+def _initial_user_from_requests(task_dir: Path, clean) -> str:
+    # trajectory.json messages are rewritten in place by the agent's history
+    # compaction, so its first user message may already be a "## Compacted
+    # History Summary" block. The step-1 debug request payload keeps the
+    # pristine initial prompt the model actually saw.
+    request_path = task_dir / "debug" / "requests" / "request_0001.json"
+    if not request_path.is_file():
+        return ""
+    try:
+        payload = json.loads(request_path.read_text(encoding="utf-8", errors="replace"))
+    except Exception:
+        return ""
+    for message in payload.get("messages") or []:
+        if not isinstance(message, dict) or message.get("role") != "user":
+            continue
+        content = message.get("content", "")
+        if isinstance(content, list):
+            content = "".join(
+                str(part.get("text", "")) for part in content if isinstance(part, dict)
+            )
+        text = str(content).strip()
+        if text and not text.startswith("## Compacted History Summary"):
+            return clean(text)
+        return ""
+    return ""
+
+
 def build_sequential_compact_examples(
     traj_path: Path,
     *,
@@ -193,7 +220,7 @@ def build_sequential_compact_examples(
     agent_cfg = (((traj.get("info") or {}).get("config") or {}).get("agent") or {})
     summary_prompt = clean(agent_cfg.get("summary_user_prompt") or DEFAULT_SUMMARY_USER_PROMPT)
     original_task = _original_task(task_dir, traj)
-    initial_user = _initial_user(task_dir, traj, clean)
+    initial_user = _initial_user_from_requests(task_dir, clean) or _initial_user(task_dir, traj, clean)
     system = PROMPT_SYSTEMS[prompt_mode]
 
     examples: list[dict[str, Any]] = []
