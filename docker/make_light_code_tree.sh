@@ -11,8 +11,10 @@
 # basename 保持 mini-web-agent 不变(pod 内 --cmd 路径依赖它)。
 set -euo pipefail
 
-SRC="${SRC:-/data/t-yifeili/mini-web-agent}"
-LIGHT_ROOT="${LIGHT_ROOT:-/tmp/mwa-light}"
+# 默认取脚本所在仓库,任何 user 的 checkout 都能直接用
+SRC="${SRC:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+# 按用户隔离,同一台 dev box 多人并发提交互不覆盖
+LIGHT_ROOT="${LIGHT_ROOT:-/tmp/mwa-light-$(whoami | cut -d@ -f1)}"
 LIGHT="$LIGHT_ROOT/$(basename "$SRC")"
 
 mkdir -p "$LIGHT"

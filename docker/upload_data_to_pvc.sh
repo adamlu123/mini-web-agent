@@ -25,10 +25,12 @@ DEST_NAME="${2:-$(basename "$SRC_DIR")}"
 NAMESPACE="${NAMESPACE:-bonete61}"
 PVC_CLAIM_NAME="${PVC_CLAIM_NAME:-pvc-vast-bonete61}"
 PVC_MOUNT="${PVC_MOUNT:-/mnt/pvc}"
-DEST_ROOT="${DEST_ROOT:-$PVC_MOUNT/experiments/t-yifeili/data}"
+# 与 submit_job.sh 同样的 alias 推导(t-yifeili@microsoft.com -> t-yifeili),
+# 默认传到提交者自己的固定数据目录;PVC 跨用户可读,别人可以直接引用
+USER_ALIAS="${USER_ALIAS:-$(whoami | cut -d@ -f1)}"
+DEST_ROOT="${DEST_ROOT:-$PVC_MOUNT/experiments/$USER_ALIAS/data}"
 DEST_DIR="$DEST_ROOT/$DEST_NAME"
 CHUNK_SIZE="${CHUNK_SIZE:-512M}"
-USER_ALIAS="${USER_ALIAS:-$(whoami | tr '@.' '--')}"
 PROJECT_NAME="${PROJECT_NAME:-cua}"
 PRIORITY_CLASS_NAME="${PRIORITY_CLASS_NAME:-high}"
 

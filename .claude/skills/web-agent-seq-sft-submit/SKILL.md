@@ -19,16 +19,37 @@ description: >-
 4 节点 B200 提交。上一次成功照此跑通的 run 记录在
 `docs/web_agent_seq_label1_4node_sft_20260630.md`（job `7fc3a`）。
 
-所有命令默认在 dev box 的 `/data/t-yifeili/mini-web-agent` 下执行。
+所有命令在 dev box 的 mini-web-agent checkout 根目录下执行(任何用户的
+checkout 都可以——docker/ 下脚本的路径和身份默认值均自动推导,见"多用户"一节)。
+
+## 运行协议(执行本 skill 前必读)
+
+提交训练前**必须先用 AskUserQuestion 问用户**,不要自行假设:
+
+1. **用几个 node?** 选项建议:`1`(单节点 smoke,验证数据/管线,~8 GPU)、
+   `4`(正式,32 GPU,推荐)、自定义。全局 batch = NODES×8,
+   steps/epoch = 样本数 / (NODES×8),提问时把这层影响说清楚。
+2. **数据要不要重新打包上传?** 选项:
+   - **直接用 PVC 上已有 bundle**(数据没变时;用下面"查看已有数据"的命令列出
+     `/mnt/pvc/experiments/<alias>/data/` 现状供用户确认);
+   - **重新打包+上传**(raw json 更新过时;走 TL;DR Step 1-2,并同步更新
+     yaml 的 dataset_dir/media_dir/dataset 和 output_dir/run_name)。
+3. **用 p0 还是 p1?**(`PRIORITY`)。注意坑:p0/p1 本身只进 job 名和 GPU
+   dashboard 分桶,**真正的调度优先级是 `PRIORITY_CLASS_NAME`**(默认 high)——
+   用户选 p1 时一并问要不要把 class 降成 medium,按用户配额习惯来。
+
+问完再执行。杀正在跑的 job、删 PVC 上的旧数据这类动作也要先确认。
 
 ## TL;DR
 
 数据与代码分离：bundle 一次性上传到 PVC **固定数据路径**
-`/mnt/pvc/experiments/t-yifeili/data/<bundle名>`，训练配置的
-`dataset_dir`/`media_dir` 写这个绝对路径；提交时只上传**不含数据的轻量代码树**。
+`/mnt/pvc/experiments/<提交者alias>/data/<bundle名>`（alias 自动取自 whoami,
+如 t-yifeili），训练配置的 `dataset_dir`/`media_dir` 写这个绝对路径；
+提交时只上传**不含数据的轻量代码树**。PVC 跨用户可读——别人可以直接引用
+你目录下的 bundle,不用重复上传。
 
 ```bash
-cd /data/t-yifeili/mini-web-agent
+cd <你的 mini-web-agent checkout 根目录>
 
 # 1. 打包 portable bundle（图片拷进 bundle、路径改相对；必须在图片所在的机器上跑）
 python LlamaFactory/scripts/package_web_agent_images.py \
@@ -41,14 +62,15 @@ python LlamaFactory/scripts/package_web_agent_images.py \
 # 2. bundle 上传到 PVC 固定数据路径（每份数据只需一次；分块重试+校验+原子落位）
 bash docker/upload_data_to_pvc.sh \
   LlamaFactory/data/web_agent_seq_om2w4000_run1_portable_bundle
-# 成功后数据在 /mnt/pvc/experiments/t-yifeili/data/web_agent_seq_om2w4000_run1_portable_bundle
+# 落到 /mnt/pvc/experiments/<提交者alias>/data/<bundle名>
 
 # 3. 配置文件的 dataset_dir/media_dir 指向上面的固定路径（绝对路径）
 #    LlamaFactory/examples/train_full/qwen35_9b_web_agent_seq_om2w4000_run1_40k_4node.yaml
 
-# 4. 提交。NODES 任意指定（1=单节点 smoke，4=正式 4 节点）；
-#    LIGHT_UPLOAD=1 默认开启：自动 rsync 出 ~150MB 的轻量代码树再上传
-#    （docker/make_light_code_tree.sh，遵循 .gitignore + 排除 LlamaFactory/data/web_agent_*）
+# 4. 提交。NODES 按"运行协议"问到的值填；
+#    LIGHT_UPLOAD=1 默认开启：自动 rsync 出 ~170MB 的轻量代码树再上传
+#    （docker/make_light_code_tree.sh，显式排除数据/产物并删树内 .gitignore——
+#     不能依赖 gitignore 语义,rsync 和 tar 都吃不了 `!` 反选,踩过两层坑）
 NODES=4 \
 CONFIG=examples/train_full/qwen35_9b_web_agent_seq_om2w4000_run1_40k_4node.yaml \
 WANDB_PROJECT=web-agent-sft AZBLOB_AUTO_PUSH=0 \
@@ -65,8 +87,9 @@ bash docker/submit_sft_q35_image.sh
 
 ## 环境准备（一次性）
 
-- dev box 上要有：`/data/t-yifeili/mini-web-agent`（本仓库）、
-  `/data/t-yifeili/aifsdk`（提交驱动 `clusters/lambda/submission/submit_job.sh`）。
+- dev box 上要有:本仓库的 checkout(任意路径,脚本按自身位置推导仓库根)和
+  aifsdk(提交驱动;默认用 `/data/t-yifeili/aifsdk`,可读即可,或
+  `SUBMIT=<自己的>/clusters/lambda/submission/submit_job.sh` 覆盖)。
 - `kubectl` + krew：`export PATH="$HOME/.krew/bin:$PATH"`；namespace `bonete61`。
 - Secret volume `echo-rl-creds` 已在集群配好（HF token 等），挂到
   `/run/secrets/echo-rl-creds`。
@@ -126,10 +149,12 @@ manifest 里 `missing_images` 必须为 0。
 ## Step 3 — 数据上传到 PVC 固定路径（默认模式，2026-07-07 起）
 
 **约定**：所有训练数据 bundle 都放 PVC 固定路径
-`/mnt/pvc/experiments/t-yifeili/data/<bundle名>`，训练 yaml 的
-`dataset_dir`/`media_dir` 写这个**绝对路径**；提交 job 时只上传轻量代码树
-（TL;DR Step 4 的 rsync 排除法）。数据与 job 生命周期解耦——不再依赖
-`/mnt/pvc/t-yifeili/runs/<旧JOB_NAME>/...` 这类会随旧 job 清理而失效的路径。
+`/mnt/pvc/experiments/<提交者alias>/data/<bundle名>`（alias 自动取自 whoami,
+可用 `USER_ALIAS`/`DEST_ROOT` 覆盖），训练 yaml 的 `dataset_dir`/`media_dir`
+写这个**绝对路径**；提交 job 时只上传轻量代码树（TL;DR Step 4 的 rsync 排除法）。
+数据与 job 生命周期解耦——不再依赖 `/mnt/pvc/<alias>/runs/<旧JOB_NAME>/...`
+这类会随旧 job 清理而失效的路径。现有 om2w4000 系列 bundle 都在
+`/mnt/pvc/experiments/t-yifeili/data/` 下,跨用户可读,别人直接引用即可。
 
 ```bash
 # 每份新数据一次；重跑会原子覆盖同名目录
@@ -142,22 +167,40 @@ label1 `b47dc` 整包 connection reset 的问题）→ pod 内解压到 `<dest>.
 后原子 `mv` → 文件数+字节数校验 → 自动删 uploader job。
 **不要**用 `cp -a` 直接往 PVC 拷数据（权限报错，`013704` 的教训）。
 
-查看已有数据：
+查看已有数据（"运行协议"第 2 问让用户确认时用这个）：
 ```bash
 export PATH="$HOME/.krew/bin:$PATH"
-kubectl -n bonete61 exec <任一挂PVC的pod> -- ls -lh /mnt/pvc/experiments/t-yifeili/data/
+kubectl -n bonete61 exec <任一挂PVC的pod> -- ls -lh /mnt/pvc/experiments/<alias>/data/
 ```
 
 **旧路径迁移**：早期 yaml 里指向 `/mnt/pvc/t-yifeili/runs/<旧JOB_NAME>/...` 的
 数据，如还要复用，在挂 PVC 的 pod 里 `cp -r` 到固定路径下再改 yaml（pod 内
 拷贝没有 dev box 的权限问题）。
 
+## 多用户提交（2026-07-08 起脚本已 user-agnostic）
+
+docker/ 下所有脚本的身份与路径默认值都是自动推导的,**任何用户从自己的
+checkout 直接跑 TL;DR 命令即可**,不需要特殊配置:
+
+| 项 | 默认推导 |
+|---|---|
+| 仓库根(`MINI_WEB_AGENT_DIR`/`SRC`) | 脚本自身所在仓库 |
+| `USER_ALIAS`(job 名/quota/PVC 归属) | `whoami` 去掉 @domain |
+| 数据上传目录(`DEST_ROOT`) | `/mnt/pvc/experiments/<自己alias>/data` |
+| 轻量树(`LIGHT_ROOT`) | `/tmp/mwa-light-<自己alias>`(同机多人不冲突) |
+| aifsdk(`SUBMIT`) | `/data/t-yifeili/aifsdk/...`(可读即可,可覆盖) |
+
+每个用户自己要准备的只有:bonete61 的 kubectl 凭证、和 `WANDB_HOST` 匹配的
+`WANDB_API_KEY`(不匹配会 401 打挂 job)、自己的 `PROJECT_NAME` workstream。
+读别人的数据不用重传(PVC 跨用户可读),写入(上传/ckpt)自动落自己名下。
+
 ## Guest 提交 — 别人从 yifeili 的 sandbox 提交，归属记在自己名下
 
 适用场景：另一个用户直接登录 yifeili 的 sandbox、`cd /data/t-yifeili/mini-web-agent`
 提交 job（共享工作树、数据、aifsdk、kubectl 凭证都用现成的——这些已被接受），
 但 **job 命名 / quota bucket / GPU dashboard / submitter label / W&B run 必须
-记在 guest 自己名下**。做法：提交时覆盖归属相关的环境变量。
+记在 guest 自己名下**。做法：提交时覆盖归属相关的环境变量
+（在自己 sandbox 有 checkout 的话,优先走上面"多用户提交",什么都不用覆盖）。
 
 ### 第一步（每个新 guest 一次性）：验证 USER_ALIAS 可覆盖
 
