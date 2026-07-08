@@ -16,15 +16,26 @@ LIGHT_ROOT="${LIGHT_ROOT:-/tmp/mwa-light}"
 LIGHT="$LIGHT_ROOT/$(basename "$SRC")"
 
 mkdir -p "$LIGHT"
-# --filter=':- .gitignore' 逐目录遵循 .gitignore(等价旧流程 tar 的
-# --exclude-vcs-ignores,排掉 eval_outputs/logs/ckpt 等本地产物);
-# 再显式排掉数据(bundles 未被 gitignore)和 .git 本身。
+# 显式排除清单。不能用 --filter=':- .gitignore':根 .gitignore 有
+# `LlamaFactory/**` + `!...` 反选组合,rsync 不支持 gitignore 的 `!` 语法,
+# 会把整个 LlamaFactory 源码排掉(pod 里 pip install -e 找不到 setup.py)。
 rsync -a --delete --delete-excluded \
-  --filter=':- .gitignore' \
   --exclude '.git' \
+  --exclude 'eval_outputs' \
+  --exclude 'logs' \
+  --exclude 'outputs' \
+  --exclude 'wandb' \
+  --exclude '__pycache__' \
+  --exclude '*.pyc' \
   --exclude 'LlamaFactory/data/web_agent_*' \
   --exclude 'LlamaFactory/saves' \
+  --exclude 'LlamaFactory/output' \
   "$SRC/" "$LIGHT/"
+
+# 护栏:pod 内 bootstrap 要 pip install -e LlamaFactory,核心文件必须在
+for f in LlamaFactory/pyproject.toml LlamaFactory/src docker/run_sft_q35_image.sh; do
+  [[ -e "$LIGHT/$f" ]] || { echo "[error] 轻量树缺 $f,排除规则有误" >&2; exit 1; }
+done
 
 SIZE=$(du -sh "$LIGHT" | cut -f1)
 echo "[info] 轻量代码树: $LIGHT ($SIZE)" >&2
