@@ -32,10 +32,24 @@ rsync -a --delete --delete-excluded \
   --exclude 'LlamaFactory/output' \
   "$SRC/" "$LIGHT/"
 
-# 护栏:pod 内 bootstrap 要 pip install -e LlamaFactory,核心文件必须在
+# 删掉树里的 .gitignore:submit_job.sh 打 tar 用 --exclude-vcs-ignores,
+# 会重新应用根 .gitignore 的 `LlamaFactory/**`,把源码从 tar 里剔掉
+# (rsync 阶段留下的文件到 tar 阶段又丢了)。排除逻辑全部由上面的
+# rsync 显式清单承担,.gitignore 在上传树里没有别的用途。
+find "$LIGHT" -name .gitignore -delete
+
+# 护栏:pod 内 bootstrap 要 pip install -e LlamaFactory,核心文件必须在,
+# 且必须真的能进 tar(复现 submit_job.sh 的打包参数)
 for f in LlamaFactory/pyproject.toml LlamaFactory/src docker/run_sft_q35_image.sh; do
   [[ -e "$LIGHT/$f" ]] || { echo "[error] 轻量树缺 $f,排除规则有误" >&2; exit 1; }
 done
+# 注意不能用 grep -q:提前退出会让 tar 收 SIGPIPE,在 pipefail 下误报失败
+n=$(tar --exclude-vcs-ignores --exclude-vcs -cf - -C "$LIGHT" . 2>/dev/null \
+    | tar -tf - | grep -c 'LlamaFactory/pyproject.toml' || true)
+if [[ "$n" -eq 0 ]]; then
+  echo "[error] tar --exclude-vcs-ignores 会丢 LlamaFactory/pyproject.toml,上传树仍有残留 ignore 规则" >&2
+  exit 1
+fi
 
 SIZE=$(du -sh "$LIGHT" | cut -f1)
 echo "[info] 轻量代码树: $LIGHT ($SIZE)" >&2
