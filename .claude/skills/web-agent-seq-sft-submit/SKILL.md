@@ -37,6 +37,10 @@ checkout 都可以——docker/ 下脚本的路径和身份默认值均自动推
 3. **用 p0 还是 p1?**(`PRIORITY`)。注意坑:p0/p1 本身只进 job 名和 GPU
    dashboard 分桶,**真正的调度优先级是 `PRIORITY_CLASS_NAME`**(默认 high)——
    用户选 p1 时一并问要不要把 class 降成 medium,按用户配额习惯来。
+4. **训完要不要自动跑全量 eval?** 要的话改用组合脚本
+   `docker/submit_sft_eval_q35_image.sh`(见"训后自动全量 eval"一节;
+   同一个 job 里 train→ckpt sync→vision merge→300 任务全量评测,80 并发)。
+   不要的话用 `docker/submit_sft_q35_image.sh`(纯训练)。
 
 问完再执行。杀正在跑的 job、删 PVC 上的旧数据这类动作也要先确认。
 
@@ -176,6 +180,39 @@ kubectl -n bonete61 exec <任一挂PVC的pod> -- ls -lh /mnt/pvc/experiments/<al
 **旧路径迁移**：早期 yaml 里指向 `/mnt/pvc/t-yifeili/runs/<旧JOB_NAME>/...` 的
 数据，如还要复用，在挂 PVC 的 pod 里 `cp -r` 到固定路径下再改 yaml（pod 内
 拷贝没有 dev box 的权限问题）。
+
+## 训后自动全量 eval（一条 job:train → 全量评测,2026-07-08 起）
+
+用组合脚本代替纯训练脚本,训完在**同一个 job** 里自动评测刚出炉的 ckpt:
+
+```bash
+NODES=4 \
+SFT_CONFIG=examples/train_full/<训练yaml> \
+WANDB_PROJECT=web-agent-sft AZBLOB_AUTO_PUSH=0 \
+bash docker/submit_sft_eval_q35_image.sh
+```
+
+默认行为(都可 env 覆盖):
+
+| 项 | 默认 | 说明 |
+|---|---|---|
+| `EVAL_CONFIG` | `configs/qwen35_9b_web_agent_all3_eval_sft.yaml` | 全量 300 任务(easy80+medium143+hard77),SFT-aligned |
+| `EVAL_AGENT_CONCURRENCY` | `80` | rollout 并发 worker 数(覆盖配置里的 32) |
+| `EVAL_NUM_ENGINES` | `8` | master 8 卡各起一个 tp=1 vLLM 引擎喂 80 worker |
+| `EVAL_EXEC_BACKEND` | `mp` | **多引擎必须 mp**:集群镜像 vLLM 0.18 的 ray 后端会把引擎全堆 GPU0 → OOM |
+| `EVAL_RUN_TAG` | `merged_9b` | 结果目录/日志的标签,按 run 改 |
+
+机制:`run_sft_q35_image.sh` 训完(rc=0)且只在 **master** 上依次做
+ckpt 同步到 `/mnt/pvc/<alias>/models/...` → vision merge →
+`EVAL_AFTER=1` 触发 `run_eval_q35_image.sh`,`EVAL_CKPT` 自动指向刚同步的
+稳定 ckpt(含 vision merge,vLLM 可直接加载);多节点训练时 worker 节点
+训完即退,eval 用 master 的 8 张卡跑。build 并发仍用配置值(32),只是
+throttle 环境构建的爬坡,不会超订 pod CPU。
+
+与纯训练脚本的差异:额外上传 SkyRL(`SKYRL_DIR`,默认 `/data/t-yifeili/SkyRL`,
+可读即可)、多挂 `echo-rl-openai` secret(judge key)。eval 失败不影响已
+同步的 ckpt,可以随后用 `submit_eval_q35_image.sh` 单独重评。
+结果看 pod 日志尾部或 `$OUTPUT_DIR/eval_console.log`。
 
 ## 多用户提交（2026-07-08 起脚本已 user-agnostic）
 

@@ -27,11 +27,23 @@ MINI_WEB_AGENT_DIR="${MINI_WEB_AGENT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.
 SKYRL_DIR="${SKYRL_DIR:-/data/t-yifeili/SkyRL}"
 IMAGE="${IMAGE:-aifrontiers.azurecr.io/nvidia25.11-pytorch2.10.0-te2.13-deepspeed0.18.9-fa2main-vllm0.18.0:20260415}"
 GPUS="${GPUS:-8}"
+# Multi-node train is fine: only the master post-processes (ckpt sync + vision
+# merge + eval); the eval runs on the master node's GPUs after training ends.
+NODES="${NODES:-1}"
 # Train config: path relative to LlamaFactory/ (lives inside the uploaded repo).
 SFT_CONFIG="${SFT_CONFIG:-examples/train_full/qwen35_9b_websft_merged.yaml}"
-# Eval config: path relative to mini-web-agent/ root.
-EVAL_CONFIG="${EVAL_CONFIG:-configs/qwen35_9b_web_agent_easy_eval_sft.yaml}"
+# Eval config: path relative to mini-web-agent/ root. Default = FULL eval
+# (om2w easy80+medium143+hard77 = 300 tasks, SFT-aligned).
+EVAL_CONFIG="${EVAL_CONFIG:-configs/qwen35_9b_web_agent_all3_eval_sft.yaml}"
 EVAL_RUN_TAG="${EVAL_RUN_TAG:-merged_9b}"
+# Rollout concurrency (agent workers) for the chained eval.
+EVAL_AGENT_CONCURRENCY="${EVAL_AGENT_CONCURRENCY:-80}"
+# 8 data-parallel vLLM engines (tp=1, one per master GPU) to feed 80 workers.
+# MUST pair with the "mp" executor backend: on the cluster image's vLLM 0.18 the
+# "ray" backend piles all engines onto GPU0 -> OOM (see run_eval_q35_image.sh).
+# Fall back to EVAL_NUM_ENGINES=1 to reproduce the old single-engine behavior.
+EVAL_NUM_ENGINES="${EVAL_NUM_ENGINES:-8}"
+EVAL_EXEC_BACKEND="${EVAL_EXEC_BACKEND:-mp}"
 # LIGHT_UPLOAD=1 (default): upload a code tree without LlamaFactory/data/web_agent_*;
 # training data must live at /mnt/pvc/experiments/t-yifeili/data/<bundle> (see
 # docker/upload_data_to_pvc.sh) with the yaml's dataset_dir/media_dir pointing there.
@@ -54,15 +66,15 @@ export PRIORITY="${PRIORITY:-p0}"
 export PRIORITY_CLASS_NAME="${PRIORITY_CLASS_NAME:-high}"
 export PROJECT_NAME="${PROJECT_NAME:-cua}"
 
-echo "[submit_sft_eval_q35_image] GPUS=$GPUS IMAGE=$IMAGE"
+echo "[submit_sft_eval_q35_image] NODES=$NODES GPUS=$GPUS (total $((NODES*GPUS)) GPUs) IMAGE=$IMAGE"
 echo "[submit_sft_eval_q35_image] SFT_CONFIG=$SFT_CONFIG"
-echo "[submit_sft_eval_q35_image] EVAL_CONFIG=$EVAL_CONFIG (EVAL_AFTER=1, tag=$EVAL_RUN_TAG)"
+echo "[submit_sft_eval_q35_image] EVAL_CONFIG=$EVAL_CONFIG (EVAL_AFTER=1, tag=$EVAL_RUN_TAG, workers=$EVAL_AGENT_CONCURRENCY, engines=$EVAL_NUM_ENGINES/$EVAL_EXEC_BACKEND)"
 echo "[submit_sft_eval_q35_image] PRIORITY=$PRIORITY CLASS=$PRIORITY_CLASS_NAME PROJECT=$PROJECT_NAME"
 
 # Forward both phases' knobs. EVAL_AFTER=1 flips on the eval chaining inside
 # run_sft_q35_image.sh after a successful train + ckpt sync. The SFT driver
 # uploads the final ckpt to blob by default; set AZBLOB_AUTO_PUSH=0 to disable.
-EXTRA_ENV="SFT_CONFIG=${SFT_CONFIG},NPROC=${GPUS},EVAL_AFTER=1,EVAL_CONFIG=${EVAL_CONFIG},EVAL_RUN_TAG=${EVAL_RUN_TAG}"
+EXTRA_ENV="SFT_CONFIG=${SFT_CONFIG},NPROC=${GPUS},EVAL_AFTER=1,EVAL_CONFIG=${EVAL_CONFIG},EVAL_RUN_TAG=${EVAL_RUN_TAG},EVAL_AGENT_CONCURRENCY=${EVAL_AGENT_CONCURRENCY},EVAL_NUM_ENGINES=${EVAL_NUM_ENGINES},EVAL_EXEC_BACKEND=${EVAL_EXEC_BACKEND}"
 [[ -n "${AZBLOB_AUTO_PUSH:-}" ]] && EXTRA_ENV="${EXTRA_ENV},AZBLOB_AUTO_PUSH=${AZBLOB_AUTO_PUSH}"
 [[ -n "${AZBLOB_SAS_TOKEN:-}" ]] && EXTRA_ENV="${EXTRA_ENV},AZBLOB_SAS_TOKEN=${AZBLOB_SAS_TOKEN}"
 [[ -n "${AZBLOB_PREFIX:-}" ]]    && EXTRA_ENV="${EXTRA_ENV},AZBLOB_PREFIX=${AZBLOB_PREFIX}"
@@ -73,7 +85,7 @@ EXTRA_ENV="SFT_CONFIG=${SFT_CONFIG},NPROC=${GPUS},EVAL_AFTER=1,EVAL_CONFIG=${EVA
 bash "$SUBMIT" \
     --upload "$MINI_WEB_AGENT_DIR" "$SKYRL_DIR" \
     --image "$IMAGE" \
-    --node 1 --gpu-per-node "$GPUS" \
+    --node "$NODES" --gpu-per-node "$GPUS" \
     --cpu 64 --memory 512Gi --shm 64Gi \
     --secret-volume echo-rl-creds:/run/secrets/echo-rl-creds \
     --secret-volume echo-rl-openai:/run/secrets/echo-rl-openai \

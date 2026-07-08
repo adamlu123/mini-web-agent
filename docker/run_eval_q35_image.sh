@@ -238,6 +238,16 @@ echo "[eval] EVAL_NUM_ENGINES=$EVAL_NUM_ENGINES EVAL_EXEC_BACKEND=$EVAL_EXEC_BAC
 # shellcheck disable=SC2206
 ENGINE_OVERRIDES=( $EVAL_ENGINE_OVERRIDES )
 
+# Optional rollout-concurrency override: EVAL_AGENT_CONCURRENCY=<N> sets how many
+# agent workers roll out in parallel (config default: generator.agent_max_concurrency,
+# e.g. 32 in the all3 config). Build concurrency stays at the config value and
+# just throttles env ramp-up (bumping it too would oversubscribe pod CPUs).
+CONCURRENCY_OVERRIDE=()
+if [ -n "${EVAL_AGENT_CONCURRENCY:-}" ]; then
+  CONCURRENCY_OVERRIDE=( "generator.agent_max_concurrency=${EVAL_AGENT_CONCURRENCY}" )
+  echo "[eval] agent_max_concurrency -> $EVAL_AGENT_CONCURRENCY"
+fi
+
 echo "[eval] === launching eval: $EVAL_CONFIG ==="
 echo "[eval] engine overrides: ${ENGINE_OVERRIDES[*]:-<none>}"
 # cwd = mini-web-agent root so the config's relative chat_template_path and the
@@ -249,6 +259,7 @@ RAY_DEDUP_LOGS=0 python -m echo_rl.web_agent.eval_entrypoint --config "$EVAL_CON
     trainer.logger=console \
     trainer.placement.colocate_all=false \
     "${ENGINE_OVERRIDES[@]}" \
+    "${CONCURRENCY_OVERRIDE[@]}" \
     "${CKPT_OVERRIDE[@]}" \
     2>&1 | tee -a "$OUTPUT_DIR/eval_console.log"
 RC=${PIPESTATUS[0]}
