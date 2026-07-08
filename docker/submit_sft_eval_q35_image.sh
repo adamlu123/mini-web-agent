@@ -32,12 +32,21 @@ SFT_CONFIG="${SFT_CONFIG:-examples/train_full/qwen35_9b_websft_merged.yaml}"
 # Eval config: path relative to mini-web-agent/ root.
 EVAL_CONFIG="${EVAL_CONFIG:-configs/qwen35_9b_web_agent_easy_eval_sft.yaml}"
 EVAL_RUN_TAG="${EVAL_RUN_TAG:-merged_9b}"
+# LIGHT_UPLOAD=1 (default): upload a code tree without LlamaFactory/data/web_agent_*;
+# training data must live at /mnt/pvc/experiments/t-yifeili/data/<bundle> (see
+# docker/upload_data_to_pvc.sh) with the yaml's dataset_dir/media_dir pointing there.
+LIGHT_UPLOAD="${LIGHT_UPLOAD:-1}"
 
 for d in "$MINI_WEB_AGENT_DIR" "$SKYRL_DIR"; do
     [[ -d "$d" ]] || { echo "[error] missing $d"; exit 1; }
 done
 [[ -f "$MINI_WEB_AGENT_DIR/LlamaFactory/$SFT_CONFIG" ]] || { echo "[error] SFT config not found: LlamaFactory/$SFT_CONFIG"; exit 1; }
 [[ -f "$MINI_WEB_AGENT_DIR/$EVAL_CONFIG" ]] || { echo "[error] eval config not found: $EVAL_CONFIG"; exit 1; }
+
+if [[ "$LIGHT_UPLOAD" == "1" ]]; then
+    MINI_WEB_AGENT_DIR="$(SRC="$MINI_WEB_AGENT_DIR" bash "$(dirname "$0")/make_light_code_tree.sh" | tail -1)"
+    echo "[submit_sft_eval_q35_image] LIGHT_UPLOAD=1 -> uploading $MINI_WEB_AGENT_DIR"
+fi
 
 export PATH="$HOME/.krew/bin:$PATH"
 export WANDB_HOST="${WANDB_HOST:-https://api.wandb.ai}"

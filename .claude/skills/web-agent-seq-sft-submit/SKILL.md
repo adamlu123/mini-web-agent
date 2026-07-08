@@ -23,6 +23,10 @@ description: >-
 
 ## TL;DR
 
+数据与代码分离：bundle 一次性上传到 PVC **固定数据路径**
+`/mnt/pvc/experiments/t-yifeili/data/<bundle名>`，训练配置的
+`dataset_dir`/`media_dir` 写这个绝对路径；提交时只上传**不含数据的轻量代码树**。
+
 ```bash
 cd /data/t-yifeili/mini-web-agent
 
@@ -34,21 +38,27 @@ python LlamaFactory/scripts/package_web_agent_images.py \
   --dataset-name web_agent_seq_om2w4000_run1_portable
 # 确认输出 manifest 里 missing_images: 0
 
-# 2. 配置文件（已就绪，检查 dataset_dir/output_dir 即可）
+# 2. bundle 上传到 PVC 固定数据路径（每份数据只需一次；分块重试+校验+原子落位）
+bash docker/upload_data_to_pvc.sh \
+  LlamaFactory/data/web_agent_seq_om2w4000_run1_portable_bundle
+# 成功后数据在 /mnt/pvc/experiments/t-yifeili/data/web_agent_seq_om2w4000_run1_portable_bundle
+
+# 3. 配置文件的 dataset_dir/media_dir 指向上面的固定路径（绝对路径）
 #    LlamaFactory/examples/train_full/qwen35_9b_web_agent_seq_om2w4000_run1_40k_4node.yaml
 
-# 3. 提交（4 节点 x 8 B200）
-WANDB_HOST=https://api.wandb.ai WANDB_PROJECT=web-agent-sft \
-PRIORITY=p0 PROJECT_NAME=cua PRIORITY_CLASS_NAME=high \
-bash /data/t-yifeili/aifsdk/clusters/lambda/submission/submit_job.sh \
-  --upload /data/t-yifeili/mini-web-agent \
-  --image aifrontiers.azurecr.io/nvidia25.11-pytorch2.10.0-te2.13-deepspeed0.18.9-fa2main-vllm0.18.0:20260415 \
-  --node 4 --gpu-per-node 8 --cpu 64 --memory 512Gi --shm 64Gi \
-  --secret-volume echo-rl-creds:/run/secrets/echo-rl-creds \
-  --extra-env-vars 'SFT_CONFIG=examples/train_full/qwen35_9b_web_agent_seq_om2w4000_run1_40k_4node.yaml,NPROC=8,AZBLOB_AUTO_PUSH=0' \
-  --follow-logs \
-  --cmd 'exec bash $PVC_MOUNT/$USER_ALIAS/runs/$JOB_NAME/mini-web-agent/docker/run_sft_q35_image.sh'
+# 4. 提交。NODES 任意指定（1=单节点 smoke，4=正式 4 节点）；
+#    LIGHT_UPLOAD=1 默认开启：自动 rsync 出 ~150MB 的轻量代码树再上传
+#    （docker/make_light_code_tree.sh，遵循 .gitignore + 排除 LlamaFactory/data/web_agent_*）
+NODES=4 \
+CONFIG=examples/train_full/qwen35_9b_web_agent_seq_om2w4000_run1_40k_4node.yaml \
+WANDB_PROJECT=web-agent-sft AZBLOB_AUTO_PUSH=0 \
+bash docker/submit_sft_q35_image.sh
 ```
+
+`submit_sft_q35_image.sh` 的其他可覆盖项：`GPUS`(默认8)、`PRIORITY`(p0)、
+`PROJECT_NAME`(cua)、`PRIORITY_CLASS_NAME`(high)、`LIGHT_UPLOAD=0` 回退整树上传。
+全局 batch = NODES×GPUS×1，改 NODES 时注意 steps/epoch 随之变化
+（7774 样本 / (NODES×8) ≈ steps/epoch）。
 
 `--follow-logs` 在 pod 还在跑时就会 detach（打印 `Pod final phase: Running` 后退出 0），
 **不是失败**，用下面 Monitoring 的 kubectl 命令跟。
@@ -63,19 +73,17 @@ bash /data/t-yifeili/aifsdk/clusters/lambda/submission/submit_job.sh \
 - W&B：**必须 `WANDB_HOST=https://api.wandb.ai`（个人 endpoint）**。默认的
   Microsoft endpoint 会 401 并在 trainer 初始化后把整个 job 打挂（label1 run 的
   `af8b0` 就是这么死的）。项目 `web-agent-sft`，历史 run 在 `flyhero99/web-agent-sft`。
-- 本地(WSL)没有 git-lfs 时，用 standalone 二进制拉 LFS 数据：
-  ```bash
-  # 下载 git-lfs release 解包后：
-  git show origin/rl_yifei:LlamaFactory/data/web_agent_seq_om2w4000_run1.json \
-    | git-lfs smudge > LlamaFactory/data/web_agent_seq_om2w4000_run1.json
-  ```
+- **数据不在 git 里**（2026-07-07 起 `LlamaFactory/data/*.json` 已 gitignore、
+  LFS 追踪已移除）。数据的权威副本：dev box 本地 `LlamaFactory/data/` +
+  PVC 固定路径 `/mnt/pvc/experiments/t-yifeili/data/`。历史 LFS 版本仍可从
+  commit `9da2b6c` 恢复（`git show 9da2b6c:LlamaFactory/data/... | git-lfs smudge`）。
 
 ## Step 1 — 数据
 
-**用哪份数据**：raw ShareGPT json 走 git LFS 存在仓库里：
+**用哪份数据**：raw ShareGPT json 只存 dev box 本地（不进 git）：
 
 ```text
-LlamaFactory/data/web_agent_seq_om2w4000_run1.json   (459 MB, LFS)
+LlamaFactory/data/web_agent_seq_om2w4000_run1.json   (459 MB, 仅本地)
   7774 examples = 5222 trajectory_session + 552 image_qa
                 + 1000 self_reflection_image + 1000 self_reflection_final
   46060 gpt turns（其中 2552 个 judge 类 turn 无 <think>，见下面"think 对齐"）
@@ -115,15 +123,34 @@ manifest 里 `missing_images` 必须为 0。
   `cutoff_len: 40000`、`image_max_pixels: 262144`（serving 端对齐要用同值）。
 - 4 节点 x 8 GPU x batch 1 = 全局 batch 32；7774 样本 ≈ 243 steps/epoch。
 
-## Step 3 — 上传策略（二选一）
+## Step 3 — 数据上传到 PVC 固定路径（默认模式，2026-07-07 起）
 
-1. **随代码上传 bundle**（默认，TL;DR 的 `--upload /data/t-yifeili/mini-web-agent`）：
-   bundle 几个 GB，上传可能因 connection reset 失败（label1 的 `b47dc`）。失败就重试或改用方式 2。
-2. **PVC 复用**（bundle 已在某次 job 上传过 PVC 时）：复制一份 `*_pvcdata.yaml`，
-   把 `dataset_dir`/`media_dir` 改成绝对 PVC 路径
-   `/mnt/pvc/t-yifeili/runs/<旧JOB_NAME>/mini-web-agent/LlamaFactory/data/<bundle>`，
-   然后 `--upload` 一个**不含 bundle 的轻量代码树**（rsync 排除 `LlamaFactory/data`
-   到 /tmp 再上传）。不要用 `cp -a` 往 PVC 拷数据（权限报错，`013704` 的教训）。
+**约定**：所有训练数据 bundle 都放 PVC 固定路径
+`/mnt/pvc/experiments/t-yifeili/data/<bundle名>`，训练 yaml 的
+`dataset_dir`/`media_dir` 写这个**绝对路径**；提交 job 时只上传轻量代码树
+（TL;DR Step 4 的 rsync 排除法）。数据与 job 生命周期解耦——不再依赖
+`/mnt/pvc/t-yifeili/runs/<旧JOB_NAME>/...` 这类会随旧 job 清理而失效的路径。
+
+```bash
+# 每份新数据一次；重跑会原子覆盖同名目录
+bash docker/upload_data_to_pvc.sh LlamaFactory/data/<bundle目录> [目标名]
+```
+
+脚本机制（`docker/upload_data_to_pvc.sh`）：起 1c/2Gi 的 uploader pod 挂 PVC →
+tar 按 512M 分块 `kubectl cp`（每块独立重试 5 次，断连只重传当前块，解决了
+label1 `b47dc` 整包 connection reset 的问题）→ pod 内解压到 `<dest>.tmp`
+后原子 `mv` → 文件数+字节数校验 → 自动删 uploader job。
+**不要**用 `cp -a` 直接往 PVC 拷数据（权限报错，`013704` 的教训）。
+
+查看已有数据：
+```bash
+export PATH="$HOME/.krew/bin:$PATH"
+kubectl -n bonete61 exec <任一挂PVC的pod> -- ls -lh /mnt/pvc/experiments/t-yifeili/data/
+```
+
+**旧路径迁移**：早期 yaml 里指向 `/mnt/pvc/t-yifeili/runs/<旧JOB_NAME>/...` 的
+数据，如还要复用，在挂 PVC 的 pod 里 `cp -r` 到固定路径下再改 yaml（pod 内
+拷贝没有 dev box 的权限问题）。
 
 ## Guest 提交 — 别人从 yifeili 的 sandbox 提交，归属记在自己名下
 
@@ -154,17 +181,15 @@ grep -n "USER_ALIAS" /data/t-yifeili/aifsdk/clusters/lambda/submission/submit_jo
 cd /data/t-yifeili/mini-web-agent
 
 USER_ALIAS=<guest-alias> \
-WANDB_HOST=https://api.wandb.ai WANDB_PROJECT=web-agent-sft \
+NODES=4 \
+CONFIG=examples/train_full/qwen35_9b_web_agent_seq_om2w4000_run1_40k_4node.yaml \
+WANDB_PROJECT=web-agent-sft AZBLOB_AUTO_PUSH=0 \
 PRIORITY=p1 PROJECT_NAME=<guest 的 workstream> PRIORITY_CLASS_NAME=medium \
-bash /data/t-yifeili/aifsdk/clusters/lambda/submission/submit_job.sh \
-  --upload /data/t-yifeili/mini-web-agent \
-  --image aifrontiers.azurecr.io/nvidia25.11-pytorch2.10.0-te2.13-deepspeed0.18.9-fa2main-vllm0.18.0:20260415 \
-  --node 4 --gpu-per-node 8 --cpu 64 --memory 512Gi --shm 64Gi \
-  --secret-volume echo-rl-creds:/run/secrets/echo-rl-creds \
-  --extra-env-vars 'SFT_CONFIG=examples/train_full/qwen35_9b_web_agent_seq_om2w4000_run1_40k_4node.yaml,NPROC=8,AZBLOB_AUTO_PUSH=0' \
-  --follow-logs \
-  --cmd 'exec bash $PVC_MOUNT/$USER_ALIAS/runs/$JOB_NAME/mini-web-agent/docker/run_sft_q35_image.sh'
+bash docker/submit_sft_q35_image.sh
 ```
+
+数据同样读固定路径 `/mnt/pvc/experiments/t-yifeili/data/...`（跨用户可读，
+guest 不用重新上传数据）；`LIGHT_UPLOAD=1` 默认生效。
 
 覆盖 `USER_ALIAS` 后自动跟着走 guest 名下的东西（`--cmd` 里全是 `$USER_ALIAS`/`$JOB_NAME`
 变量，不用改）：
@@ -245,7 +270,9 @@ W&B run 链接出现。**不要**裸 grep `error/Traceback`——训练数据本
 
 | 路径 | 作用 |
 |------|------|
-| `LlamaFactory/data/web_agent_seq_om2w4000_run1.json` | raw 数据（LFS） |
+| `LlamaFactory/data/web_agent_seq_om2w4000_run1.json` | raw 数据（仅 dev box 本地） |
+| `docker/upload_data_to_pvc.sh` | bundle → PVC 固定数据路径（分块+校验） |
+| `/mnt/pvc/experiments/t-yifeili/data/` | PVC 固定数据根目录（pod 内） |
 | `LlamaFactory/scripts/make_web_agent_sequential_compact_tools_sft.py` | rollout → seq ShareGPT |
 | `LlamaFactory/scripts/package_web_agent_images.py` | 打 portable bundle |
 | `LlamaFactory/examples/train_full/qwen35_9b_web_agent_seq_om2w4000_run1_40k_4node.yaml` | 本次训练配置 |

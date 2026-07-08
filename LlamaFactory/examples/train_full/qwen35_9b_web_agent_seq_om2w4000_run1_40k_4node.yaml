@@ -30,8 +30,9 @@ deepspeed: examples/deepspeed/ds_z2_config.json
 use_reentrant_gc: false
 
 ### dataset
-dataset_dir: data/web_agent_seq_om2w4000_run1_portable_bundle
-media_dir: data/web_agent_seq_om2w4000_run1_portable_bundle
+# 数据不随代码上传:bundle 先用 docker/upload_data_to_pvc.sh 传到 PVC 固定路径
+dataset_dir: /mnt/pvc/experiments/t-yifeili/data/web_agent_seq_om2w4000_run1_portable_bundle
+media_dir: /mnt/pvc/experiments/t-yifeili/data/web_agent_seq_om2w4000_run1_portable_bundle
 dataset: web_agent_seq_om2w4000_run1_portable
 template: qwen3_5
 cutoff_len: 40000
@@ -57,7 +58,7 @@ run_name: qwen35_9b_web_agent_seq_om2w4000_run1_40k_4node
 per_device_train_batch_size: 1
 gradient_accumulation_steps: 1
 learning_rate: 1.0e-5
-num_train_epochs: 2.0
+num_train_epochs: 3.0
 lr_scheduler_type: cosine
 warmup_ratio: 0.05
 bf16: true

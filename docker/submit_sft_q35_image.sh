@@ -27,9 +27,20 @@ GPUS="${GPUS:-8}"
 NODES="${NODES:-1}"
 # Config path is relative to LlamaFactory/ (which lives inside the uploaded repo).
 CONFIG="${CONFIG:-examples/train_full/qwen35_4b_websft_smoke.yaml}"
+# LIGHT_UPLOAD=1 (default): rsync a code tree WITHOUT LlamaFactory/data/web_agent_*
+# to /tmp and upload that. Training data must already live at the fixed PVC path
+# /mnt/pvc/experiments/t-yifeili/data/<bundle> (docker/upload_data_to_pvc.sh) and
+# the yaml's dataset_dir/media_dir must point there. Set LIGHT_UPLOAD=0 to upload
+# the full working tree (old behavior, multi-GB, flaky).
+LIGHT_UPLOAD="${LIGHT_UPLOAD:-1}"
 
 [[ -d "$MINI_WEB_AGENT_DIR" ]] || { echo "[error] missing $MINI_WEB_AGENT_DIR"; exit 1; }
 [[ -f "$MINI_WEB_AGENT_DIR/LlamaFactory/$CONFIG" ]] || { echo "[error] config not found: LlamaFactory/$CONFIG"; exit 1; }
+
+if [[ "$LIGHT_UPLOAD" == "1" ]]; then
+    MINI_WEB_AGENT_DIR="$(SRC="$MINI_WEB_AGENT_DIR" bash "$(dirname "$0")/make_light_code_tree.sh" | tail -1)"
+    echo "[submit_sft_q35_image] LIGHT_UPLOAD=1 -> uploading $MINI_WEB_AGENT_DIR"
+fi
 
 export PATH="$HOME/.krew/bin:$PATH"
 export WANDB_HOST="${WANDB_HOST:-https://api.wandb.ai}"
