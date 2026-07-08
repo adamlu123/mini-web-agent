@@ -57,6 +57,7 @@ echo "[submit_sft_q35_image] PRIORITY=$PRIORITY CLASS=$PRIORITY_CLASS_NAME PROJE
 # A SAS contains no commas and the submitter splits each pair on the first '=',
 # so it survives --extra-env-vars intact.
 EXTRA_ENV="SFT_CONFIG=${CONFIG},NPROC=${GPUS}"
+[[ -n "${SYNC_FINAL_ONLY:-}" ]] && EXTRA_ENV="${EXTRA_ENV},SYNC_FINAL_ONLY=${SYNC_FINAL_ONLY}"
 [[ -n "${AZBLOB_AUTO_PUSH:-}" ]] && EXTRA_ENV="${EXTRA_ENV},AZBLOB_AUTO_PUSH=${AZBLOB_AUTO_PUSH}"
 [[ -n "${AZBLOB_SAS_TOKEN:-}" ]] && EXTRA_ENV="${EXTRA_ENV},AZBLOB_SAS_TOKEN=${AZBLOB_SAS_TOKEN}"
 [[ -n "${AZBLOB_PREFIX:-}" ]]    && EXTRA_ENV="${EXTRA_ENV},AZBLOB_PREFIX=${AZBLOB_PREFIX}"

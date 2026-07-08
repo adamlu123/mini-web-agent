@@ -179,7 +179,15 @@ if [ "$RC" -eq 0 ] && [ "${SYNC_CKPT:-1}" = "1" ]; then
     SYNC_CKPT_DIR="${SYNC_CKPT_DIR:-$PVC_MOUNT/$USER_ALIAS/models/${CKPT_REL#saves/}}"
     echo "[sync] final ckpt: $LF_DIR/$CKPT_REL -> $SYNC_CKPT_DIR"
     mkdir -p "$SYNC_CKPT_DIR"
-    if rsync -a --delete "$LF_DIR/$CKPT_REL"/ "$SYNC_CKPT_DIR"/; then
+    # SYNC_FINAL_ONLY=1 -> sync only the final model at the output_dir root;
+    # intermediate checkpoint-* dirs (save_steps snapshots, ~18GB each for 9B)
+    # are left behind in the volatile code dir and wiped by the next job.
+    SYNC_EXCLUDE=""
+    if [ "${SYNC_FINAL_ONLY:-0}" = "1" ]; then
+      SYNC_EXCLUDE="--exclude=checkpoint-*"
+      echo "[sync] SYNC_FINAL_ONLY=1 -> intermediate checkpoint-* dirs NOT synced"
+    fi
+    if rsync -a --delete $SYNC_EXCLUDE "$LF_DIR/$CKPT_REL"/ "$SYNC_CKPT_DIR"/; then
       echo "[sync] OK -- stable ckpt path (survives future jobs): $SYNC_CKPT_DIR"
       # Complete the VL ckpt: LlamaFactory text-SFT on qwen3_5 drops the vision
       # tower from the saved weights (its registered vision keys are mis-prefixed
