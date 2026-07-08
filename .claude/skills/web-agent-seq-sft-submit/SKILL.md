@@ -231,22 +231,23 @@ checkout 直接跑 TL;DR 命令即可**,不需要特殊配置:
 `WANDB_API_KEY`、自己的 `PROJECT_NAME` workstream。
 读别人的数据不用重传(PVC 跨用户可读),写入(上传/ckpt)自动落自己名下。
 
-**W&B key(必须,不设会打挂 job)**:`submit_job.sh` 从提交者 shell 环境取
-`WANDB_API_KEY`,取不到会 fallback 到一个微软内部 wandb 实例的 key——与脚本
-强制的 `WANDB_HOST=https://api.wandb.ai` 不配对,job 会在 trainer 初始化后报
-"wandb user not logged in"/401 死掉(af8b0 教训)。两种解法,提交前任选其一:
+**W&B key(2026-07-08 起提交脚本自动预检,不再需要手动处理)**:
+`submit_job.sh` 从提交者 shell 环境取 `WANDB_API_KEY`,取不到会 fallback 到
+微软内部 wandb 实例的 key——与强制的 `WANDB_HOST=https://api.wandb.ai` 不配对,
+job 会在数据预处理+权重加载全走完后才在 trainer 初始化处 401 死掉
+(af8b0、luyadong `adf40` 两次教训,每次白烧几分钟 GPU)。
 
-```bash
-# A. 用自己的 key(run 记自己账号;https://wandb.ai/authorize 获取)
-export WANDB_API_KEY=<自己的key>
+现在两个 submit 脚本提交前都会 source `docker/wandb_key_preflight.sh`:
+- shell 里没有 `WANDB_API_KEY` → 自动加载共享 key
+  `/data/t-yifeili/.secrets/wandb_api_key`(run 进 flyhero99/web-agent-sft
+  项目,run 名带提交者 alias,可区分);
+- 加载不到(文件不可读)或 key 是 `local-` 开头的内部 fallback → **拒绝提交**
+  并打印解法,绝不带病上集群。
 
-# B. 用 yifeili 的共享 key(run 进 flyhero99/web-agent-sft 项目,
-#    run 名自动带提交者 alias,可区分;适合没有 W&B 账号的同事)
-export WANDB_API_KEY=$(cat /data/t-yifeili/.secrets/wandb_api_key)
-```
-
-想一劳永逸就把 export 放进自己的 `~/.bashrc`。因 wandb 打挂的 job 记得删
-(`kubectl -n bonete61 get jobs -l submitter=<alias>` 查),否则一直占卡。
+想用自己账号的,提交前 `export WANDB_API_KEY=<自己的key>`
+(https://wandb.ai/authorize)即可覆盖自动行为;可放进 `~/.bashrc` 一劳永逸。
+因 wandb 打挂的历史 job 记得删(`kubectl -n bonete61 get jobs -l submitter=<alias>`),
+否则一直占卡。
 
 ## Guest 提交 — 别人从 yifeili 的 sandbox 提交，归属记在自己名下
 

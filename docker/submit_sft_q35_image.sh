@@ -44,6 +44,8 @@ fi
 
 export PATH="$HOME/.krew/bin:$PATH"
 export WANDB_HOST="${WANDB_HOST:-https://api.wandb.ai}"
+# wandb key 预检:没 key 自动加载共享 key,加载不到直接拒绝提交(防 401 打挂 job)
+source "$(dirname "$0")/wandb_key_preflight.sh"
 export PRIORITY="${PRIORITY:-p0}"
 export PRIORITY_CLASS_NAME="${PRIORITY_CLASS_NAME:-high}"
 export PROJECT_NAME="${PROJECT_NAME:-cua}"
