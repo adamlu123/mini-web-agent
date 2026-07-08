@@ -1005,5 +1005,37 @@
       "assistant_tag": "gpt",
       "observation_tag": "observation"
     }
+  },
+  "web_agent_seq_om2w4000_run1_reflect0": {
+    "file_name": "web_agent_seq_om2w4000_run1_reflect0.json",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "conversations",
+      "system": "system",
+      "images": "images"
+    },
+    "tags": {
+      "role_tag": "from",
+      "content_tag": "value",
+      "user_tag": "human",
+      "assistant_tag": "gpt",
+      "observation_tag": "observation"
+    }
+  },
+  "web_agent_seq_om2w4000_run1_with_reflect0": {
+    "file_name": "web_agent_seq_om2w4000_run1_with_reflect0.json",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "conversations",
+      "system": "system",
+      "images": "images"
+    },
+    "tags": {
+      "role_tag": "from",
+      "content_tag": "value",
+      "user_tag": "human",
+      "assistant_tag": "gpt",
+      "observation_tag": "observation"
+    }
   }
 }

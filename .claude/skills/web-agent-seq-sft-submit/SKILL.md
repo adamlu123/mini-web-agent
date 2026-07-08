@@ -250,7 +250,64 @@ W&B run 链接出现。**不要**裸 grep `error/Traceback`——训练数据本
 
 `docker/run_sft_q35_image.sh` 训完自动：①把 HF ckpt 同步到稳定 PVC 路径
 `/mnt/pvc/$USER/models/<output_dir去掉saves/>`；②**merge vision tower**
-（文本 SFT 会丢 vision 键，不 merge 的 ckpt 无法作为多模态模型加载；`MERGE_VISION=0` 关闭）。
+（`MERGE_VISION=0` 关闭）。
+
+### 为什么 ckpt 缺权重、为什么不改 trainer 端保存
+
+qwen3_5 full-SFT 存下来的 ckpt 只有 `model.language_model.*` + `lm_head`
+（760 tensors）。缺的是**两类**：`model.visual.*`（333 个，冻结的 vision tower）
+和 `mtp.*`（15 个，投机解码 MTP 头——HF 训练类根本不实例化它，只存在于 base
+safetensors 里）。vLLM 加载 `Qwen3_5ForConditionalGeneration` 两类都要。
+
+**结论：不改 trainer、维持 merge 方案**。理由：
+1. 就算改 trainer 存下 vision，`mtp.*` 依然缺（训练时模型对象里就没有），
+   照样要从 base 补——trainer 端改动永远做不出 standalone ckpt，merge 省不掉；
+2. vision 冻结不变，每个 ckpt 重复存 ~2GB 纯浪费（save_steps=200 +
+   save_total_limit=2 + rsync + blob 全链路放大）；
+3. 要动 LlamaFactory fork 的 deepspeed/save_only_model 保存内部，风险大于收益；
+   merge 方案已在 9B eval 全链路验证过。
+
+集群 job 的**最终** ckpt 已自动 merge（日志确认走了 `[merge] completing VL ckpt`
+而非 `[merge][warn]`）。需要**手动 merge** 的场景：中间步 `checkpoint-<N>/`、
+本地训练产物、merge 步骤失败的 job。
+
+### 手动 merge 命令
+
+```bash
+# 判断是否已 merge:两个文件都在即可直接用
+ls "$CKPT"/vision.safetensors "$CKPT"/model.safetensors.index.json
+
+# dev box(base 快照在本地 hf_cache)
+/data/t-yifeili/miniconda3/envs/echo-rl/bin/python \
+  /data/t-yifeili/mini-web-agent/scripts/merge_vision_from_base.py \
+  --ckpt "$CKPT" \
+  --base "$(ls -d /data/t-yifeili/hf_cache/models--Qwen--Qwen3.5-9B/snapshots/*/ | head -1)"
+
+# pod 内(base 在 HF_HOME)
+python scripts/merge_vision_from_base.py --ckpt "$CKPT" \
+  --base "$(ls -d $HF_HOME/hub/models--Qwen--Qwen3.5-9B/snapshots/*/ | head -1)"
+```
+
+机制：只新增 `vision.safetensors`（缺的 348 个 tensor）+ 重写
+`model.safetensors.index.json`，18GB 的 `model.safetensors` 不动——从 pod 往
+dev box 补拉时只需这两个小文件。成功标志：打印
+`tensors to copy from base (missing in ckpt): 348`。
+
+### Inference（merge 后的 ckpt 直接起服务）
+
+```bash
+CKPT=/path/to/merged_ckpt
+# 一劳永逸:把 train-aligned 模板写进 ckpt,以后 serve 不用带 --chat-template
+cp /data/t-yifeili/mini-web-agent/configs/qwen3_5_train_aligned.jinja "$CKPT/chat_template.jinja"
+
+vllm serve "$CKPT" \
+  --served-model-name policy \
+  --mm-processor-kwargs '{"max_pixels":262144}'    # 与训练 image_max_pixels 对齐
+
+# 快速冒烟(起完必跑 MARKER 探针验证模板对齐,见 docs/qwen3_5_think_alignment.md §2.2)
+curl -s localhost:8000/v1/chat/completions -H 'Content-Type: application/json' -d \
+  '{"model":"policy","messages":[{"role":"user","content":"hi"}],"max_tokens":32}' | head -c 400
+```
 
 **Serving / eval 必读**：
 
@@ -277,6 +334,7 @@ W&B run 链接出现。**不要**裸 grep `error/Traceback`——训练数据本
 | `LlamaFactory/scripts/package_web_agent_images.py` | 打 portable bundle |
 | `LlamaFactory/examples/train_full/qwen35_9b_web_agent_seq_om2w4000_run1_40k_4node.yaml` | 本次训练配置 |
 | `docker/run_sft_q35_image.sh` | in-pod：train + PVC sync + vision merge |
+| `scripts/merge_vision_from_base.py` | 手动补全 ckpt（vision+mtp，命令见"训练之后"） |
 | `docs/web_agent_seq_label1_4node_sft_20260630.md` | 上次 4-node run 全记录 |
 | `docs/qwen3_5_think_alignment.md` | `<think>` 对齐手册（serving 必读） |
 | `configs/qwen3_5_train_aligned.jinja` | train-aligned chat template |
