@@ -31,9 +31,10 @@ use_reentrant_gc: false
 
 ### dataset
 # 数据不随代码上传:bundle 先用 docker/upload_data_to_pvc.sh 传到 PVC 固定路径
-dataset_dir: /mnt/pvc/experiments/t-yifeili/data/web_agent_seq_om2w4000_run1_portable_bundle
-media_dir: /mnt/pvc/experiments/t-yifeili/data/web_agent_seq_om2w4000_run1_portable_bundle
-dataset: web_agent_seq_om2w4000_run1_portable
+# 2026-07-07: 换用 with_reflect0 数据(8774 样本,+1000 reflect0)
+dataset_dir: /mnt/pvc/experiments/t-yifeili/data/web_agent_seq_om2w4000_run1_with_reflect0_portable_bundle
+media_dir: /mnt/pvc/experiments/t-yifeili/data/web_agent_seq_om2w4000_run1_with_reflect0_portable_bundle
+dataset: web_agent_seq_om2w4000_run1_with_reflect0_portable
 template: qwen3_5
 cutoff_len: 40000
 overwrite_cache: true
@@ -43,16 +44,16 @@ mask_history: false
 enable_thinking: true
 
 ### output
-output_dir: saves/qwen35_9b/full/web_agent_seq_om2w4000_run1_40k_4node
+output_dir: saves/qwen35_9b/full/web_agent_seq_om2w4000_run1_with_reflect0_40k_4node
 logging_steps: 10
 save_strategy: steps
 save_steps: 200
-save_total_limit: 2
+save_total_limit: 20
 save_only_model: true
 plot_loss: true
 overwrite_output_dir: true
 report_to: wandb
-run_name: qwen35_9b_web_agent_seq_om2w4000_run1_40k_4node
+run_name: qwen35_9b_web_agent_seq_om2w4000_run1_with_reflect0_40k_4node
 
 ### train
 per_device_train_batch_size: 1
