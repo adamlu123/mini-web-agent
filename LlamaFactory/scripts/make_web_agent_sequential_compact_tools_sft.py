@@ -477,7 +477,37 @@ def build_all_compact_examples(
     )
 
 
+def _escape_stray_mm_tokens(examples: list[dict[str, Any]]) -> None:
+    """Escape literal <video>/<image> strings coming from webpage text.
+
+    LlamaFactory's mm plugin treats bare "<video>"/"<image>" as media
+    placeholders and hard-fails when their count mismatches the sample's
+    media lists (om2w_4000 run1: 27 samples with "<video>" from video-related
+    pages crashed preprocessing). We never emit videos, so every "<video>" is
+    literal text; "<image>" is only escaped when the sample declares no images
+    (otherwise a mismatch is a real bug and is reported instead).
+    """
+    n_video = n_image = 0
+    for idx, ex in enumerate(examples):
+        convo = ex.get("conversations") or []
+        n_declared = len(ex.get("images") or [])
+        n_tokens = sum((turn.get("value") or "").count("<image>") for turn in convo)
+        for turn in convo:
+            value = turn.get("value") or ""
+            if "<video>" in value:
+                n_video += value.count("<video>")
+                turn["value"] = value.replace("<video>", "<video >")
+            if n_declared == 0 and "<image>" in value:
+                n_image += value.count("<image>")
+                turn["value"] = turn["value"].replace("<image>", "<image >")
+        if n_declared and n_tokens != n_declared:
+            print(f"[warn] example {idx}: {n_tokens} <image> tokens vs {n_declared} declared images", file=sys.stderr)
+    if n_video or n_image:
+        print(f"[info] escaped stray mm tokens: <video> x{n_video}, <image> x{n_image}", file=sys.stderr)
+
+
 def _write_bundle(examples: list[dict[str, Any]], *, bundle_dir: Path, dataset_name: str, stats: dict[str, Any]) -> None:
+    _escape_stray_mm_tokens(examples)
     bundle_dir.mkdir(parents=True, exist_ok=True)
     data_path = bundle_dir / f"{dataset_name}.json"
     data_path.write_text(json.dumps(examples, ensure_ascii=False, indent=2), encoding="utf-8")
