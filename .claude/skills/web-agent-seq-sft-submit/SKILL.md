@@ -228,8 +228,25 @@ checkout 直接跑 TL;DR 命令即可**,不需要特殊配置:
 | aifsdk(`SUBMIT`) | `/data/t-yifeili/aifsdk/...`(可读即可,可覆盖) |
 
 每个用户自己要准备的只有:bonete61 的 kubectl 凭证、和 `WANDB_HOST` 匹配的
-`WANDB_API_KEY`(不匹配会 401 打挂 job)、自己的 `PROJECT_NAME` workstream。
+`WANDB_API_KEY`、自己的 `PROJECT_NAME` workstream。
 读别人的数据不用重传(PVC 跨用户可读),写入(上传/ckpt)自动落自己名下。
+
+**W&B key(必须,不设会打挂 job)**:`submit_job.sh` 从提交者 shell 环境取
+`WANDB_API_KEY`,取不到会 fallback 到一个微软内部 wandb 实例的 key——与脚本
+强制的 `WANDB_HOST=https://api.wandb.ai` 不配对,job 会在 trainer 初始化后报
+"wandb user not logged in"/401 死掉(af8b0 教训)。两种解法,提交前任选其一:
+
+```bash
+# A. 用自己的 key(run 记自己账号;https://wandb.ai/authorize 获取)
+export WANDB_API_KEY=<自己的key>
+
+# B. 用 yifeili 的共享 key(run 进 flyhero99/web-agent-sft 项目,
+#    run 名自动带提交者 alias,可区分;适合没有 W&B 账号的同事)
+export WANDB_API_KEY=$(cat /data/t-yifeili/.secrets/wandb_api_key)
+```
+
+想一劳永逸就把 export 放进自己的 `~/.bashrc`。因 wandb 打挂的 job 记得删
+(`kubectl -n bonete61 get jobs -l submitter=<alias>` 查),否则一直占卡。
 
 ## Guest 提交 — 别人从 yifeili 的 sandbox 提交，归属记在自己名下
 
