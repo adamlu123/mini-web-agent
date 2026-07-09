@@ -11,6 +11,10 @@
 # Required env (forwarded by submit_sft_q35_image.sh via --extra-env-vars):
 #   SFT_CONFIG  -- yaml path relative to LlamaFactory/ (e.g. examples/train_full/...yaml)
 #   NPROC       -- GPUs per node (torchrun --nproc_per_node)
+# Optional env:
+#   RUN_NAME            -- override the config's run_name and output_dir leaf
+#   RESUME_FROM_CKPT    -- checkpoint-* path for a warm restart
+#   TARGET_TOTAL_EPOCHS -- total epoch target when warm-restarting
 # Auto-injected by submit_job.sh: PVC_MOUNT, USER_ALIAS, JOB_NAME
 # Secret volume (HF token + HF_HOME cache live here):
 #   /run/secrets/echo-rl-creds/cred.sh
@@ -54,6 +58,54 @@ if [ "$IS_MASTER" = "1" ]; then
   # checkpoints (saves/ is gitignored -> not in the upload -> would otherwise be
   # deleted). Final ckpts are also copied to $PVC/.../models/ below for safety.
 
+  if [ -n "${RUN_NAME:-}" ]; then
+    case "$RUN_NAME" in
+      *[!A-Za-z0-9._-]*|"")
+        echo "[boot][error] RUN_NAME must match [A-Za-z0-9._-]+: $RUN_NAME"
+        exit 1
+        ;;
+    esac
+    GENERATED_SFT_CONFIG="examples/train_full/generated/$(basename "${SFT_CONFIG%.*}")__${RUN_NAME}.yaml"
+    python - "$LF_DIR/$SFT_CONFIG" "$LF_DIR/$GENERATED_SFT_CONFIG" "$RUN_NAME" <<'PY'
+import os
+import re
+import sys
+
+src, dst, run_name = sys.argv[1:]
+with open(src, encoding="utf-8") as f:
+    lines = f.readlines()
+
+out = []
+output_seen = False
+run_seen = False
+for line in lines:
+    if re.match(r"^\s*output_dir\s*:", line):
+        indent = line[: len(line) - len(line.lstrip())]
+        old_value = line.split(":", 1)[1].split("#", 1)[0].strip()
+        if not old_value:
+            raise SystemExit("[boot][error] output_dir is empty")
+        parent = old_value.rsplit("/", 1)[0] if "/" in old_value else ""
+        out.append(f"{indent}output_dir: {parent + '/' if parent else ''}{run_name}\n")
+        output_seen = True
+    elif re.match(r"^\s*run_name\s*:", line):
+        indent = line[: len(line) - len(line.lstrip())]
+        out.append(f"{indent}run_name: {run_name}\n")
+        run_seen = True
+    else:
+        out.append(line)
+
+if not output_seen:
+    raise SystemExit("[boot][error] output_dir not found in config")
+if not run_seen:
+    out.append(f"\nrun_name: {run_name}\n")
+
+os.makedirs(os.path.dirname(dst), exist_ok=True)
+with open(dst, "w", encoding="utf-8") as f:
+    f.writelines(out)
+print(f"[boot] RUN_NAME override wrote {dst}")
+PY
+  fi
+
   # --- optional warm restart (RESUME_FROM_CKPT=<checkpoint-N dir>) -----------
   # save_only_model ckpts can't truly resume; prepare_warm_restart.py backs the
   # ckpt up to $PVC/.../models/, vision-merges it, and derives a continuation
@@ -64,9 +116,10 @@ if [ "$IS_MASTER" = "1" ]; then
   # original run -- the epoch/LR math assumes an unchanged global batch.
   if [ -n "${RESUME_FROM_CKPT:-}" ]; then
     export HF_HOME="${HF_HOME:-$PVC_MOUNT/$USER_ALIAS/hf_cache}"
+    ACTIVE_SFT_CONFIG="${GENERATED_SFT_CONFIG:-$SFT_CONFIG}"
     python "$CODE_ROOT/mini-web-agent/docker/prepare_warm_restart.py" \
       --ckpt "$RESUME_FROM_CKPT" \
-      --config "$LF_DIR/$SFT_CONFIG" \
+      --config "$LF_DIR/$ACTIVE_SFT_CONFIG" \
       --out-config "$LF_DIR/examples/train_full/autogen_warm_restart_${JOB_NAME}.yaml" \
       --backup-root "$PVC_MOUNT/$USER_ALIAS/models" \
       --merge-script "$CODE_ROOT/mini-web-agent/scripts/merge_vision_from_base.py" \
@@ -81,6 +134,17 @@ else
   for _ in $(seq 1 720); do [ -f "$SYNC_SENTINEL" ] && break; sleep 5; done
   [ -f "$SYNC_SENTINEL" ] || { echo "[boot][error] timed out waiting for master code sync"; exit 1; }
   echo "[boot] === [worker rank $NODE_RANK] code sync detected; continuing ==="
+fi
+
+if [ -n "${RUN_NAME:-}" ]; then
+  case "$RUN_NAME" in
+    *[!A-Za-z0-9._-]*|"")
+      echo "[boot][error] RUN_NAME must match [A-Za-z0-9._-]+: $RUN_NAME"
+      exit 1
+      ;;
+  esac
+  SFT_CONFIG="examples/train_full/generated/$(basename "${SFT_CONFIG%.*}")__${RUN_NAME}.yaml"
+  echo "[boot] RUN_NAME=$RUN_NAME -> using generated SFT_CONFIG=$SFT_CONFIG"
 fi
 
 # Every rank trains the derived continuation yaml when warm-restarting (the

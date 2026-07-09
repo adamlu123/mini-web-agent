@@ -65,6 +65,10 @@ else
   [[ -d "$SKYRL_DIR" ]] || { echo "[error] missing $SKYRL_DIR"; exit 1; }
   [[ -f "$MINI_WEB_AGENT_DIR/$EVAL_CONFIG" ]] || { echo "[error] eval config not found: $EVAL_CONFIG"; exit 1; }
 fi
+if [[ -n "${RUN_NAME:-}" && ! "$RUN_NAME" =~ ^[A-Za-z0-9._-]+$ ]]; then
+  echo "[error] RUN_NAME must match [A-Za-z0-9._-]+: $RUN_NAME"
+  exit 1
+fi
 
 if [[ "$LIGHT_UPLOAD" == "1" ]]; then
     MINI_WEB_AGENT_DIR="$(SRC="$MINI_WEB_AGENT_DIR" bash "$(dirname "$0")/make_light_code_tree.sh" | tail -1)"
@@ -82,6 +86,7 @@ export NAMESPACE="${NAMESPACE:-bonete61}"
 
 echo "[submit_sft_eval_q35_image] NODES=$NODES GPUS=$GPUS (total $((NODES*GPUS)) GPUs) IMAGE=$IMAGE"
 echo "[submit_sft_eval_q35_image] SFT_CONFIG=$SFT_CONFIG"
+[[ -n "${RUN_NAME:-}" ]] && echo "[submit_sft_eval_q35_image] RUN_NAME=$RUN_NAME (also overrides output_dir leaf)"
 if [[ "$EVAL_BACKEND" == "harness" ]]; then
   echo "[submit_sft_eval_q35_image] EVAL: harness, level=$TASK_LEVEL, ${WORKERS} workers/node (total ~$((WORKERS*NODES)) sessions), $NODES shard(s)"
 else
@@ -93,6 +98,7 @@ echo "[submit_sft_eval_q35_image] PRIORITY=$PRIORITY CLASS=$PRIORITY_CLASS_NAME 
 # run_sft_q35_image.sh after a successful train + ckpt sync. The SFT driver
 # uploads the final ckpt to blob by default; set AZBLOB_AUTO_PUSH=0 to disable.
 EXTRA_ENV="SFT_CONFIG=${SFT_CONFIG},NPROC=${GPUS},EVAL_AFTER=1,EVAL_BACKEND=${EVAL_BACKEND}"
+[[ -n "${RUN_NAME:-}" ]] && EXTRA_ENV="${EXTRA_ENV},RUN_NAME=${RUN_NAME}"
 # Warm restart: RESUME_FROM_CKPT=<checkpoint-N dir on PVC> (+ optional
 # TARGET_TOTAL_EPOCHS). In-pod prep backs it up + vision-merges + derives the
 # continuation yaml. Submit with the SAME NODES as the original run.

@@ -77,13 +77,18 @@ bash docker/upload_data_to_pvc.sh \
 #    （docker/make_light_code_tree.sh，显式排除数据/产物并删树内 .gitignore——
 #     不能依赖 gitignore 语义,rsync 和 tar 都吃不了 `!` 反选,踩过两层坑）
 NODES=4 \
+RUN_NAME=qwen35_9b_web_agent_seq_om2w4000_run1_with_reflect0_40k_4node_run2 \
 CONFIG=examples/train_full/qwen35_9b_web_agent_seq_om2w4000_run1_40k_4node.yaml \
 WANDB_PROJECT=web-agent-sft AZBLOB_AUTO_PUSH=0 \
 bash docker/submit_sft_q35_image.sh
 ```
 
 `submit_sft_q35_image.sh` 的其他可覆盖项：`GPUS`(默认8)、`PRIORITY`(p0)、
-`PROJECT_NAME`(cua)、`PRIORITY_CLASS_NAME`(high)、`LIGHT_UPLOAD=0` 回退整树上传。
+`PROJECT_NAME`(cua)、`PRIORITY_CLASS_NAME`(high)、`RUN_NAME`(只允许
+`[A-Za-z0-9._-]+`；在 pod 内生成临时 yaml,同时覆盖 `run_name` 和
+`output_dir` 的最后一级目录,因此不同 RUN_NAME 会同步到不同
+`/mnt/pvc/<alias>/models/.../<RUN_NAME>` ckpt 目录)、
+`LIGHT_UPLOAD=0` 回退整树上传。
 全局 batch = NODES×GPUS×1，改 NODES 时注意 steps/epoch 随之变化
 （7774 样本 / (NODES×8) ≈ steps/epoch）。
 

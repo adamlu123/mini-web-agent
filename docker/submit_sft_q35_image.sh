@@ -36,6 +36,10 @@ LIGHT_UPLOAD="${LIGHT_UPLOAD:-1}"
 
 [[ -d "$MINI_WEB_AGENT_DIR" ]] || { echo "[error] missing $MINI_WEB_AGENT_DIR"; exit 1; }
 [[ -f "$MINI_WEB_AGENT_DIR/LlamaFactory/$CONFIG" ]] || { echo "[error] config not found: LlamaFactory/$CONFIG"; exit 1; }
+if [[ -n "${RUN_NAME:-}" && ! "$RUN_NAME" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    echo "[error] RUN_NAME must match [A-Za-z0-9._-]+: $RUN_NAME"
+    exit 1
+fi
 
 if [[ "$LIGHT_UPLOAD" == "1" ]]; then
     MINI_WEB_AGENT_DIR="$(SRC="$MINI_WEB_AGENT_DIR" bash "$(dirname "$0")/make_light_code_tree.sh" | tail -1)"
@@ -51,6 +55,7 @@ export PRIORITY_CLASS_NAME="${PRIORITY_CLASS_NAME:-high}"
 export PROJECT_NAME="${PROJECT_NAME:-cua}"
 
 echo "[submit_sft_q35_image] NODES=$NODES GPUS=$GPUS (total $((NODES*GPUS)) GPUs) IMAGE=$IMAGE CONFIG=$CONFIG"
+[[ -n "${RUN_NAME:-}" ]] && echo "[submit_sft_q35_image] RUN_NAME=$RUN_NAME (also overrides output_dir leaf)"
 echo "[submit_sft_q35_image] PRIORITY=$PRIORITY CLASS=$PRIORITY_CLASS_NAME PROJECT=$PROJECT_NAME"
 
 # Azure-Blob auto-upload of the final ckpt is enabled by default in the training
@@ -59,6 +64,7 @@ echo "[submit_sft_q35_image] PRIORITY=$PRIORITY CLASS=$PRIORITY_CLASS_NAME PROJE
 # A SAS contains no commas and the submitter splits each pair on the first '=',
 # so it survives --extra-env-vars intact.
 EXTRA_ENV="SFT_CONFIG=${CONFIG},NPROC=${GPUS}"
+[[ -n "${RUN_NAME:-}" ]] && EXTRA_ENV="${EXTRA_ENV},RUN_NAME=${RUN_NAME}"
 # Warm restart: RESUME_FROM_CKPT=<checkpoint-N dir on PVC> (+ optional
 # TARGET_TOTAL_EPOCHS). In-pod prep backs it up + vision-merges + derives the
 # continuation yaml. Submit with the SAME NODES as the original run.

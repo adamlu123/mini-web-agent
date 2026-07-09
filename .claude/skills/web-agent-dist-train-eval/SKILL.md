@@ -33,7 +33,7 @@ description: >-
 
 ```bash
 # A1. 全新训练 + 训完多节点并行全量 eval(一条 job)
-NODES=4 SFT_CONFIG=examples/train_full/<yaml> \
+NODES=4 RUN_NAME=<唯一训练名> SFT_CONFIG=examples/train_full/<yaml> \
 WANDB_PROJECT=web-agent-sft AZBLOB_AUTO_PUSH=0 \
 bash docker/submit_sft_eval_q35_image.sh
 
