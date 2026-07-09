@@ -13,8 +13,9 @@ description: >-
 
 # 分布式 train+eval 与断点续跑(2026-07-09 起)
 
-支持两种模式,均基于 mini-web-agent 自带 OM2W harness(vllm serve + agent
-循环,**非 SkyRL**):
+支持两种模式,eval 均为 mini-web-agent 自带 OM2W harness:每节点本地
+`vllm serve` + miniswewebagent agent 循环(train 侧是 LlamaFactory,全程
+不涉及 SkyRL):
 
 - **A. train + 多节点 eval 一条 job**(训练可从 ckpt 续):训练用几个节点,
   训完这些节点就地并行 eval。
@@ -110,7 +111,7 @@ EVAL_RUN_ID=dist_eval_smoke1 bash docker/submit_dist_eval_q35_image.sh
 
 | 路径 | 作用 |
 |---|---|
-| `docker/submit_sft_eval_q35_image.sh` | 模式 A 提交(train→多节点 eval;EVAL_BACKEND=skyrl 回旧链) |
+| `docker/submit_sft_eval_q35_image.sh` | 模式 A 提交(train→多节点 eval) |
 | `docker/submit_dist_eval_q35_image.sh` | 模式 B 提交(独立多节点 eval/续评) |
 | `docker/run_dist_eval_q35_image.sh` | in-pod:每节点 vLLM+分片生成,master judge 汇总 |
 | `docker/prepare_warm_restart.py` | in-pod:一键续训准备(备份+merge+折算生成 yaml) |
