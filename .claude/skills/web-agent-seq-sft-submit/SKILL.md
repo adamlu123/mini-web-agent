@@ -39,8 +39,10 @@ checkout 都可以——docker/ 下脚本的路径和身份默认值均自动推
    用户选 p1 时一并问要不要把 class 降成 medium,按用户配额习惯来。
 4. **训完要不要自动跑全量 eval?** 要的话改用组合脚本
    `docker/submit_sft_eval_q35_image.sh`(见"训后自动全量 eval"一节;
-   同一个 job 里 train→ckpt sync→vision merge→300 任务全量评测,80 并发)。
-   不要的话用 `docker/submit_sft_q35_image.sh`(纯训练)。
+   同一个 job 里 train→ckpt sync→vision merge→harness 全量评测,**所有训练
+   节点并行分片**,总并发 80,断点可续)。
+   不要的话用 `docker/submit_sft_q35_image.sh`(纯训练),之后可随时用
+   `docker/submit_dist_eval_q35_image.sh` 单独评(见"分布式 eval 模块")。
 
 问完再执行。杀正在跑的 job、删 PVC 上的旧数据这类动作也要先确认。
 
@@ -181,7 +183,7 @@ kubectl -n bonete61 exec <任一挂PVC的pod> -- ls -lh /mnt/pvc/experiments/<al
 数据，如还要复用，在挂 PVC 的 pod 里 `cp -r` 到固定路径下再改 yaml（pod 内
 拷贝没有 dev box 的权限问题）。
 
-## 训后自动全量 eval（一条 job:train → 全量评测,2026-07-08 起）
+## 训后自动全量 eval（一条 job:train → 全量评测,2026-07-09 起为 harness 多节点版）
 
 用组合脚本代替纯训练脚本,训完在**同一个 job** 里自动评测刚出炉的 ckpt:
 
@@ -192,27 +194,71 @@ WANDB_PROJECT=web-agent-sft AZBLOB_AUTO_PUSH=0 \
 bash docker/submit_sft_eval_q35_image.sh
 ```
 
+**eval 走 mini-web-agent 自带的 OM2W harness(vllm serve + agent 循环,非
+SkyRL),训练用几个节点、eval 就用几个节点并行**(机制见下面"分布式 eval
+模块"一节,这里只是把它链在训练后面):
+
+- master 训完做 ckpt 同步 + vision merge,把 ckpt 路径写进
+  `$OUTPUT_DIR/.ckpt_ready_for_eval` sentinel;
+- worker 节点训完**不退出**,等到 sentinel 后各自起本节点 vLLM(tp=8)
+  跑 1/NODES 的任务分片;
+- master 跑完自己的分片后等所有分片 done 标记,统一 judge + 汇总。
+
 默认行为(都可 env 覆盖):
 
 | 项 | 默认 | 说明 |
 |---|---|---|
-| `EVAL_CONFIG` | `configs/qwen35_9b_web_agent_all3_eval_sft.yaml` | 全量 300 任务(easy80+medium143+hard77),SFT-aligned |
-| `EVAL_AGENT_CONCURRENCY` | `80` | rollout 并发 worker 数(覆盖配置里的 32) |
-| `EVAL_NUM_ENGINES` | `8` | master 8 卡各起一个 tp=1 vLLM 引擎喂 80 worker |
-| `EVAL_EXEC_BACKEND` | `mp` | **多引擎必须 mp**:集群镜像 vLLM 0.18 的 ray 后端会把引擎全堆 GPU0 → OOM |
-| `EVAL_RUN_TAG` | `merged_9b` | 结果目录/日志的标签,按 run 改 |
+| `EVAL_BACKEND` | `harness` | 设 `skyrl` 回旧的 SkyRL eval_entrypoint(仅 master 评,需 SkyRL 上传 + echo-rl-openai secret) |
+| `TASK_LEVEL` | `all` | 300 任务(easy80+medium143+hard77);可选 easy/medium/hard |
+| `TOTAL_WORKERS` | `80` | 全 job browserbase 总并发,自动均分到各节点(80 是验证过的安全水位,加大前先确认配额) |
+| `EVAL_RUN_ID` | `$JOB_NAME` | eval 稳定 id;job 被杀后可用独立 eval 提交 + 同一 id 断点续评 |
+| `RETRY_FAILED` | `0` | 置 1 重跑 result.json 带 run_exception 的任务 |
 
-机制:`run_sft_q35_image.sh` 训完(rc=0)且只在 **master** 上依次做
-ckpt 同步到 `/mnt/pvc/<alias>/models/...` → vision merge →
-`EVAL_AFTER=1` 触发 `run_eval_q35_image.sh`,`EVAL_CKPT` 自动指向刚同步的
-稳定 ckpt(含 vision merge,vLLM 可直接加载);多节点训练时 worker 节点
-训完即退,eval 用 master 的 8 张卡跑。build 并发仍用配置值(32),只是
-throttle 环境构建的爬坡,不会超订 pod CPU。
+与纯训练脚本的差异:多挂 webchain-sampling secret(browserbase + judge key,
+由 `CREDENTIALS_FILE`,默认 `/data/t-yifeili/webchain_sampling/cred.sh` 自动
+创建);harness 后端**不再上传 SkyRL**。eval 失败/被杀不影响已同步的 ckpt,
+拿 pod 日志里的 `EVAL_RUN_ID` 用 `submit_dist_eval_q35_image.sh` 断点续评。
+最终结果:`/mnt/pvc/<alias>/evals/<EVAL_RUN_ID>/logs/<EVAL_RUN_ID>/run_summary_judge.json`
+(总分 + per-level breakdown)。
 
-与纯训练脚本的差异:额外上传 SkyRL(`SKYRL_DIR`,默认 `/data/t-yifeili/SkyRL`,
-可读即可)、多挂 `echo-rl-openai` secret(judge key)。eval 失败不影响已
-同步的 ckpt,可以随后用 `submit_eval_q35_image.sh` 单独重评。
-结果看 pod 日志尾部或 `$OUTPUT_DIR/eval_console.log`。
+## 分布式 eval 模块（独立提交 / 多节点数据并行 / 断点续评,2026-07-09 起）
+
+`docker/submit_dist_eval_q35_image.sh` 把 harness eval 做成独立可提交的模块,
+评任意 PVC 上的 HF ckpt(须已 vision merge):
+
+```bash
+EVAL_CKPT=/mnt/pvc/<alias>/models/qwen35_9b/full/<name> \
+NODES=4 TASK_LEVEL=all \
+bash docker/submit_dist_eval_q35_image.sh
+```
+
+三个核心能力:
+
+1. **指定节点数**:`NODES=N`,每个节点独立起一个 tp=8 的 vLLM serve +
+   自己的 agent worker 池,不存在跨节点推理依赖。
+2. **多节点数据并行**:任务按文件序 `idx % N == rank` 均分
+   (`om2w.py --num-shards/--shard-index`),所有分片写同一个 PVC 输出目录
+   `/mnt/pvc/<alias>/evals/<EVAL_RUN_ID>/outputs/<task_id>/`;master 等
+   `shards/shard_*.done`(内容校验 JOB_NAME,旧 job 残留不误触发)后对全目录
+   `--judge-only` 统一判分。
+3. **断点续评**:`<task_id>/result.json` 是完成判据。job 被杀后**原样重提同一
+   `EVAL_RUN_ID`** 即接着跑(`--resume` 默认开);`RETRY_FAILED=1` 额外重跑
+   run_exception 的任务;全部任务已完成时重提 = 只重跑 judge。judge 本身也
+   增量(om2w_judge 跳过已判分 task_id)。
+
+默认参数:`TOTAL_WORKERS=80` 均分到各节点(**总 browserbase 并发 = 80**,
+配额没确认前别加);`MAX_MODEL_LEN=65536` + 客户端 sliding window
+`MAX_CONTEXT_TOKENS=48000`(防长会话 vLLM 400);serve 自动挂
+`configs/qwen3_5_train_aligned.jinja`(think 对齐,置 `CHAT_TEMPLATE=` 用
+ckpt 自带模板);benchmark 配置默认 `benchmark/om2w_sft_state_debug_vllm_sft_ckpt.yaml`。
+
+产物布局(`/mnt/pvc/<alias>/evals/<EVAL_RUN_ID>/`):
+`outputs/<task_id>/result.json` 逐任务;`outputs_eval_1/` judge 明细;
+`logs/<EVAL_RUN_ID>/generation_summary_shard*.json` 各分片生成汇总、
+`run_summary_judge.json` 最终总分 + level_breakdown、`vllm_shard*.log`。
+
+注意:eval 值不值得多节点看瓶颈——300 任务 80 并发约 1-2 小时,瓶颈是浏览器
+I/O 和长尾任务;多节点主要在你把 TOTAL_WORKERS 提上去(配额允许)时才显著提速。
 
 ## 多用户提交（2026-07-08 起脚本已 user-agnostic）
 
@@ -421,6 +467,39 @@ curl -s localhost:8000/v1/chat/completions -H 'Content-Type: application/json' -
 - om2w 全量/集群 eval 流程与 gotchas 见 `web-agent-sft-cluster` skill
   （SFT-ALIGNED eval config、单引擎、colocate_all=false 等）。
 
+## 断点续 train（warm restart,job 被杀后从中间 ckpt 接着训）
+
+训练 yaml 都是 `save_only_model: true`(省 PVC 空间),checkpoint-* 里**没有
+optimizer/DeepSpeed 状态,`resume_from_checkpoint` 真断点续跑不可能**。正确
+做法是 warm restart:把中间 ckpt 当 `model_name_or_path` 接着训。丢的只是
+optimizer 动量和最后一个 save_steps 之后的进度,影响很小。四步:
+
+1. **备份 ckpt 出易失目录**(在挂 PVC 的 pod 里)。中间 ckpt 落在
+   `/mnt/pvc/<alias>/code/mini-web-agent/LlamaFactory/saves/<output_dir>/checkpoint-<N>`,
+   同 yaml 重跑会被 `overwrite_output_dir` + save_total_limit 轮转顶掉:
+   ```bash
+   mkdir -p /mnt/pvc/<alias>/models
+   cp -a <saves里的checkpoint-N> /mnt/pvc/<alias>/models/<run名>_ckpt<N>_bak
+   ```
+2. **vision merge**(必做!文本 SFT 的中间 ckpt 缺 vision tower,直接当
+   `model_name_or_path` 加载会把视觉塔随机初始化):
+   ```bash
+   BASE=$(ls -d /mnt/pvc/<alias>/hf_cache/hub/models--Qwen--Qwen3.5-9B/snapshots/*/ | head -1)
+   python /mnt/pvc/<alias>/code/mini-web-agent/scripts/merge_vision_from_base.py \
+     --ckpt <备份目录> --base "$BASE"
+   ```
+3. **写续训 yaml**(现成例子:`examples/train_full/*_cont1000.yaml`(2 node)、
+   `*_cont600_4node.yaml`(4 node)),关键折算:
+   - `model_name_or_path` = 备份目录绝对路径;
+   - **epoch 按剩余量折算**:steps/epoch = 样本数/(NODES×8);ckpt 的 epoch =
+     N/每epoch步数;`num_train_epochs` = 目标总 epoch − 已训 epoch;
+   - **学习率从原 cosine 中断处接**:查
+     `<ckpt>/trainer_state.json` 里最后的 learning_rate,把它设为新
+     `learning_rate`,`warmup_ratio: 0.01`,cosine 衰减到 0(不要从原 LR 重新
+     warmup,二次大 LR 会冲击已训权重);
+   - `output_dir`/`run_name` 加 `_cont<N>` 后缀,别覆盖原 run。
+4. **提交时 NODES 必须和折算假设一致**(global batch 变了 epoch/LR 折算就错了)。
+
 ## 关键文件
 
 | 路径 | 作用 |
@@ -431,7 +510,10 @@ curl -s localhost:8000/v1/chat/completions -H 'Content-Type: application/json' -
 | `LlamaFactory/scripts/make_web_agent_sequential_compact_tools_sft.py` | rollout → seq ShareGPT |
 | `LlamaFactory/scripts/package_web_agent_images.py` | 打 portable bundle |
 | `LlamaFactory/examples/train_full/qwen35_9b_web_agent_seq_om2w4000_run1_40k_4node.yaml` | 本次训练配置 |
-| `docker/run_sft_q35_image.sh` | in-pod：train + PVC sync + vision merge |
+| `docker/run_sft_q35_image.sh` | in-pod：train + PVC sync + vision merge（+链分布式 eval） |
+| `docker/run_dist_eval_q35_image.sh` | in-pod：每节点 vLLM+分片生成,master judge 汇总 |
+| `docker/submit_dist_eval_q35_image.sh` | 独立提交多节点/断点续评的 harness eval |
+| `src/miniswewebagent/run/benchmarks/om2w.py` | harness 入口(--num-shards/--resume/--judge-only) |
 | `scripts/merge_vision_from_base.py` | 手动补全 ckpt（vision+mtp，命令见"训练之后"） |
 | `docs/web_agent_seq_label1_4node_sft_20260630.md` | 上次 4-node run 全记录 |
 | `docs/qwen3_5_think_alignment.md` | `<think>` 对齐手册（serving 必读） |

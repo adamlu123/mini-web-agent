@@ -4,6 +4,7 @@ import concurrent.futures
 import contextlib
 import json
 import os
+import shutil
 import sys
 import traceback
 from datetime import datetime
@@ -180,6 +181,25 @@ def main(
     log_root: Path | None = typer.Option(None, "--log-root", help="Directory for batch logs."),
     config_spec: list[str] = typer.Option(DEFAULT_OM2W_CONFIGS, "-c", "--config"),
     output_dir: Path | None = typer.Option(None, "-o", "--output-dir", help="Batch output root directory."),
+    num_shards: int = typer.Option(1, "--num-shards", help="Total data-parallel shards (multi-node eval)."),
+    shard_index: int = typer.Option(0, "--shard-index", help="0-based shard index of THIS worker."),
+    resume: bool = typer.Option(
+        False, "--resume/--no-resume",
+        help="Skip tasks that already have result.json under the output dir (checkpointed eval).",
+    ),
+    retry_failed: bool = typer.Option(
+        False, "--retry-failed",
+        help="With --resume, re-run tasks whose result.json records run_exception (their task dir is wiped first).",
+    ),
+    batch_name: str | None = typer.Option(
+        None, "--batch-name",
+        help="Deterministic batch name (default: timestamped). Required for sharded/resumable runs so all "
+             "workers and re-runs share one output/log layout.",
+    ),
+    judge_only: bool = typer.Option(
+        False, "--judge-only",
+        help="Skip generation; judge an existing output dir (all shards) and write the final summary.",
+    ),
 ) -> None:
     config = _merged_config(config_spec)
     run_config = config.get("run", {})
@@ -210,6 +230,20 @@ def main(
         limit,
         resolved_task_level,
     )
+    # Full task list BEFORE sharding: judge-only scoring, per-level breakdown and
+    # completeness checks always run against the whole selection.
+    all_tasks = tasks
+
+    if judge_only and num_shards > 1:
+        raise typer.BadParameter("--judge-only judges the whole output dir; do not combine with --num-shards.")
+    shard_suffix = ""
+    if num_shards > 1:
+        if not (0 <= shard_index < num_shards):
+            raise typer.BadParameter("--shard-index must be in [0, num-shards).")
+        # load_om2w_tasks preserves file order, so every worker computes the same
+        # split from the same tasks file + filters.
+        shard_suffix = f"_shard{shard_index}of{num_shards}"
+        tasks = [task for pos, task in enumerate(all_tasks) if pos % num_shards == shard_index]
 
     # Default judge parallelism to the number of tasks when not explicitly set
     if not (judge_num_proc or run_config.get("judge_num_proc")):
@@ -220,23 +254,27 @@ def main(
     session_slug = "bb" if env_config.get("browserbase_enabled") else "local"
     iter_slug = f"_iter_r{config.get('iterative', {}).get('max_rounds', 5)}" if is_iterative else ""
     batch_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    batch_name = (
+    resolved_batch_name = batch_name or (
         f"om2w_260220_{resolved_task_level or 'all'}_"
         f"{_model_slug(model_name)}_step{step_limit}{iter_slug}_p{resolved_workers}_{session_slug}_{batch_stamp}"
     )
 
     base_output_root = Path(output_dir or env_config.get("output_dir") or "outputs").expanduser()
-    batch_output_dir = base_output_root / batch_name if output_dir is None else Path(output_dir).expanduser()
+    batch_output_dir = base_output_root / resolved_batch_name if output_dir is None else Path(output_dir).expanduser()
     batch_output_dir.mkdir(parents=True, exist_ok=True)
     config_snapshot_dir = snapshot_config_specs(config_spec, batch_output_dir, merged_config=config)
 
-    batch_log_dir = resolved_log_root / batch_name
+    batch_log_dir = resolved_log_root / resolved_batch_name
     batch_log_dir.mkdir(parents=True, exist_ok=True)
-    batch_log_path = batch_log_dir / "batch.log"
-    generation_summary_path = batch_log_dir / "generation_summary.json"
-    run_summary_path = batch_log_dir / "run_summary.json"
+    # Per-shard file names so concurrent shards sharing one log dir never clobber
+    # each other; the unsharded/judge-only paths keep the historical names.
+    batch_log_path = batch_log_dir / f"batch{shard_suffix}.log"
+    generation_summary_path = batch_log_dir / f"generation_summary{shard_suffix}.json"
+    run_summary_path = batch_log_dir / ("run_summary_judge.json" if judge_only else f"run_summary{shard_suffix}.json")
 
-    _write_batch_log_line(batch_log_path, f"batch_name={batch_name}")
+    _write_batch_log_line(batch_log_path, f"batch_name={resolved_batch_name}")
+    if shard_suffix:
+        _write_batch_log_line(batch_log_path, f"shard={shard_index}/{num_shards} ({len(tasks)} of {len(all_tasks)} tasks)")
     _write_batch_log_line(batch_log_path, f"tasks_file={resolved_tasks_file}")
     _write_batch_log_line(batch_log_path, f"task_level={resolved_task_level or '<all>'}")
     _write_batch_log_line(batch_log_path, f"workers={resolved_workers}")
@@ -244,54 +282,108 @@ def main(
     _write_batch_log_line(batch_log_path, f"output_dir={batch_output_dir}")
     _write_batch_log_line(batch_log_path, f"config_snapshot_dir={config_snapshot_dir}")
 
-    mode_label = "iterative" if is_iterative else "standard"
-    console.print(f"Running {len(tasks)} Online-Mind2Web task(s) ({mode_label} mode)")
+    if num_shards > 1 and resolved_evaluate:
+        console.print(
+            "[shard] multi-shard generation: judge disabled for this shard; "
+            "run --judge-only over the same output dir once all shards are done"
+        )
+        resolved_evaluate = False
+    if judge_only:
+        resolved_evaluate = True
+
+    mode_label = "judge-only" if judge_only else ("iterative" if is_iterative else "standard")
+    console.print(f"Selected {len(tasks)} Online-Mind2Web task(s) ({mode_label} mode)")
     console.print(f"Outputs: [bold green]{batch_output_dir}[/bold green]")
     console.print(f"Logs: [bold green]{batch_log_dir}[/bold green]")
 
     generation_rows: list[dict[str, Any]] = []
-    if resolved_workers <= 1:
-        for index, task in enumerate(tasks, start=1):
-            row = _run_task_worker(
-                task=task,
-                tasks_file=resolved_tasks_file,
-                config_spec=config_spec,
-                output_root=batch_output_dir,
-                log_dir=batch_log_dir,
-                iterative=is_iterative,
-                session_id_prefix=batch_name,
-            )
-            generation_rows.append(row)
-            console.print(f"[{index}/{len(tasks)}] {row['task_id']} -> {row['status']}")
-            _write_batch_log_line(batch_log_path, json.dumps(row, ensure_ascii=True))
+    if judge_only:
+        done_ids = {str(t["task_id"]) for t in all_tasks if (batch_output_dir / str(t["task_id"]) / "result.json").exists()}
+        missing = [str(t["task_id"]) for t in all_tasks if str(t["task_id"]) not in done_ids]
+        console.print(f"[judge-only] {len(done_ids)}/{len(all_tasks)} task dirs have result.json under {batch_output_dir}")
+        if missing:
+            preview = ", ".join(missing[:10]) + (" ..." if len(missing) > 10 else "")
+            console.print(f"[judge-only][yellow]warn: {len(missing)} task(s) missing results (scored as fail): {preview}[/yellow]")
     else:
-        with concurrent.futures.ProcessPoolExecutor(max_workers=resolved_workers) as executor:
-            futures = {
-                executor.submit(
-                    _run_task_worker,
+        if resume:
+            remaining: list[dict[str, object]] = []
+            for task in tasks:
+                t_id = str(task["task_id"])
+                result_json = batch_output_dir / t_id / "result.json"
+                if result_json.exists():
+                    rerun = False
+                    if retry_failed:
+                        try:
+                            rerun = bool(json.loads(result_json.read_text(encoding="utf-8")).get("run_exception"))
+                        except Exception:
+                            rerun = True
+                    if rerun:
+                        shutil.rmtree(result_json.parent, ignore_errors=True)
+                        remaining.append(task)
+                        continue
+                    generation_rows.append(
+                        {
+                            "task_id": t_id,
+                            "task": str(task["task"]),
+                            "level": str(task.get("level", "")),
+                            "status": "resumed",
+                            "error": "",
+                            "exit_status": "",
+                            "output_dir": str(batch_output_dir / t_id),
+                            "log_path": str(batch_log_dir / f"{t_id}.log"),
+                            "result_json": str(result_json),
+                        }
+                    )
+                else:
+                    remaining.append(task)
+            console.print(f"[resume] {len(generation_rows)} task(s) already done, {len(remaining)} left to run")
+            _write_batch_log_line(
+                batch_log_path, f"resume: skipped={len(generation_rows)} remaining={len(remaining)}"
+            )
+            tasks = remaining
+
+        if resolved_workers <= 1:
+            for index, task in enumerate(tasks, start=1):
+                row = _run_task_worker(
                     task=task,
                     tasks_file=resolved_tasks_file,
                     config_spec=config_spec,
                     output_root=batch_output_dir,
                     log_dir=batch_log_dir,
                     iterative=is_iterative,
-                    session_id_prefix=batch_name,
-                ): task
-                for task in tasks
-            }
-            completed = 0
-            for future in concurrent.futures.as_completed(futures):
-                row = future.result()
+                    session_id_prefix=resolved_batch_name,
+                )
                 generation_rows.append(row)
-                completed += 1
-                console.print(f"[{completed}/{len(tasks)}] {row['task_id']} -> {row['status']}")
+                console.print(f"[{index}/{len(tasks)}] {row['task_id']} -> {row['status']}")
                 _write_batch_log_line(batch_log_path, json.dumps(row, ensure_ascii=True))
+        else:
+            with concurrent.futures.ProcessPoolExecutor(max_workers=resolved_workers) as executor:
+                futures = {
+                    executor.submit(
+                        _run_task_worker,
+                        task=task,
+                        tasks_file=resolved_tasks_file,
+                        config_spec=config_spec,
+                        output_root=batch_output_dir,
+                        log_dir=batch_log_dir,
+                        iterative=is_iterative,
+                        session_id_prefix=resolved_batch_name,
+                    ): task
+                    for task in tasks
+                }
+                completed = 0
+                for future in concurrent.futures.as_completed(futures):
+                    row = future.result()
+                    generation_rows.append(row)
+                    completed += 1
+                    console.print(f"[{completed}/{len(tasks)}] {row['task_id']} -> {row['status']}")
+                    _write_batch_log_line(batch_log_path, json.dumps(row, ensure_ascii=True))
 
-    generation_rows.sort(key=lambda row: row["task_id"])
-    generation_summary_path.write_text(json.dumps(generation_rows, indent=2), encoding="utf-8")
+        generation_rows.sort(key=lambda row: row["task_id"])
+        generation_summary_path.write_text(json.dumps(generation_rows, indent=2), encoding="utf-8")
 
     summary: dict[str, Any] = {
-        "batch_name": batch_name,
+        "batch_name": resolved_batch_name,
         "tasks_file": str(resolved_tasks_file),
         "task_level": resolved_task_level,
         "workers": resolved_workers,
@@ -299,8 +391,12 @@ def main(
         "output_dir": str(batch_output_dir),
         "config_snapshot_dir": str(config_snapshot_dir),
         "log_dir": str(batch_log_dir),
-        "n_tasks": len(tasks),
-        "n_failed_generation": sum(1 for row in generation_rows if row["status"] != "ok"),
+        "num_shards": num_shards,
+        "shard_index": shard_index,
+        "judge_only": judge_only,
+        "n_tasks": len(all_tasks) if judge_only else len(generation_rows),
+        "n_resumed": sum(1 for row in generation_rows if row["status"] == "resumed"),
+        "n_failed_generation": sum(1 for row in generation_rows if row["status"] not in ("ok", "resumed")),
         "judge_enabled": resolved_evaluate,
         "judge_model": resolved_judge_model,
         "judge_runs": resolved_judge_runs,
@@ -360,6 +456,29 @@ def main(
             eval_runs = list(executor.map(run_single_judge, range(1, resolved_judge_runs + 1)))
 
         summary["eval_runs"] = eval_runs
+
+        # Per-level breakdown from the first judge run: task_id -> level comes from
+        # the tasks file (covers every shard); tasks without a judge row (missing
+        # or unjudgeable results) count in total_tasks but not judged/success.
+        level_by_task = {str(t["task_id"]): (str(t.get("level", "")) or "unknown") for t in all_tasks}
+        first_rows = _read_eval_rows(Path(eval_runs[0]["judge_result_file"])) if eval_runs else []
+        level_breakdown: dict[str, dict[str, int]] = {}
+        for row in first_rows:
+            row_level = level_by_task.get(str(row.get("task_id", "")), "unknown")
+            bucket = level_breakdown.setdefault(row_level, {"success": 0, "judged": 0, "total_tasks": 0})
+            bucket["judged"] += 1
+            if row.get("predicted_label") == 1:
+                bucket["success"] += 1
+        for row_level in set(level_by_task.values()):
+            bucket = level_breakdown.setdefault(row_level, {"success": 0, "judged": 0, "total_tasks": 0})
+            bucket["total_tasks"] = sum(1 for lv in level_by_task.values() if lv == row_level)
+        summary["level_breakdown"] = level_breakdown
+        n_success = sum(bucket["success"] for bucket in level_breakdown.values())
+        summary["overall"] = {
+            "success": n_success,
+            "total_tasks": len(all_tasks),
+            "success_rate": f"{(n_success / len(all_tasks) * 100):.1f}%" if all_tasks else "0%",
+        }
 
     run_summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
     console.print(json.dumps(summary, indent=2))

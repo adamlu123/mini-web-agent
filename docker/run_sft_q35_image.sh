@@ -166,9 +166,32 @@ echo "[boot] SFT exited rc=$RC"
 # HF model (output_dir root = config + safetensors + tokenizer) to a stable
 # per-model dir on the PVC that survives future jobs. Override dest via
 # SYNC_CKPT_DIR; disable entirely with SYNC_CKPT=0.
-# Only the master node post-processes (sync + vision-merge + eval). Workers'
-# torchrun procs have already exited; they must NOT race on the shared ckpt dir.
+# Only the master node post-processes (sync + vision-merge). Workers' torchrun
+# procs have already exited; they must NOT race on the shared ckpt dir.
+# EXCEPTION: with EVAL_AFTER=1 + the (default) harness eval backend, workers
+# do NOT exit -- they wait for the master's ckpt-ready sentinel and then run
+# their own data-parallel eval shard (docker/run_dist_eval_q35_image.sh), so the
+# whole job's GPUs eval in parallel instead of idling while the master evals.
+EVAL_READY="$OUTPUT_DIR/.ckpt_ready_for_eval"
 if [ "$IS_MASTER" != "1" ]; then
+  if [ "$RC" -eq 0 ] && [ "${EVAL_AFTER:-0}" = "1" ] && [ "${EVAL_BACKEND:-harness}" = "harness" ]; then
+    # Full-saves sync can be slow (up to hundreds of GB without SYNC_FINAL_ONLY):
+    # default wait 3h, override with EVAL_READY_TIMEOUT (seconds).
+    echo "[boot] [worker rank $NODE_RANK] training done; waiting for master ckpt sync+merge ($EVAL_READY)"
+    for _ in $(seq 1 $(( ${EVAL_READY_TIMEOUT:-10800} / 10 ))); do [ -f "$EVAL_READY" ] && break; sleep 10; done
+    if [ -f "$EVAL_READY" ]; then
+      ERC=0
+      EVAL_CKPT="$(cat "$EVAL_READY")" \
+      EVAL_RUN_ID="${EVAL_RUN_ID:-$JOB_NAME}" \
+      EVAL_NNODES="$NNODES" EVAL_NODE_RANK="$NODE_RANK" \
+      REPO="$CODE_ROOT/mini-web-agent" \
+        bash "$CODE_ROOT/mini-web-agent/docker/run_dist_eval_q35_image.sh" || ERC=$?
+      echo "[boot] [worker rank $NODE_RANK] eval shard exited rc=$ERC"
+      exit "$ERC"
+    fi
+    echo "[boot][error] [worker rank $NODE_RANK] timed out waiting for $EVAL_READY; no eval shard run"
+    exit 1
+  fi
   echo "[boot] [worker rank $NODE_RANK] training done rc=$RC; skipping sync/eval (master handles it)"
   exit "$RC"
 fi
@@ -229,11 +252,17 @@ if [ "$RC" -eq 0 ] && [ "${SYNC_CKPT:-1}" = "1" ]; then
 fi
 
 # === optional: chain a cluster EVAL on the freshly-trained ckpt ===============
-# When EVAL_AFTER=1 (set by docker/submit_sft_eval_q35_image.sh), run the
-# cluster eval driver on the trained HF ckpt right here in the SAME job/pod, so
-# one submission does train -> eval. The eval needs the SkyRL + RL/eval stack
-# (uploaded alongside mini-web-agent by the combined submit). Disabled by
-# default -> the plain SFT submit behaves exactly as before.
+# When EVAL_AFTER=1 (set by docker/submit_sft_eval_q35_image.sh), evaluate the
+# trained HF ckpt right here in the SAME job, so one submission does train->eval.
+# EVAL_BACKEND selects the stack:
+#   harness (default) -- mini-web-agent's own OM2W harness (vllm serve + agent
+#     loop, docker/run_dist_eval_q35_image.sh). Data-parallel across ALL the
+#     job's nodes: the master publishes the ckpt path via $EVAL_READY, every
+#     rank (master included) runs its own shard, the master then judges the
+#     merged outputs. Resumable: re-running with the same EVAL_RUN_ID skips
+#     finished tasks.
+#   skyrl -- the legacy SkyRL eval_entrypoint (master node only; needs the
+#     SkyRL upload + echo-rl secret volumes from the combined submit).
 if [ "$RC" -eq 0 ] && [ "${EVAL_AFTER:-0}" = "1" ]; then
   # Resolve the HF ckpt to evaluate: prefer the stable synced dir, else the
   # in-place saves dir under LlamaFactory.
@@ -242,21 +271,42 @@ if [ "$RC" -eq 0 ] && [ "${EVAL_AFTER:-0}" = "1" ]; then
     CKPT_REL=$(grep -E '^[[:space:]]*output_dir:' "$LF_DIR/$SFT_CONFIG" | head -1 | sed 's/#.*//' | awk '{print $2}')
     EVAL_CKPT_PATH="$LF_DIR/$CKPT_REL"
   fi
-  EVAL_DRIVER="$CODE_ROOT/mini-web-agent/docker/run_eval_q35_image.sh"
-  if [ -d "$EVAL_CKPT_PATH" ] && [ -f "$EVAL_DRIVER" ]; then
-    echo "[eval] === EVAL_AFTER=1 -> cluster eval on trained ckpt: $EVAL_CKPT_PATH ==="
-    # The SFT phase already rsynced mini-web-agent; the eval driver still needs
-    # to rsync SkyRL + bootstrap the RL/eval stack on top of the LlamaFactory env.
-    EVAL_CKPT="$EVAL_CKPT_PATH" \
-    EVAL_CONFIG="${EVAL_CONFIG:-configs/qwen35_9b_web_agent_easy_eval_sft.yaml}" \
-    EVAL_RUN_TAG="${EVAL_RUN_TAG:-merged}" \
-      bash "$EVAL_DRIVER"
-    ERC=$?
-    echo "[eval] cluster eval exited rc=$ERC (train rc was $RC)"
-    # Surface an eval failure in the job status but don't pretend training failed.
-    [ "$ERC" -ne 0 ] && RC=$ERC
+  if [ "${EVAL_BACKEND:-harness}" = "harness" ]; then
+    EVAL_DRIVER="$CODE_ROOT/mini-web-agent/docker/run_dist_eval_q35_image.sh"
+    if [ -d "$EVAL_CKPT_PATH" ] && [ -f "$EVAL_DRIVER" ]; then
+      echo "[eval] === EVAL_AFTER=1 (harness) -> $NNODES-shard eval on trained ckpt: $EVAL_CKPT_PATH ==="
+      # Unblock the waiting worker ranks, then run OUR shard (rank 0) + judge.
+      echo "$EVAL_CKPT_PATH" > "$EVAL_READY"
+      ERC=0
+      EVAL_CKPT="$EVAL_CKPT_PATH" \
+      EVAL_RUN_ID="${EVAL_RUN_ID:-$JOB_NAME}" \
+      EVAL_NNODES="$NNODES" EVAL_NODE_RANK=0 \
+      REPO="$CODE_ROOT/mini-web-agent" \
+        bash "$EVAL_DRIVER" || ERC=$?
+      echo "[eval] harness eval exited rc=$ERC (train rc was $RC)"
+      [ "$ERC" -ne 0 ] && RC=$ERC
+    else
+      echo "[eval][warn] skipping eval: ckpt ('$EVAL_CKPT_PATH') or driver ('$EVAL_DRIVER') missing"
+      # Don't leave the worker ranks hanging on the sentinel.
+      echo "" > "$EVAL_READY"
+    fi
   else
-    echo "[eval][warn] skipping eval: ckpt ('$EVAL_CKPT_PATH') or driver ('$EVAL_DRIVER') missing"
+    EVAL_DRIVER="$CODE_ROOT/mini-web-agent/docker/run_eval_q35_image.sh"
+    if [ -d "$EVAL_CKPT_PATH" ] && [ -f "$EVAL_DRIVER" ]; then
+      echo "[eval] === EVAL_AFTER=1 (skyrl) -> cluster eval on trained ckpt: $EVAL_CKPT_PATH ==="
+      # The SFT phase already rsynced mini-web-agent; the eval driver still needs
+      # to rsync SkyRL + bootstrap the RL/eval stack on top of the LlamaFactory env.
+      ERC=0
+      EVAL_CKPT="$EVAL_CKPT_PATH" \
+      EVAL_CONFIG="${EVAL_CONFIG:-configs/qwen35_9b_web_agent_easy_eval_sft.yaml}" \
+      EVAL_RUN_TAG="${EVAL_RUN_TAG:-merged}" \
+        bash "$EVAL_DRIVER" || ERC=$?
+      echo "[eval] cluster eval exited rc=$ERC (train rc was $RC)"
+      # Surface an eval failure in the job status but don't pretend training failed.
+      [ "$ERC" -ne 0 ] && RC=$ERC
+    else
+      echo "[eval][warn] skipping eval: ckpt ('$EVAL_CKPT_PATH') or driver ('$EVAL_DRIVER') missing"
+    fi
   fi
 fi
 exit "$RC"
