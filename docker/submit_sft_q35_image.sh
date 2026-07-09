@@ -59,6 +59,11 @@ echo "[submit_sft_q35_image] PRIORITY=$PRIORITY CLASS=$PRIORITY_CLASS_NAME PROJE
 # A SAS contains no commas and the submitter splits each pair on the first '=',
 # so it survives --extra-env-vars intact.
 EXTRA_ENV="SFT_CONFIG=${CONFIG},NPROC=${GPUS}"
+# Warm restart: RESUME_FROM_CKPT=<checkpoint-N dir on PVC> (+ optional
+# TARGET_TOTAL_EPOCHS). In-pod prep backs it up + vision-merges + derives the
+# continuation yaml. Submit with the SAME NODES as the original run.
+[[ -n "${RESUME_FROM_CKPT:-}" ]]    && EXTRA_ENV="${EXTRA_ENV},RESUME_FROM_CKPT=${RESUME_FROM_CKPT}"
+[[ -n "${TARGET_TOTAL_EPOCHS:-}" ]] && EXTRA_ENV="${EXTRA_ENV},TARGET_TOTAL_EPOCHS=${TARGET_TOTAL_EPOCHS}"
 [[ -n "${SYNC_FINAL_ONLY:-}" ]] && EXTRA_ENV="${EXTRA_ENV},SYNC_FINAL_ONLY=${SYNC_FINAL_ONLY}"
 [[ -n "${AZBLOB_AUTO_PUSH:-}" ]] && EXTRA_ENV="${EXTRA_ENV},AZBLOB_AUTO_PUSH=${AZBLOB_AUTO_PUSH}"
 [[ -n "${AZBLOB_SAS_TOKEN:-}" ]] && EXTRA_ENV="${EXTRA_ENV},AZBLOB_SAS_TOKEN=${AZBLOB_SAS_TOKEN}"

@@ -53,12 +53,41 @@ if [ "$IS_MASTER" = "1" ]; then
   # NOTE: --exclude 'LlamaFactory/saves/' keeps --delete from wiping a PRIOR run's
   # checkpoints (saves/ is gitignored -> not in the upload -> would otherwise be
   # deleted). Final ckpts are also copied to $PVC/.../models/ below for safety.
+
+  # --- optional warm restart (RESUME_FROM_CKPT=<checkpoint-N dir>) -----------
+  # save_only_model ckpts can't truly resume; prepare_warm_restart.py backs the
+  # ckpt up to $PVC/.../models/, vision-merges it, and derives a continuation
+  # yaml (remaining epochs + LR resumed from the ckpt's trainer_state.json).
+  # Generated BEFORE the sentinel so worker ranks pick the same yaml up from the
+  # shared $CODE_ROOT. TARGET_TOTAL_EPOCHS raises the total-epoch target (e.g.
+  # original 3 + one more => 4). NOTE: submit with the SAME NODES as the
+  # original run -- the epoch/LR math assumes an unchanged global batch.
+  if [ -n "${RESUME_FROM_CKPT:-}" ]; then
+    export HF_HOME="${HF_HOME:-$PVC_MOUNT/$USER_ALIAS/hf_cache}"
+    python "$CODE_ROOT/mini-web-agent/docker/prepare_warm_restart.py" \
+      --ckpt "$RESUME_FROM_CKPT" \
+      --config "$LF_DIR/$SFT_CONFIG" \
+      --out-config "$LF_DIR/examples/train_full/autogen_warm_restart_${JOB_NAME}.yaml" \
+      --backup-root "$PVC_MOUNT/$USER_ALIAS/models" \
+      --merge-script "$CODE_ROOT/mini-web-agent/scripts/merge_vision_from_base.py" \
+      --hf-home "$HF_HOME" \
+      --target-total-epochs "${TARGET_TOTAL_EPOCHS:-0}"
+  fi
   touch "$SYNC_SENTINEL"
 else
+  # Warm-restart prep (ckpt backup copy + vision merge) runs on the master
+  # before the sentinel and can take a while -> wait up to 60 min.
   echo "[boot] === [worker rank $NODE_RANK] waiting for master to sync code to $CODE_ROOT ==="
-  for _ in $(seq 1 360); do [ -f "$SYNC_SENTINEL" ] && break; sleep 5; done
+  for _ in $(seq 1 720); do [ -f "$SYNC_SENTINEL" ] && break; sleep 5; done
   [ -f "$SYNC_SENTINEL" ] || { echo "[boot][error] timed out waiting for master code sync"; exit 1; }
   echo "[boot] === [worker rank $NODE_RANK] code sync detected; continuing ==="
+fi
+
+# Every rank trains the derived continuation yaml when warm-restarting (the
+# master just generated it at this shared path).
+if [ -n "${RESUME_FROM_CKPT:-}" ]; then
+  SFT_CONFIG="examples/train_full/autogen_warm_restart_${JOB_NAME}.yaml"
+  echo "[boot] warm restart -> SFT_CONFIG=$SFT_CONFIG"
 fi
 
 echo '[boot] === install LlamaFactory + the few deps the image lacks (--no-deps) ==='

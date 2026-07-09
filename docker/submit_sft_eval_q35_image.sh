@@ -93,6 +93,11 @@ echo "[submit_sft_eval_q35_image] PRIORITY=$PRIORITY CLASS=$PRIORITY_CLASS_NAME 
 # run_sft_q35_image.sh after a successful train + ckpt sync. The SFT driver
 # uploads the final ckpt to blob by default; set AZBLOB_AUTO_PUSH=0 to disable.
 EXTRA_ENV="SFT_CONFIG=${SFT_CONFIG},NPROC=${GPUS},EVAL_AFTER=1,EVAL_BACKEND=${EVAL_BACKEND}"
+# Warm restart: RESUME_FROM_CKPT=<checkpoint-N dir on PVC> (+ optional
+# TARGET_TOTAL_EPOCHS). In-pod prep backs it up + vision-merges + derives the
+# continuation yaml. Submit with the SAME NODES as the original run.
+[[ -n "${RESUME_FROM_CKPT:-}" ]]    && EXTRA_ENV="${EXTRA_ENV},RESUME_FROM_CKPT=${RESUME_FROM_CKPT}"
+[[ -n "${TARGET_TOTAL_EPOCHS:-}" ]] && EXTRA_ENV="${EXTRA_ENV},TARGET_TOTAL_EPOCHS=${TARGET_TOTAL_EPOCHS}"
 if [[ "$EVAL_BACKEND" == "harness" ]]; then
   EXTRA_ENV="${EXTRA_ENV},TASK_LEVEL=${TASK_LEVEL},LIMIT=${LIMIT},WORKERS=${WORKERS}"
   EXTRA_ENV="${EXTRA_ENV},JUDGE_RUNS=${JUDGE_RUNS},JUDGE_NUM_PROC=${JUDGE_NUM_PROC},RETRY_FAILED=${RETRY_FAILED}"

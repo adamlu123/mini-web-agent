@@ -472,7 +472,36 @@ curl -s localhost:8000/v1/chat/completions -H 'Content-Type: application/json' -
 训练 yaml 都是 `save_only_model: true`(省 PVC 空间),checkpoint-* 里**没有
 optimizer/DeepSpeed 状态,`resume_from_checkpoint` 真断点续跑不可能**。正确
 做法是 warm restart:把中间 ckpt 当 `model_name_or_path` 接着训。丢的只是
-optimizer 动量和最后一个 save_steps 之后的进度,影响很小。四步:
+optimizer 动量和最后一个 save_steps 之后的进度,影响很小。
+
+### 一键方式(2026-07-09 起,推荐)
+
+原提交命令(纯训练或 train+eval 组合脚本都行)加两个 env 即可:
+
+```bash
+NODES=4 \
+SFT_CONFIG=examples/train_full/<原训练yaml> \
+RESUME_FROM_CKPT=/mnt/pvc/<alias>/code/mini-web-agent/LlamaFactory/saves/<output_dir>/checkpoint-<N> \
+TARGET_TOTAL_EPOCHS=4 \
+WANDB_PROJECT=web-agent-sft AZBLOB_AUTO_PUSH=0 \
+bash docker/submit_sft_eval_q35_image.sh   # 或 submit_sft_q35_image.sh
+```
+
+job 里 master 自动完成(`docker/prepare_warm_restart.py`,幂等可重提):
+①备份 ckpt 到 `/mnt/pvc/<alias>/models/<run名>_ckpt<N>_bak`(已存在则跳过);
+②缺 vision.safetensors 时自动 vision merge;③读 ckpt 的 `trainer_state.json`
+折算生成续训 yaml——`num_train_epochs` = TARGET_TOTAL_EPOCHS − 已训 epoch、
+`learning_rate` 从中断处的值接着 cosine 衰减(warmup 1%)、
+`output_dir`/`run_name` 自动加 `_cont<N>` 后缀。之后照常训练(组合脚本还会
+接多节点 eval)。
+
+**硬性约束:NODES 必须与原 run 一致**(epoch/LR 折算假设 global batch 不变);
+`TARGET_TOTAL_EPOCHS` 是"含已训部分"的总目标,不填默认用原 yaml 的
+num_train_epochs(即只补完原计划)。
+
+### 手工方式(理解原理 / 特殊折算时用)
+
+四步:
 
 1. **备份 ckpt 出易失目录**(在挂 PVC 的 pod 里)。中间 ckpt 落在
    `/mnt/pvc/<alias>/code/mini-web-agent/LlamaFactory/saves/<output_dir>/checkpoint-<N>`,
@@ -512,6 +541,7 @@ optimizer 动量和最后一个 save_steps 之后的进度,影响很小。四步
 | `LlamaFactory/examples/train_full/qwen35_9b_web_agent_seq_om2w4000_run1_40k_4node.yaml` | 本次训练配置 |
 | `docker/run_sft_q35_image.sh` | in-pod：train + PVC sync + vision merge（+链分布式 eval） |
 | `docker/run_dist_eval_q35_image.sh` | in-pod：每节点 vLLM+分片生成,master judge 汇总 |
+| `docker/prepare_warm_restart.py` | in-pod：一键续训准备(备份+merge+折算生成 yaml) |
 | `docker/submit_dist_eval_q35_image.sh` | 独立提交多节点/断点续评的 harness eval |
 | `src/miniswewebagent/run/benchmarks/om2w.py` | harness 入口(--num-shards/--resume/--judge-only) |
 | `scripts/merge_vision_from_base.py` | 手动补全 ckpt（vision+mtp，命令见"训练之后"） |
