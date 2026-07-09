@@ -8,7 +8,8 @@ description: >-
   single job, continue a killed SFT run, run or resume a data-parallel eval of
   an HF ckpt across N nodes, retry failed eval tasks, or locate judge results
   (run_summary_judge.json, level breakdown). Data prep / PVC data upload /
-  guest submission / monitoring live in web-agent-seq-sft-submit.
+  guest submission / monitoring are documented in the archived
+  .claude/skills_backup/web-agent-seq-sft-submit/SKILL.md.
 ---
 
 # 分布式 train+eval 与断点续跑(2026-07-09 起)
@@ -28,7 +29,9 @@ description: >-
    epoch;只 eval 要 ckpt 路径(须已 vision merge)。
 3. **eval 范围/并发?** `TASK_LEVEL`(all=300/easy80/medium143/hard77)、
    `TOTAL_WORKERS`(默认 80=browserbase 安全水位,加大前确认配额)。
-4. **p0/p1 与 PRIORITY_CLASS_NAME**(同 web-agent-seq-sft-submit 的规则)。
+4. **p0/p1 与 PRIORITY_CLASS_NAME**:p0/p1 只进 job 名和 dashboard 分桶,
+   **真正的调度优先级是 `PRIORITY_CLASS_NAME`**(默认 high);用户选 p1 时
+   一并问要不要把 class 降成 medium(真让路,可能排队)。
 
 ## 三条命令
 
@@ -121,5 +124,6 @@ EVAL_RUN_ID=dist_eval_smoke1 bash docker/submit_dist_eval_q35_image.sh
 手工 warm-restart 折算(特殊情况用):备份 ckpt → vision merge → 改 yaml
 (`model_name_or_path`=备份、`num_train_epochs`=目标−已训、`learning_rate`=
 trainer_state.json 里最后的 LR、warmup 0.01、output_dir/run_name 加 `_cont<N>`)
-→ 按原 NODES 提交。数据准备/PVC 上传/多用户/Guest 提交/监控见
-web-agent-seq-sft-submit。
+→ 按原 NODES 提交。数据准备/PVC 上传/多用户/Guest 提交/监控/think 对齐等
+详细文档已归档在 `.claude/skills_backup/web-agent-seq-sft-submit/SKILL.md`
+(及同目录其他两个旧 skill),需要时直接读文件。
