@@ -265,8 +265,16 @@ cleanup; VLLM_PID=""
 echo "$JOB_NAME rc=$GEN_RC" > "$DONE_FILE"
 
 if [[ "$IS_MASTER" != "1" ]]; then
-  echo "[dist-eval] [worker $NODE_RANK] shard done (rc=$GEN_RC); exiting"
-  exit "$GEN_RC"
+  # Volcano job 策略是 TaskCompleted->CompleteJob、PodFailed->AbortJob:
+  # worker 提前退出会把整个 job 判完、杀掉还在 judge 的 master;非零退出会
+  # Abort 全 job。所以 worker 记录 rc 后原地等 master 的完成标记,并恒以 0
+  # 退出——shard 失败由 master 从 done 文件聚合、反映在 master 的退出码上。
+  COMPLETE_FILE="$SHARDS_DIR/job_complete.$JOB_NAME"
+  echo "[dist-eval] [worker $NODE_RANK] shard done (rc=$GEN_RC); waiting for master judge ($COMPLETE_FILE)"
+  deadline=$(( $(date +%s) + EVAL_BARRIER_TIMEOUT ))
+  while [[ ! -f "$COMPLETE_FILE" ]] && (( $(date +%s) < deadline )); do sleep 30; done
+  [[ -f "$COMPLETE_FILE" ]] || echo "[dist-eval][warn] [worker $NODE_RANK] timed out waiting for master; exiting anyway"
+  exit 0
 fi
 
 echo "[dist-eval] === [master] barrier: waiting for $NNODES shard(s), timeout ${EVAL_BARRIER_TIMEOUT}s ==="
@@ -317,4 +325,6 @@ FINAL_RC=$JUDGE_RC
 for rc in "${SHARD_RCS[@]:-}"; do
   [[ -n "$rc" && "$rc" != "0" ]] && FINAL_RC=1
 done
+# 放行还在等待的 worker(见 worker 分支的注释)
+echo "rc=$FINAL_RC" > "$SHARDS_DIR/job_complete.$JOB_NAME"
 exit "$FINAL_RC"

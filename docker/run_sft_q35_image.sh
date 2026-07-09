@@ -221,7 +221,16 @@ if [ "$IS_MASTER" != "1" ]; then
     echo "[boot][error] [worker rank $NODE_RANK] timed out waiting for $EVAL_READY; no eval shard run"
     exit 1
   fi
-  echo "[boot] [worker rank $NODE_RANK] training done rc=$RC; skipping sync/eval (master handles it)"
+  # Volcano job policies are TaskCompleted->CompleteJob / PodFailed->AbortJob:
+  # if the worker task finishes while the master is still post-processing
+  # (ckpt sync / vision merge / skyrl eval), the whole job completes and the
+  # master pod gets killed mid-work. So on success, wait for the master's done
+  # marker before exiting (MASTER_WAIT_TIMEOUT seconds, default 6h).
+  echo "[boot] [worker rank $NODE_RANK] training done rc=$RC; waiting for master post-processing before exit"
+  if [ "$RC" -eq 0 ]; then
+    for _ in $(seq 1 $(( ${MASTER_WAIT_TIMEOUT:-21600} / 15 ))); do [ -f "$OUTPUT_DIR/.master_done" ] && break; sleep 15; done
+    [ -f "$OUTPUT_DIR/.master_done" ] || echo "[boot][warn] [worker rank $NODE_RANK] timed out waiting for master done marker; exiting anyway"
+  fi
   exit "$RC"
 fi
 
@@ -338,4 +347,7 @@ if [ "$RC" -eq 0 ] && [ "${EVAL_AFTER:-0}" = "1" ]; then
     fi
   fi
 fi
+# Release any worker ranks waiting on the post-processing barrier (see the
+# worker branch above re volcano TaskCompleted/PodFailed job policies).
+echo "rc=$RC" > "$OUTPUT_DIR/.master_done"
 exit "$RC"
