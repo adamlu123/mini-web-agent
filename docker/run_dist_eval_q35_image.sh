@@ -183,6 +183,37 @@ fi
 export TRANSFORMERS_NO_ADVISORY_WARNINGS=1
 export NCCL_DEBUG="${NCCL_DEBUG_OVERRIDE:-WARN}"
 
+# === 自动 vision merge(评中间 checkpoint-N 时缺 vision tower)================
+# 文本 SFT 的中间 ckpt 缺 vision 权重,直接 serve 必挂("visual.* not
+# initialized")。缺 vision.safetensors 时:master 把 ckpt 拷到提交者自己的
+# models/ 下(不动原目录——可能属于别人且易失)再从 HF 缓存的 base 补全;
+# worker 等合并后的目录出现。ckpt 本就完整时零开销。MERGE_VISION=0 关闭。
+if [[ ! -f "$EVAL_CKPT/vision.safetensors" && "${MERGE_VISION:-1}" == "1" ]]; then
+  MERGED_CKPT="$PVC_MOUNT/$USER_ALIAS/models/evalmerge_$(basename "$(dirname "$EVAL_CKPT")")_$(basename "$EVAL_CKPT")"
+  if [[ "$IS_MASTER" == "1" ]]; then
+    if [[ ! -f "$MERGED_CKPT/vision.safetensors" ]]; then
+      echo "[dist-eval] ckpt lacks vision.safetensors -> copy+merge to $MERGED_CKPT (takes a few min)"
+      rm -rf "$MERGED_CKPT.tmp"
+      mkdir -p "$(dirname "$MERGED_CKPT")"
+      cp -a "$EVAL_CKPT" "$MERGED_CKPT.tmp"
+      BASE_MODEL_ID="${BASE_MODEL_ID:-Qwen/Qwen3.5-9B}"
+      HFH="${HF_HOME:-$PVC_MOUNT/$USER_ALIAS/hf_cache}"
+      BASE_DIR="$(ls -d "$HFH/hub/models--${BASE_MODEL_ID//\//--}/snapshots/"*/ 2>/dev/null | head -1)"
+      [[ -n "$BASE_DIR" ]] || { echo "[dist-eval][error] base snapshot not found under $HFH (need it for vision merge)"; exit 1; }
+      python "$REPO/scripts/merge_vision_from_base.py" --ckpt "$MERGED_CKPT.tmp" --base "$BASE_DIR"
+      [[ -f "$MERGED_CKPT.tmp/vision.safetensors" ]] || { echo "[dist-eval][error] vision merge failed"; exit 1; }
+      mv "$MERGED_CKPT.tmp" "$MERGED_CKPT"
+    else
+      echo "[dist-eval] reusing existing vision-merged copy: $MERGED_CKPT"
+    fi
+  else
+    echo "[dist-eval] [worker $NODE_RANK] waiting for master's vision-merged ckpt: $MERGED_CKPT"
+    for _ in $(seq 1 240); do [[ -f "$MERGED_CKPT/vision.safetensors" ]] && break; sleep 15; done
+    [[ -f "$MERGED_CKPT/vision.safetensors" ]] || { echo "[dist-eval][error] timed out waiting for merged ckpt"; exit 1; }
+  fi
+  EVAL_CKPT="$MERGED_CKPT"
+fi
+
 echo '[dist-eval] === GPU preflight ==='
 nvidia-smi -L
 
