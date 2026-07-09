@@ -82,7 +82,14 @@ def ensure_backup(ckpt: Path, backup_root: Path, run_name: str, global_step: int
         shutil.rmtree(tmp)
     log(f"备份 ckpt(可能要几分钟): {ckpt} -> {backup}")
     backup_root.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(ckpt, tmp)
+    tmp.mkdir(parents=True)
+    # 不用 shutil.copytree/cp -a:跨属主/跨文件系统保留元数据会报
+    # "Operation not supported";只拷内容
+    proc = subprocess.run(
+        ["cp", "-r", "--no-preserve=mode,ownership", f"{ckpt}/.", str(tmp)], text=True
+    )
+    if proc.returncode != 0 or not has_weights(tmp):
+        die(f"备份拷贝失败: {ckpt} -> {tmp}")
     tmp.replace(backup)
     return backup
 

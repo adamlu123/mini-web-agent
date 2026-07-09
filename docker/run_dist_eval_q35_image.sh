@@ -47,7 +47,10 @@ REPO="${REPO:-$UPLOAD_ROOT/mini-web-agent}"
 if [[ -d "$REPO" ]]; then
   LOCAL_REPO="${LOCAL_REPO:-/tmp/mini-web-agent-evalcopy}"
   rm -rf "$LOCAL_REPO"
-  cp -a "$REPO" "$LOCAL_REPO"
+  mkdir -p "$LOCAL_REPO"
+  # 不能 cp -a:PVC -> 容器 /tmp(overlayfs)保留权限会 "Operation not
+  # supported",在 set -e 下直接打挂 driver(29a12 的死因)
+  cp -r --no-preserve=mode,ownership "$REPO/." "$LOCAL_REPO/"
   REPO="$LOCAL_REPO"
 fi
 ENV_ROOT="$PVC_MOUNT/$USER_ALIAS/envs/q35-mini-harness"
@@ -194,8 +197,8 @@ if [[ ! -f "$EVAL_CKPT/vision.safetensors" && "${MERGE_VISION:-1}" == "1" ]]; th
     if [[ ! -f "$MERGED_CKPT/vision.safetensors" ]]; then
       echo "[dist-eval] ckpt lacks vision.safetensors -> copy+merge to $MERGED_CKPT (takes a few min)"
       rm -rf "$MERGED_CKPT.tmp"
-      mkdir -p "$(dirname "$MERGED_CKPT")"
-      cp -a "$EVAL_CKPT" "$MERGED_CKPT.tmp"
+      mkdir -p "$MERGED_CKPT.tmp"
+      cp -r --no-preserve=mode,ownership "$EVAL_CKPT/." "$MERGED_CKPT.tmp/"
       BASE_MODEL_ID="${BASE_MODEL_ID:-Qwen/Qwen3.5-9B}"
       HFH="${HF_HOME:-$PVC_MOUNT/$USER_ALIAS/hf_cache}"
       BASE_DIR="$(ls -d "$HFH/hub/models--${BASE_MODEL_ID//\//--}/snapshots/"*/ 2>/dev/null | head -1)"
