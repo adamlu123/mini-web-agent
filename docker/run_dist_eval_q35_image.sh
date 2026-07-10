@@ -198,7 +198,12 @@ if [[ ! -f "$EVAL_CKPT/vision.safetensors" && "${MERGE_VISION:-1}" == "1" ]]; th
       echo "[dist-eval] ckpt lacks vision.safetensors -> copy+merge to $MERGED_CKPT (takes a few min)"
       rm -rf "$MERGED_CKPT.tmp"
       mkdir -p "$MERGED_CKPT.tmp"
-      cp -r --no-preserve=mode,ownership "$EVAL_CKPT/." "$MERGED_CKPT.tmp/"
+      # 只拷根目录的最终模型,跳过 checkpoint-* 中间产物(评 output_dir 根时
+      # 它们能有几百 GB)
+      for f in "$EVAL_CKPT"/*; do
+        case "$(basename "$f")" in checkpoint-*) continue;; esac
+        cp -r --no-preserve=mode,ownership "$f" "$MERGED_CKPT.tmp/"
+      done
       BASE_MODEL_ID="${BASE_MODEL_ID:-Qwen/Qwen3.5-9B}"
       HFH="${HF_HOME:-$PVC_MOUNT/$USER_ALIAS/hf_cache}"
       BASE_DIR="$(ls -d "$HFH/hub/models--${BASE_MODEL_ID//\//--}/snapshots/"*/ 2>/dev/null | head -1)"
