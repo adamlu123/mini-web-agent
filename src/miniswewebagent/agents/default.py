@@ -645,12 +645,37 @@ class DefaultAgent:
         system_message = next((m for m in self.messages if m.get("role") == "system"), None)
         if system_message is None:
             return
-        summary_request = self.model.format_message(
-            role="user",
-            content=self.config.summary_user_prompt,
-            extra={"interrupt_type": "HistoryCompactionRequest"},
-        )
-        summary_messages = list(self.messages) + [summary_request]
+        # Match the SFT data layout (make_web_agent_sequential_compact_tools_sft.py):
+        # the summary prompt is joined onto the last observation user message with
+        # "\n\n" rather than sent as a separate user message. Merge on a copy so a
+        # failed compaction leaves self.messages untouched. Falls back to a
+        # standalone user message when the last turn is not a user message (the
+        # SFT builder does the same for steps without an observation).
+        summary_messages = list(self.messages)
+        merged = False
+        last_message = summary_messages[-1]
+        if last_message.get("role") == "user":
+            merged_last = copy.deepcopy(last_message)
+            content = merged_last.get("content")
+            if isinstance(content, str) and content.strip():
+                merged_last["content"] = f"{content.rstrip()}\n\n{self.config.summary_user_prompt}"
+                merged = True
+            elif isinstance(content, list):
+                for part in reversed(content):
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        part["text"] = f"{str(part.get('text', '')).rstrip()}\n\n{self.config.summary_user_prompt}"
+                        merged = True
+                        break
+            if merged:
+                summary_messages[-1] = merged_last
+        if not merged:
+            summary_messages.append(
+                self.model.format_message(
+                    role="user",
+                    content=self.config.summary_user_prompt,
+                    extra={"interrupt_type": "HistoryCompactionRequest"},
+                )
+            )
         model_config = getattr(self.model, "config", None)
         old_max_output_tokens: Any = None
         old_response_mode: Any = None
@@ -666,6 +691,20 @@ class DefaultAgent:
             should_restore_response_mode = True
         try:
             response = self.model.query(summary_messages)
+        except FormatError as exc:
+            # Strict sft_state parsing can reject a summary that was merely
+            # truncated mid-<think> (no closing tags). Salvage the raw text and
+            # let _extract_compaction_summary clean it — an imperfect summary
+            # beats skipping compaction and letting the context grow unbounded.
+            raw_text = ""
+            for message in getattr(exc, "messages", None) or []:
+                extra = message.get("extra") if isinstance(message, dict) else None
+                if isinstance(extra, dict) and extra.get("model_response"):
+                    raw_text = str(extra["model_response"])
+                    break
+            if not raw_text:
+                return
+            response = {"content": "", "extra": {"raw_text": raw_text}}
         except Exception:  # noqa: BLE001 - never fail the run due to compaction
             return
         finally:
@@ -673,6 +712,10 @@ class DefaultAgent:
                 setattr(model_config, "max_output_tokens", old_max_output_tokens)
             if should_restore_response_mode:
                 setattr(model_config, "response_mode", old_response_mode)
+        # The SFT data wrapper says "compacted after step {end_call}" where
+        # end_call is the last action call (10/20/...), i.e. NOT counting the
+        # compaction call itself — capture it before incrementing n_calls.
+        compacted_after = self.n_calls
         # Count the compaction LLM call as one step toward api_calls / step_limit.
         self.n_calls += 1
         summary_text = self._extract_compaction_summary(response)
@@ -687,7 +730,7 @@ class DefaultAgent:
             content=(
                 "## Compacted History Summary\n"
                 f"Original task: {original_task}\n"
-                f"(context was compacted after step {self.n_calls}; earlier turns have been replaced "
+                f"(context was compacted after step {compacted_after}; earlier turns have been replaced "
                 "by the summary below)\n\n"
                 f"{summary_text}\n\n## End of Compacted Summary"
             ),

@@ -106,8 +106,14 @@ agent:
   judge_gateway_endpoint: ""
   judge_score_threshold: 3
   summary_every_n_steps: 10
-  summary_max_output_tokens: 2048
-  summary_response_mode: summary_text
+  # SFT summary targets run ~2.4-3k tokens in full state format; 2048 truncated
+  # them mid-<think> and strict sft_state parsing then failed every attempt,
+  # silently disabling compaction (unbounded context -> vLLM 400 + OOM).
+  summary_max_output_tokens: 4096
+  # Keep sft_state for the compaction call too: the SFT summary target is full
+  # state format, and overriding to summary_text degrades history assistant
+  # turns to bare thoughts in the summary request (train/eval mismatch).
+  summary_response_mode: ""
   summary_user_prompt: |
     You are about to have your working context compacted to save tokens.
 
@@ -119,7 +125,7 @@ agent:
     - The workspace directory and key file paths (plan.md, judge_config.json, final_script.py, final_runs/).
     - Which critical points have been satisfied, which are still open, and any known blockers.
     - Key findings from prior exploration (working selectors, URLs, ARIA labels, pitfalls to avoid).
-    - The latest final_runs/run_<id> state, most recent self_reflection verdict, and the next action to take.
+    - The latest final_runs/run_<id>/ state, most recent self_reflection verdict, and the next action to take.
 
     Write the summary as plain prose and bullet lists. Do NOT issue a new bash_command. Do NOT set done=true.
     Put the entire summary in the `thought` field (or equivalent text field) and leave action fields empty.
