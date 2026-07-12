@@ -52,6 +52,10 @@ from om2w_judge.utils import OpenaiEngine, extract_predication  # noqa: E402
 
 FINAL_RUN_DIR_RE = re.compile(r"^run_(\d+)$", re.IGNORECASE)
 STEP_ACTION_RE = re.compile(r"^\s*step\s+\d+\s+action\s*:\s*.+\s*$", re.IGNORECASE)
+# The agent's terminal answer line, emitted as either "final response:" or
+# "final answer:" (any case, space or underscore separator). Excluded so the
+# judge scores the trajectory, not the agent's self-reported answer.
+FINAL_RESPONSE_RE = re.compile(r"^\s*final[ _]?(?:response|answer)\s*:", re.IGNORECASE)
 SCREENSHOT_RE = re.compile(r"^final_execution_(\d+).*\.png$", re.IGNORECASE)
 MODE = "WebJudge_Online_Mind2Web_eval"
 DEFAULT_TASKS_FILE = Path(
@@ -116,6 +120,8 @@ def load_actions(log_path: Path, plain_text: bool = False) -> list[str]:
     for line in normalized.splitlines():
         s = line.strip()
         if not s:
+            continue
+        if FINAL_RESPONSE_RE.match(s):
             continue
         if plain_text or STEP_ACTION_RE.match(s):
             out.append(s)
