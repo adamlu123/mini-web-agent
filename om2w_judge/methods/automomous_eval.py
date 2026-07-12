@@ -1,7 +1,5 @@
+from utils import encode_image
 from PIL import Image
-
-from om2w_judge.utils import encode_image
-
 
 def Autonomous_eval(task, last_actions, images_path):
     system_msg = """You are an expert in evaluating the performance of a web navigation agent. The agent is designed to help a human user navigate a website to complete a task. Given the user's intent, the agent's action history, the final state of the webpage, and the agent's response to the user, your goal is to decide whether the agent's execution is successful or not.
@@ -15,7 +13,7 @@ There are three types of tasks:
 Format your response into two lines as shown below:
 
 Thoughts: <your thoughts and reasoning process>
-Status: \"success\" or \"failure\"
+Status: "success" or "failure"
 """
     prompt = """User Intent: {task}
 
@@ -38,6 +36,6 @@ The last snapshot of the web page is shown in the image."""
                     "image_url": {"url": f"data:image/jpeg;base64,{jpg_base64_str}", "detail": "high"},
                 },
             ],
-        },
+        }
     ]
     return messages, text, system_msg

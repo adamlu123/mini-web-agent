@@ -2,38 +2,44 @@
 name: web-agent-dist-train-eval
 description: >-
   One-job "SFT train + multi-node OM2W harness eval" and standalone multi-node
-  eval on the bonete61 B200 cluster, both resumable: warm-restart training from
-  a checkpoint-N (RESUME_FROM_CKPT) and checkpointed eval (resubmit the same
-  EVAL_RUN_ID to continue). Use when the user wants to: launch train+eval in a
-  single job, continue a killed SFT run, run or resume a data-parallel eval of
-  an HF ckpt across N nodes, retry failed eval tasks, or locate judge results
-  (run_summary_judge.json, level breakdown). Data prep / PVC data upload /
-  guest submission / monitoring are documented in the archived
+  eval on the bonete61 B200 cluster, plus judge-only evaluation of existing
+  user-specified inference trajectories. All modes are resumable: warm-restart
+  training from checkpoint-N (RESUME_FROM_CKPT), checkpointed generation
+  (reuse EVAL_RUN_ID), and incremental judging (reuse JUDGE_OUTPUT_DIR). Use
+  for train+eval, killed SFT continuation, data-parallel checkpoint eval,
+  retrying failed tasks, judging trajectories without generation, or locating
+  judge results. Data prep / PVC upload / guest submission / monitoring are in
   .claude/skills_backup/web-agent-seq-sft-submit/SKILL.md.
 ---
 
 # 分布式 train+eval 与断点续跑(2026-07-09 起)
 
-支持两种模式,eval 均为 mini-web-agent 自带 OM2W harness:每节点本地
+支持三种模式,A/B 的 eval 为 mini-web-agent 自带 OM2W harness:每节点本地
 `vllm serve` + miniswewebagent agent 循环(train 侧是 LlamaFactory,全程
 不涉及 SkyRL):
 
 - **A. train + 多节点 eval 一条 job**(训练可从 ckpt 续):训练用几个节点,
   训完这些节点就地并行 eval。
 - **B. 独立多节点 eval**(断点可续):评任意 PVC 上的 HF ckpt。
+- **C. 已有推理轨迹只判分**(无 generation):直接对用户指定的
+  `TRAJECTORIES_DIR` 跑原版 OM2W WebJudge,不加载 ckpt、不启动 vLLM/
+  Browserbase、不占 GPU。
 
 ## 运行协议(提交前用 AskUserQuestion 问清)
 
-1. **NODES?**(续训时必须与原 run 一致,epoch/LR 折算假设 global batch 不变)
-2. **是全新训练、续训、还是只 eval?** 续训要 checkpoint-N 路径 + 目标总
-   epoch;只 eval 要 ckpt 路径(须已 vision merge)。
+1. **先选 A/B/C。** A/B 才问 `NODES`;C 不问节点或 ckpt。
+2. **是全新训练、续训、独立生成+eval、还是已有轨迹只判分?** 续训要
+   checkpoint-N 路径 + 目标总 epoch;B 要已 vision merge 的 ckpt;C 要
+   `TRAJECTORIES_DIR` + 独立持久化的 `JUDGE_OUTPUT_DIR`。
 3. **eval 范围/并发?** `TASK_LEVEL`(all=300/easy80/medium143/hard77)、
-   `TOTAL_WORKERS`(默认 80=browserbase 安全水位,加大前确认配额)。
+   `TOTAL_WORKERS`(A/B,默认 80=browserbase 安全水位);C 的范围由轨迹目录
+   内 task_id 决定,另问 `JUDGE_NUM_WORKERS`(默认 32)。
 4. **p0/p1 与 PRIORITY_CLASS_NAME**:p0/p1 只进 job 名和 dashboard 分桶,
    **真正的调度优先级是 `PRIORITY_CLASS_NAME`**(默认 high);用户选 p1 时
-   一并问要不要把 class 降成 medium(真让路,可能排队)。
+   一并问要不要把 class 降成 medium(真让路,可能排队)。C 在本机可见轨迹时
+   直接运行;轨迹只在 PVC 时才提交单节点 CPU job。
 
-## 三条命令
+## 四条命令
 
 ```bash
 # A1. 全新训练 + 训完多节点并行全量 eval(一条 job)
@@ -51,7 +57,31 @@ NODES=4 SFT_CONFIG=examples/train_full/<原yaml> ... bash docker/submit_sft_eval
 EVAL_CKPT=/mnt/pvc/<alias>/models/<已merge的ckpt> NODES=4 TASK_LEVEL=all \
 bash docker/submit_dist_eval_q35_image.sh
 # 重跑失败任务(result.json 带 run_exception 的):前面加 RETRY_FAILED=1
+
+# C. 已有推理轨迹只判分;无 ckpt/vLLM/Browserbase/GPU
+# 必须从 mini-web-agent repo root 执行;同一 JUDGE_OUTPUT_DIR 重跑会跳过已判 task_id
+source /data/t-yifeili/webchain_sampling/cred.sh
+test -d /home/luyadong/sandbox/mini-web-agent/om2w_judge/methods
+TRAJECTORIES_DIR=<用户指定的绝对路径>
+JUDGE_OUTPUT_DIR=<与轨迹目录分开的持久化绝对路径>
+python scripts/eval_with_original_om2w.py \
+  --trajectories_dir "$TRAJECTORIES_DIR" \
+  --output_path "$JUDGE_OUTPUT_DIR" \
+  --tasks_file src/miniswewebagent/run/benchmarks/om2w_260220.json \
+  --model o4-mini \
+  --score_threshold 3 \
+  --num_worker 32
 ```
+
+模式 C 的 `TRAJECTORIES_DIR` 每个直接子目录必须以 task_id 命名,并包含
+`final_runs/run_<N>/final_script_log.txt` 与
+`final_runs/run_<N>/screenshots/final_execution_*.png`;脚本自动选数值最大的
+`run_<N>`,并排除 action log 里的 final response。若路径只在 PVC 可见,用
+generic `submit_job.sh` 提交 **1 节点、0 GPU** CPU job,上传
+`mini-web-agent`,挂载 webchain secret。脚本从
+`/home/luyadong/sandbox/mini-web-agent/om2w_judge` 加载 vendored WebJudge,
+所以 job command 要先把上传目录软链到
+`/home/luyadong/sandbox/mini-web-agent`,再执行同一 Python 命令。
 
 **首次上全量前先冒烟**(几分钟,验证 RANK 注入/分片/barrier/judge 全链):
 
@@ -77,6 +107,8 @@ EVAL_RUN_ID=dist_eval_smoke1 bash docker/submit_dist_eval_q35_image.sh
   warmup 1%)→生成 `_cont<N>` yaml,全 rank 共用。幂等,续训 job 再被杀可原样重提。
 - **续评**:完成判据 = `outputs/<task_id>/result.json`;重提同 EVAL_RUN_ID
   跳过已完成任务;om2w_judge 自身也增量(跳过已判 task_id)。
+- **已有轨迹只判分**:模式 C 不读取/生成模型轨迹;只读取用户目录。输出 JSONL
+  已有的 task_id 会被跳过,所以同一 `JUDGE_OUTPUT_DIR` 可原样续跑。
 - **volcano 策略坑(已内置修复,别改回)**:job 策略是 TaskCompleted→
   CompleteJob、PodFailed→AbortJob,worker 先退/非零退会杀掉还在干活的
   master。所以 worker 一律等 master 完成标记(`job_complete.$JOB_NAME` /
@@ -96,6 +128,13 @@ EVAL_RUN_ID=dist_eval_smoke1 bash docker/submit_dist_eval_q35_image.sh
 | 各分片生成汇总 | `RUN_ROOT/logs/<EVAL_RUN_ID>/generation_summary_shardKofN.json` |
 | 各节点 vLLM 日志 | `RUN_ROOT/logs/vllm_shardK.log` |
 
+模式 C 不使用 `RUN_ROOT`;结果写到用户指定目录:
+
+| 内容 | 路径 |
+|---|---|
+| 逐任务 WebJudge JSONL | `JUDGE_OUTPUT_DIR/WebJudge_Online_Mind2Web_eval_<model>_score_threshold_<N>_auto_eval_results.json` |
+| 汇总 | 进程结束时 stdout 的 `Success rate: passed/total`;传 `--summary_path` 时同时写 JSON |
+
 ## 约束与坑
 
 - **续训 NODES 必须与原 run 一致**;`TARGET_TOTAL_EPOCHS` 是含已训部分的总
@@ -109,6 +148,12 @@ EVAL_RUN_ID=dist_eval_smoke1 bash docker/submit_dist_eval_q35_image.sh
   (缺失按 fail 计),重提同 RUN_ID 补跑。
 - judge key/browserbase 凭据来自 webchain secret(提交脚本自动从
   `/data/t-yifeili/webchain_sampling/cred.sh` 创建挂载)。
+- 模式 C 的 vendored `OpenaiEngine` 直连 OpenAI,使用 secret 里的
+  `OPENAI_API_KEY`;不要传 legacy phyagi gateway token。
+- 模式 C 只接受上述 `final_runs/run_*` 轨迹布局;先抽查一个 task 目录。缺
+  task mapping、action log 或截图时脚本会打印 `Skip ...` 而不是补做 generation。
+- 模式 C 的 `JUDGE_OUTPUT_DIR` 必须和轨迹目录分开并持久化;换输出目录会从头
+  判,复用输出目录才会按 JSONL 里的 task_id 断点续跑。
 
 ## 关键文件
 
@@ -119,6 +164,7 @@ EVAL_RUN_ID=dist_eval_smoke1 bash docker/submit_dist_eval_q35_image.sh
 | `docker/run_dist_eval_q35_image.sh` | in-pod:每节点 vLLM+分片生成,master judge 汇总 |
 | `docker/prepare_warm_restart.py` | in-pod:一键续训准备(备份+merge+折算生成 yaml) |
 | `src/miniswewebagent/run/benchmarks/om2w.py` | harness 入口(--num-shards/--resume/--retry-failed/--judge-only) |
+| `scripts/eval_with_original_om2w.py` | 模式 C:vendored 原版 WebJudge,只消费已有轨迹 |
 | `LlamaFactory/examples/train_full/*_cont*.yaml` | 手写续训 yaml 的参考例子 |
 
 手工 warm-restart 折算(特殊情况用):备份 ckpt → vision merge → 改 yaml

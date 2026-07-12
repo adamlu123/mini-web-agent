@@ -1,208 +1,125 @@
 import base64
 import io
+from openai import (
+    APIConnectionError,
+    APIError,
+    RateLimitError,
+    AzureOpenAI,
+    OpenAI
+)
 import os
-import re
-from typing import Any, Optional
-
 import backoff
-import httpx
-from openai import APIConnectionError, APIError, OpenAI, RateLimitError
-
-
-def _uses_max_completion_tokens(model_name: Optional[str]) -> bool:
-    if not model_name:
-        return False
-    lowered = model_name.lower()
-    return lowered.startswith("o")
-
-
-def _serialize_response_content_part(part: dict[str, Any], *, role: str) -> dict[str, Any]:
-    if part.get("type") == "image_url":
-        image_url = part.get("image_url", "")
-        if isinstance(image_url, dict):
-            return {
-                "type": "input_image",
-                "image_url": str(image_url.get("url", "")),
-                "detail": str(image_url.get("detail", "high") or "high"),
-            }
-        return {
-            "type": "input_image",
-            "image_url": str(image_url),
-            "detail": str(part.get("detail", "high") or "high"),
-        }
-
-    text = str(part.get("text", ""))
-    return {"type": "output_text" if role == "assistant" else "input_text", "text": text}
-
-
-def _serialize_response_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    serialized: list[dict[str, Any]] = []
-    for message in messages:
-        role = str(message["role"])
-        content = message.get("content", "")
-        if isinstance(content, str):
-            serialized_content = [{"type": "text", "text": content}]
-        else:
-            serialized_content = [part for part in content if isinstance(part, dict)]
-
-        mapped_role = "developer" if role == "system" else role
-        serialized.append(
-            {
-                "type": "message",
-                "role": mapped_role,
-                "content": [
-                    _serialize_response_content_part(part, role=mapped_role)
-                    for part in serialized_content
-                ],
-            }
-        )
-    return serialized
-
-
-def _extract_response_text(payload: dict[str, Any]) -> str:
-    output_text = payload.get("output_text")
-    if isinstance(output_text, str) and output_text:
-        return output_text
-
-    texts: list[str] = []
-    for item in payload.get("output") or []:
-        if not isinstance(item, dict):
-            continue
-        if item.get("type") != "message":
-            continue
-        for content in item.get("content") or []:
-            if not isinstance(content, dict):
-                continue
-            if isinstance(content.get("text"), str):
-                texts.append(content["text"])
-            elif isinstance(content.get("output_text"), str):
-                texts.append(content["output_text"])
-    return "\n".join(texts)
-
 
 def encode_image(image):
+    """Convert a PIL image to base64 string."""
     if image.mode == "RGBA":
         image = image.convert("RGB")
     buffered = io.BytesIO()
     image.save(buffered, format="JPEG")
-    return base64.b64encode(buffered.getvalue()).decode("utf-8")
-
+    return base64.b64encode(buffered.getvalue()).decode('utf-8')
 
 def extract_predication(response, mode):
-    if mode in {
-        "Autonomous_eval",
-        "AgentTrek_eval",
-        "WebJudge_Online_Mind2Web_eval",
-        "WebJudge_Online_Mind2Web_Sandbox_eval",
-        "WebJudge_Online_Mind2Web_Sandbox_eval_ctime",
-        "WebJudge_Online_Mind2Web_Sandbox_WithThoughts_eval",
-        "WebJudge_Online_Mind2Web_Sandbox_ThoughtsOnly_eval",
-        "WebJudge_general_eval",
-    }:
+    """Extract the prediction from the response."""
+    if mode == "Autonomous_eval":
         try:
-            matches = list(re.finditer(r"(?i)status:\s*", response))
-            if matches:
-                tail = response[matches[-1].end() :].strip()
-                verdict_match = re.match(r'^[\'"“”‘’\s]*(success|failure)\b', tail, re.IGNORECASE)
-                if verdict_match:
-                    return 1 if verdict_match.group(1).lower() == "success" else 0
+            if "success" in response.lower().split('status:')[1]:
+                return 1
+            else:
+                return 0
+        except:
             return 0
-        except Exception:
+    elif mode == "AgentTrek_eval":
+        try:
+            if "success" in response.lower().split('status:')[1]:
+                return 1
+            else:
+                return 0
+        except:
             return 0
-    if mode == "WebVoyager_eval":
-        return 0 if "FAILURE" in response else 1
-    raise ValueError(f"Unknown mode: {mode}")
+    elif mode == "WebVoyager_eval":
+        if "FAILURE" in response:
+            return 0
+        else:
+            return 1
+    elif mode == "WebJudge_Online_Mind2Web_eval":
+        try:
+            if "success" in response.lower().split('status:')[1]:
+                return 1
+            else:
+                return 0
+        except:
+            return 0
+    elif mode == "WebJudge_general_eval":
+        try:
+            if "success" in response.lower().split('status:')[1]:
+                return 1
+            else:
+                return 0
+        except:
+            return 0
+    else:
+        raise ValueError(f"Unknown mode: {mode}")
 
 
-class OpenaiEngine:
+class OpenaiEngine():
     def __init__(
         self,
         api_key=None,
-        stop=None,
+        stop=[],
         rate_limit=-1,
         model=None,
         tokenizer=None,
         temperature=0,
         port=-1,
-        endpoint_target_uri="",
+        endpoint_target_uri = "",
         **kwargs,
     ) -> None:
-        del tokenizer, port, kwargs
-        self.endpoint_target_uri = str(endpoint_target_uri or "")
+        """Init an OpenAI GPT/Codex engine
 
-        if not api_key:
-            if self.endpoint_target_uri:
-                api_key = (
-                    os.getenv("OPENAI_GATEWAY_API_KEY")
-                    or os.getenv("PHYAGI_API_KEY")
-                    or os.getenv("OPENAI_API_KEY")
-                )
-            else:
-                api_key = os.getenv("OPENAI_API_KEY", api_key)
-
-        assert api_key, (
-            "must pass on the api_key or set OPENAI_API_KEY in the environment"
-            if not self.endpoint_target_uri
-            else (
-                "must pass on the api_key or set OPENAI_GATEWAY_API_KEY, "
-                "PHYAGI_API_KEY, or OPENAI_API_KEY in the environment"
-            )
-        )
+        Args:
+            api_key (_type_, optional): Auth key from OpenAI. Defaults to None.
+            stop (list, optional): Tokens indicate stop of sequence. Defaults to ["\n"].
+            rate_limit (int, optional): Max number of requests per minute. Defaults to -1.
+            model (_type_, optional): Model family. Defaults to None.
+        """
+        assert (
+                os.getenv("OPENAI_API_KEY", api_key) is not None
+        ), "must pass on the api_key or set OPENAI_API_KEY in the environment"
+        if api_key is None:
+            api_key = os.getenv("OPENAI_API_KEY", api_key)
         if isinstance(api_key, str):
             self.api_keys = [api_key]
         elif isinstance(api_key, list):
             self.api_keys = api_key
         else:
             raise ValueError("api_key must be a string or list")
-        self.stop = stop or []
+        self.stop = stop
         self.temperature = temperature
         self.model = model
+        # convert rate limit to minmum request interval
         self.request_interval = 0 if rate_limit == -1 else 60.0 / rate_limit
         self.next_avil_time = [0] * len(self.api_keys)
-        self.api_key = self.api_keys[0]
-        self.client = None if self.endpoint_target_uri else OpenAI(api_key=self.api_key)
+        self.client = OpenAI(
+                        api_key=api_key,
+                    )
 
     def log_error(details):
         print(f"Retrying in {details['wait']:0.1f} seconds due to {details['exception']}")
 
     @backoff.on_exception(
         backoff.expo,
-        (APIError, RateLimitError, APIConnectionError, httpx.HTTPError),
-        max_tries=6,
-        on_backoff=log_error,
+        (APIError, RateLimitError, APIConnectionError),
+        max_tries=3,
+        on_backoff=log_error
     )
-    def generate(self, messages, max_new_tokens=1024, temperature=0, model=None, **kwargs):
+    def generate(self, messages, max_new_tokens=2048, temperature=0, model=None, **kwargs):
         model = model if model else self.model
-        if self.endpoint_target_uri:
-            payload = {
-                "model": model,
-                "input": _serialize_response_input(messages),
-                "max_output_tokens": max_new_tokens,
-            }
-            if not _uses_max_completion_tokens(model):
-                payload["temperature"] = temperature
-            with httpx.Client(timeout=120) as client:
-                response = client.post(
-                    self.endpoint_target_uri,
-                    headers={
-                        "Content-Type": "application/json",
-                        "Authorization": f"Bearer {self.api_key}",
-                    },
-                    json=payload,
-                )
-                response.raise_for_status()
-                response_payload = response.json()
-            return [_extract_response_text(response_payload)]
-
-        create_kwargs = {
-            "model": model,
-            "messages": messages,
-            **kwargs,
-        }
-        if _uses_max_completion_tokens(model):
-            create_kwargs["max_completion_tokens"] = max_new_tokens
+        request = {"model": model, "messages": messages, **kwargs}
+        if model and model.startswith(("o1", "o3", "o4")):
+            request["max_completion_tokens"] = max_new_tokens
+            request.setdefault("reasoning_effort", "low")
         else:
-            create_kwargs["max_tokens"] = max_new_tokens
-            create_kwargs["temperature"] = temperature
-        response = self.client.chat.completions.create(**create_kwargs)
+            request["max_tokens"] = max_new_tokens
+            request["temperature"] = temperature
+        response = self.client.chat.completions.create(**request)
         return [choice.message.content for choice in response.choices]

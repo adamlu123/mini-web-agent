@@ -209,19 +209,29 @@ class OpenRouterModel(PhyagiModel):
 
     @staticmethod
     def _estimate_tokens(messages: list[dict[str, Any]]) -> int:
-        # Rough upper-ish bound without a tokenizer: ~3 chars per token for the
-        # mixed English/code/aria text these prompts contain.
+        # Rough upper-ish bound without a tokenizer: ~3 chars per text token,
+        # plus a conservative reserve for each screenshot.
         total_chars = 0
+        image_count = 0
         for message in messages:
             content = message.get("content", "")
             if isinstance(content, list):
+                image_count += sum(
+                    part.get("type") in {"input_image", "image_url"}
+                    for part in content
+                    if isinstance(part, dict)
+                )
                 content = "".join(str(part.get("text", "")) for part in content if isinstance(part, dict))
             total_chars += len(str(content))
-        return total_chars // 3
+        return total_chars // 3 + image_count * 2048
+
+    def _estimate_request_tokens(self, messages: list[dict[str, Any]]) -> int:
+        serialized = _serialize_chat_messages(messages, response_mode=self.config.response_mode)
+        return self._estimate_tokens(serialized)
 
     def _apply_sliding_window(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         budget = int(getattr(self.config, "max_context_tokens", 0) or 0)
-        if budget <= 0 or self._estimate_tokens(messages) <= budget:
+        if budget <= 0 or self._estimate_request_tokens(messages) <= budget:
             return messages
         keep_turns = max(1, int(getattr(self.config, "sliding_window_keep_turns", 10) or 10))
 
@@ -243,7 +253,7 @@ class OpenRouterModel(PhyagiModel):
         body = list(messages[head_end:])
 
         dropped = 0
-        while body and self._estimate_tokens(head + body) > budget:
+        while body and self._estimate_request_tokens(head + body) > budget:
             assistant_positions = [i for i, m in enumerate(body) if m.get("role") == "assistant"]
             if len(assistant_positions) <= keep_turns:
                 break

@@ -1,7 +1,5 @@
+from utils import encode_image
 from PIL import Image
-
-from om2w_judge.utils import encode_image
-
 
 def AgentTrek_eval(task, last_actions, thoughts, images_path):
     system_msg = """You are an expert in evaluating the performance of a web navigation agent. The agent is designed to help a human user navigate a website to complete a task. Given the user's task goal, the agent's trajectory, your goal is to decide whether the agent's execution is successful or not.
@@ -14,7 +12,7 @@ Whether the agent's trajectory is effective and corresponding to the goal
 3. Determine if the agent has achieved the task goal based on the trajectory. A task can be considered successful if most trajectory is effective. 
 4. the agent sometimes can't stop after finishing a task and continue doing repeated actions. these actions may be some failed attempt after a series of correct actions. the task should be regarded as successful if the correct actions are effective and almost reach the goal. 
 5. if the agent is stuck in the loop at the early stage of the task, which means they don't even get close to the goal before they get stuck in the loop, that's a failure. for example, the agent begin to get stuck before third step. 
-6. when the task is to change the google account password, it can't be regarded as successful when agent finish at trying to click \"manage your account\". 
+6. when the task is to change the google account password, it can't be regarded as successful when agent finish at trying to click "manage your account". 
 7. if there are over 8 correct action in the trajectory, it can be regard as a successful agent. 
 8. final saving action is not a must. the task is successful if the agent does most things right and just forget to save the change at last. 
 9. if the original task has 2 subtasks, the agent only complete one of them, that's still a success. e.g. the task is to update name and birthday, but agent only update name, that's fine. 
@@ -26,7 +24,7 @@ Whether the agent's trajectory is effective and corresponding to the goal
 1. in the trajectory, an action always follows a corresponding reasoning, which shows the observation and thought of the agent. 
 2. your response should be contain: 
 Thoughts: <your thoughts and reasoning process> 
-Status: \"success\" or \"failure\"
+Status: "success" or "failure"
 """
     prompt = """The goal of the task: {task}
 
@@ -53,6 +51,6 @@ The last snapshot of the web page is shown in the image."""
                     "image_url": {"url": f"data:image/jpeg;base64,{jpg_base64_str}", "detail": "high"},
                 },
             ],
-        },
+        }
     ]
     return messages, text, system_msg

@@ -9,28 +9,28 @@
 #      (--judge-only)并写最终汇总(总分 + 按 level breakdown)。
 #
 # 共享布局(PVC,重提同 EVAL_RUN_ID 即续):
-#   $PVC_MOUNT/$USER_ALIAS/evals/$EVAL_RUN_ID/
+#   $DATA_ROOT/evals/$EVAL_RUN_ID/
 #     outputs/<task_id>/result.json   逐任务产物(resume 的判据)
 #     outputs_eval_<i>/               judge 结果
 #     logs/                           batch/generation/judge 日志与汇总
 #     shards/shard_<k>_of_<n>.done    barrier 标记(内容=JOB_NAME rc=<rc>,
 #                                     旧 job 的残留标记因 JOB_NAME 不同不会误触发)
 #
-# 必需 env(submit_job.sh 自动注入):PVC_MOUNT USER_ALIAS JOB_NAME
+# 必需 env(submit_job.sh 自动注入):DATA_ROOT JOB_NAME
 # 多节点 env(volcano pytorch 插件注入,单节点缺省 1/0):WORLD_SIZE RANK
 # 业务 env(由 submit_dist_eval_q35_image.sh 转发,或被 SFT 链设置):
 #   EVAL_CKPT     HF 格式权重目录(必需)
 #   EVAL_RUN_ID   本次 eval 的稳定 id(必需;重提同 id = 断点续评)
 #   BENCHMARK_CONFIG TASK_LEVEL LIMIT WORKERS JUDGE_RUNS JUDGE_NUM_PROC
-#   TP MAX_MODEL_LEN MAX_OUTPUT_TOKENS MAX_CONTEXT_TOKENS GPU_MEMORY_UTILIZATION
+#   TP MAX_MODEL_LEN MAX_OUTPUT_TOKENS MAX_CONTEXT_TOKENS
+#   SLIDING_WINDOW_KEEP_TURNS GPU_MEMORY_UTILIZATION
 #   MODEL_NAME CHAT_TEMPLATE RETRY_FAILED EXTRA_CONFIGS JUDGE_ENDPOINT
 #   REPO(SFT 链复用时指到 $CODE_ROOT/mini-web-agent)
 # secrets:/run/secrets/webchain-sampling/cred.sh(browserbase + judge key)
 
 set -euo pipefail
 
-: "${PVC_MOUNT:?PVC_MOUNT not set}"
-: "${USER_ALIAS:?USER_ALIAS not set}"
+: "${DATA_ROOT:?DATA_ROOT not set}"
 : "${JOB_NAME:?JOB_NAME not set}"
 : "${EVAL_CKPT:?EVAL_CKPT not set}"
 : "${EVAL_RUN_ID:?EVAL_RUN_ID not set (stable id; resubmit the same id to resume)}"
@@ -39,7 +39,7 @@ NNODES="${EVAL_NNODES:-${WORLD_SIZE:-1}}"
 NODE_RANK="${EVAL_NODE_RANK:-${RANK:-0}}"
 IS_MASTER=0; [[ "$NODE_RANK" == "0" ]] && IS_MASTER=1
 
-UPLOAD_ROOT="$PVC_MOUNT/$USER_ALIAS/runs/$JOB_NAME"
+UPLOAD_ROOT="$DATA_ROOT/runs/$JOB_NAME"
 REPO="${REPO:-$UPLOAD_ROOT/mini-web-agent}"
 # $REPO 在共享 PVC 上、且同 job 的 N 个 pod 会并发 pip install -e(往源码树里
 # 写 egg-info/pth 会互相打架),所以先整棵拷到 pod 本地再装/运行;也顺便让
@@ -50,15 +50,17 @@ if [[ -d "$REPO" ]]; then
   mkdir -p "$LOCAL_REPO"
   # 不能 cp -a:PVC -> 容器 /tmp(overlayfs)保留权限会 "Operation not
   # supported",在 set -e 下直接打挂 driver(29a12 的死因)
-  cp -r --no-preserve=mode,ownership "$REPO/." "$LOCAL_REPO/"
+  cp -R --no-preserve=mode,ownership,timestamps "$REPO/." "$LOCAL_REPO/"
   REPO="$LOCAL_REPO"
 fi
-ENV_ROOT="$PVC_MOUNT/$USER_ALIAS/envs/q35-mini-harness"
+mkdir -p /home/luyadong/sandbox
+ln -sfnT "$REPO" /home/luyadong/sandbox/mini-web-agent
+ENV_ROOT="$DATA_ROOT/envs/q35-mini-harness"
 REQ="$REPO/docker/requirements.txt"
 MISSING="$ENV_ROOT/requirements.missing.rank${NODE_RANK}.txt"
 CREDS_FILE="${CREDS_FILE:-/run/secrets/webchain-sampling/cred.sh}"
 
-RUN_ROOT="$PVC_MOUNT/$USER_ALIAS/evals/$EVAL_RUN_ID"
+RUN_ROOT="$DATA_ROOT/evals/$EVAL_RUN_ID"
 OUTPUTS_DIR="$RUN_ROOT/outputs"
 LOGS_DIR="$RUN_ROOT/logs"
 SHARDS_DIR="$RUN_ROOT/shards"
@@ -70,14 +72,19 @@ LIMIT="${LIMIT:-0}"
 WORKERS="${WORKERS:-20}"
 JUDGE_RUNS="${JUDGE_RUNS:-1}"
 JUDGE_NUM_PROC="${JUDGE_NUM_PROC:-32}"
+JUDGE_MODEL="${JUDGE_MODEL:-o4-mini}"
+JUDGE_SCORE_THRESHOLD="${JUDGE_SCORE_THRESHOLD:-3}"
+JUDGE_ENDPOINT="${JUDGE_ENDPOINT:-http://gateway.phyagi.net/api/responses}"
 TP="${TP:-8}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-65536}"
 MAX_OUTPUT_TOKENS="${MAX_OUTPUT_TOKENS:-4096}"
 # 客户端 sliding window 预算(openrouter_model.py;0=关)。48000 是 65536 上下文
 # 下留出估算容错的验证值,防长会话 vLLM 400。
 MAX_CONTEXT_TOKENS="${MAX_CONTEXT_TOKENS:-48000}"
+SLIDING_WINDOW_KEEP_TURNS="${SLIDING_WINDOW_KEEP_TURNS:-10}"
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.92}"
 MODEL_NAME="${MODEL_NAME:-$(basename "$EVAL_CKPT")}"
+TASKS_FILE="${TASKS_FILE:-$REPO/src/miniswewebagent/run/benchmarks/om2w_260220.json}"
 # 训练对齐的 chat template(qwen3_5 think 对齐,docs/qwen3_5_think_alignment.md)。
 # ckpt 自带的 chat_template.jinja 与它不同,不能省。置空则用 ckpt 自带模板。
 CHAT_TEMPLATE="${CHAT_TEMPLATE-$REPO/configs/qwen3_5_train_aligned.jinja}"
@@ -91,9 +98,13 @@ echo "[dist-eval] job=$JOB_NAME host=$(hostname) shard=$NODE_RANK/$NNODES master
 echo "[dist-eval] run_id=$EVAL_RUN_ID run_root=$RUN_ROOT"
 echo "[dist-eval] ckpt=$EVAL_CKPT model=$MODEL_NAME"
 echo "[dist-eval] benchmark=$BENCHMARK_CONFIG level=$TASK_LEVEL limit=$LIMIT workers/node=$WORKERS"
+echo "[dist-eval] judge_model=$JUDGE_MODEL judge_workers=$JUDGE_NUM_PROC endpoint=${JUDGE_ENDPOINT:-<openai>}"
 
 [[ -d "$REPO" ]] || { echo "[dist-eval][error] repo not found: $REPO"; exit 1; }
 [[ -f "$CREDS_FILE" ]] || { echo "[dist-eval][error] credentials file not found: $CREDS_FILE"; exit 1; }
+[[ -f "$TASKS_FILE" ]] || { echo "[dist-eval][error] tasks file not found: $TASKS_FILE"; exit 1; }
+[[ -f "$REPO/scripts/eval_with_original_om2w.py" ]] || {
+  echo "[dist-eval][error] original OM2W evaluator not found"; exit 1; }
 [[ -d "$EVAL_CKPT" ]] || { echo "[dist-eval][error] ckpt dir not found: $EVAL_CKPT"; exit 1; }
 if ! compgen -G "$EVAL_CKPT/*.safetensors" >/dev/null && [[ ! -f "$EVAL_CKPT/model.safetensors.index.json" ]]; then
   echo "[dist-eval][error] ckpt is not HF safetensors format: $EVAL_CKPT"; exit 1
@@ -192,7 +203,7 @@ export NCCL_DEBUG="${NCCL_DEBUG_OVERRIDE:-WARN}"
 # models/ 下(不动原目录——可能属于别人且易失)再从 HF 缓存的 base 补全;
 # worker 等合并后的目录出现。ckpt 本就完整时零开销。MERGE_VISION=0 关闭。
 if [[ ! -f "$EVAL_CKPT/vision.safetensors" && "${MERGE_VISION:-1}" == "1" ]]; then
-  MERGED_CKPT="$PVC_MOUNT/$USER_ALIAS/models/evalmerge_$(basename "$(dirname "$EVAL_CKPT")")_$(basename "$EVAL_CKPT")"
+  MERGED_CKPT="$DATA_ROOT/models/evalmerge_$(basename "$(dirname "$EVAL_CKPT")")_$(basename "$EVAL_CKPT")"
   if [[ "$IS_MASTER" == "1" ]]; then
     if [[ ! -f "$MERGED_CKPT/vision.safetensors" ]]; then
       echo "[dist-eval] ckpt lacks vision.safetensors -> copy+merge to $MERGED_CKPT (takes a few min)"
@@ -205,7 +216,7 @@ if [[ ! -f "$EVAL_CKPT/vision.safetensors" && "${MERGE_VISION:-1}" == "1" ]]; th
         cp -r --no-preserve=mode,ownership "$f" "$MERGED_CKPT.tmp/"
       done
       BASE_MODEL_ID="${BASE_MODEL_ID:-Qwen/Qwen3.5-9B}"
-      HFH="${HF_HOME:-$PVC_MOUNT/$USER_ALIAS/hf_cache}"
+      HFH="${HF_HOME:-$DATA_ROOT/hf_cache}"
       BASE_DIR="$(ls -d "$HFH/hub/models--${BASE_MODEL_ID//\//--}/snapshots/"*/ 2>/dev/null | head -1)"
       [[ -n "$BASE_DIR" ]] || { echo "[dist-eval][error] base snapshot not found under $HFH (need it for vision merge)"; exit 1; }
       python "$REPO/scripts/merge_vision_from_base.py" --ckpt "$MERGED_CKPT.tmp" --base "$BASE_DIR"
@@ -241,8 +252,11 @@ VLLM_PID=$!
 cleanup() { [[ -n "${VLLM_PID:-}" ]] && kill "$VLLM_PID" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
-python - <<PY
+if ! python - "$VLLM_PID" <<PY
 import sys, time, urllib.request
+from pathlib import Path
+
+pid = int(sys.argv[1])
 url = "http://${HOST}:${PORT}/v1/models"
 deadline = time.time() + int("${VLLM_WAIT_SECONDS:-1800}")
 while time.time() < deadline:
@@ -254,10 +268,18 @@ while time.time() < deadline:
     except SystemExit:
         raise
     except Exception:
+        stat_path = Path(f"/proc/{pid}/stat")
+        if not stat_path.exists() or stat_path.read_text().rsplit(")", 1)[1].split()[0] == "Z":
+            print("[dist-eval][error] vLLM exited before becoming ready", file=sys.stderr)
+            raise SystemExit(1)
         time.sleep(5)
 print(f"[dist-eval][error] vLLM not ready before deadline: {url}", file=sys.stderr)
 raise SystemExit(1)
 PY
+then
+  tail -200 "$VLLM_LOG_FILE" >&2
+  exit 1
+fi
 
 echo "[dist-eval] === shard $NODE_RANK/$NNODES generation (resume on) ==="
 cd "$REPO"
@@ -279,6 +301,7 @@ python -m miniswewebagent.run.benchmarks.om2w \
   -c "model.model_name=$MODEL_NAME" \
   -c "model.max_output_tokens=$MAX_OUTPUT_TOKENS" \
   -c "model.max_context_tokens=$MAX_CONTEXT_TOKENS" \
+  -c "model.sliding_window_keep_turns=$SLIDING_WINDOW_KEEP_TURNS" \
   -c "environment.env.WEB_AGENT_POLICY_URL=$ENDPOINT" \
   -c "environment.env.WEB_AGENT_POLICY_MODEL=$MODEL_NAME" \
   -c "environment.env.OPENAI_COMPATIBLE_ENDPOINT=$ENDPOINT" \
@@ -340,9 +363,28 @@ while :; do
 done
 echo "[dist-eval] [master] shard rcs: ${SHARD_RCS[*]:-<incomplete>}"
 
-echo "[dist-eval] === [master] judge over full output dir ==="
+GENERATION_FAILURES="$(
+  python - "$OUTPUTS_DIR" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+failures = 0
+for result_path in Path(sys.argv[1]).glob("*/result.json"):
+    try:
+        failures += bool(json.loads(result_path.read_text(encoding="utf-8")).get("run_exception"))
+    except Exception:
+        failures += 1
+print(failures)
+PY
+)"
+if (( GENERATION_FAILURES > 0 )); then
+  echo "[dist-eval][warn] generation left $GENERATION_FAILURES retryable task failure(s)"
+fi
+
+echo "[dist-eval] === [master] native harness judge over full output dir ==="
 JUDGE_ENDPOINT_ARGS=()
-[[ -n "${JUDGE_ENDPOINT:-}" ]] && JUDGE_ENDPOINT_ARGS=( --judge-endpoint "$JUDGE_ENDPOINT" )
+[[ -n "$JUDGE_ENDPOINT" ]] && JUDGE_ENDPOINT_ARGS=( --judge-endpoint "$JUDGE_ENDPOINT" )
 JUDGE_RC=0
 python -m miniswewebagent.run.benchmarks.om2w \
   "${CONFIG_ARGS[@]}" \
@@ -361,6 +403,7 @@ python -m miniswewebagent.run.benchmarks.om2w \
 echo "[dist-eval] judge rc=$JUDGE_RC ; final summary: $LOGS_DIR/$EVAL_RUN_ID/run_summary_judge.json"
 
 FINAL_RC=$JUDGE_RC
+(( GENERATION_FAILURES > 0 )) && FINAL_RC=1
 for rc in "${SHARD_RCS[@]:-}"; do
   [[ -n "$rc" && "$rc" != "0" ]] && FINAL_RC=1
 done

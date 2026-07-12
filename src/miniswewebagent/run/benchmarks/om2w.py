@@ -54,7 +54,8 @@ def _select_tasks(
 ) -> list[dict[str, object]]:
     tasks = load_om2w_tasks(tasks_file)
     if task_level and task_level.lower() != "all":
-        tasks = [task for task in tasks if task.get("level") == task_level]
+        task_levels = {level.strip().lower() for level in task_level.split("+") if level.strip()}
+        tasks = [task for task in tasks if str(task.get("level", "")).lower() in task_levels]
     if task_ids:
         selected_ids = set(task_ids)
         tasks = [task for task in tasks if task["task_id"] in selected_ids]
@@ -165,7 +166,11 @@ def main(
     tasks_file: Path | None = typer.Option(None, "--tasks-file", help="Path to an Online-Mind2Web JSON file."),
     task_id: list[str] = typer.Option([], "--task-id", help="Only run the specified task id(s)."),
     limit: int = typer.Option(0, "--limit", help="Run only the first N selected tasks."),
-    task_level: str | None = typer.Option(None, "--task-level", help="Filter tasks by level, e.g. hard."),
+    task_level: str | None = typer.Option(
+        None,
+        "--task-level",
+        help="Filter tasks by level, e.g. hard or medium+hard.",
+    ),
     workers: int = typer.Option(0, "--workers", help="Parallel worker processes. Defaults from config."),
     evaluate: bool | None = typer.Option(None, "--evaluate/--no-evaluate", help="Run judge after generation."),
     judge_model: str | None = typer.Option(None, "--judge-model", help="Judge model name."),

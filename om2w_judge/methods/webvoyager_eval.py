@@ -1,9 +1,6 @@
+from utils import encode_image
 from PIL import Image
-
-from om2w_judge.utils import encode_image
-
-MAX_IMAGE = 50
-
+MAX_IMAGE =50
 
 def WebVoyager_eval(task, images_path, response, k=0):
     system_msg = """As an evaluator, you will be presented with three primary components to assist you in your role:
@@ -30,21 +27,23 @@ Result Response: {response}
 
     whole_content_img = []
     images_path = images_path[:MAX_IMAGE]
-    text = prompt.format(task=task, response=response, num=len(images_path) if k == 0 else k)
+    text = prompt.format(task=task, response=response, num = len(images_path) if k == 0 else k)
 
     for image in images_path[-k:]:
         jpg_base64_str = encode_image(Image.open(image))
         whole_content_img.append(
             {
-                "type": "image_url",
-                "image_url": {"url": f"data:image/png;base64,{jpg_base64_str}", "detail": "high"},
+                'type': 'image_url',
+                'image_url': {"url": f"data:image/png;base64,{jpg_base64_str}", "detail": "high"}
             }
         )
     messages = [
         {"role": "system", "content": system_msg},
         {
             "role": "user",
-            "content": [{"type": "text", "text": text}] + whole_content_img + [{"type": "text", "text": "Your verdict:\n"}],
-        },
+            "content": [{"type": "text", "text": text}] 
+            + whole_content_img
+            + [{'type': 'text', 'text': "Your verdict:\n"}]
+        }
     ]
     return messages, text, system_msg

@@ -1,12 +1,8 @@
-import asyncio
-import re
-
+from utils import encode_image
 from PIL import Image
-
-from om2w_judge.utils import encode_image
-
-MAX_IMAGE = 50
-
+import re
+import asyncio
+MAX_IMAGE =50
 
 async def identify_key_points(task, input_image_paths, model):
     system_msg = """You are an expert tasked with analyzing a given task to identify the key points explicitly stated in the task description.
@@ -18,37 +14,37 @@ async def identify_key_points(task, input_image_paths, model):
 2. Identify and extract **key points** directly stated in the task description.
    - A **key point** is a critical element, condition, or step explicitly mentioned in the task description.
    - Do not infer or add any unstated elements.
-   - Words such as \"best,\" \"highest,\" \"cheapest,\" \"latest,\" \"most recent,\" \"lowest,\" \"closest,\" \"highest-rated,\" \"largest,\" and \"newest\" must go through the sort function(e.g., the key point should be \"Filter by highest\").
+   - Words such as "best," "highest," "cheapest," "latest," "most recent," "lowest," "closest," "highest-rated," "largest," and "newest" must go through the sort function(e.g., the key point should be "Filter by highest").
 
 **Respond with**:
 - **Key Points**: A numbered list of the explicit key points for completing this task, one per line, without explanations or additional details."""
-
+    
     prompt = """Task: {task}"""
     text = prompt.format(task=task)
 
     input_images_msg = []
-    if input_image_paths is not None:
+
+    if input_image_paths != None:
         for input_image_path in input_image_paths:
             input_images_jpg_base64_str = encode_image(Image.open(input_image_path))
             input_images_msg.append(
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{input_images_jpg_base64_str}", "detail": "high"},
-                }
-            )
+                                        {
+                                            'type': 'image_url',
+                                            'image_url': {"url": f"data:image/png;base64,{input_images_jpg_base64_str}", "detail": "high"}
+                                        }
+                                    )
 
     messages = [
-        {"role": "system", "content": system_msg},
-        {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": text},
-            ] + input_images_msg,
-        },
-    ]
+            {"role": "system", "content": system_msg},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": text}
+                ]+ input_images_msg,
+            }
+        ]
     responses = await asyncio.to_thread(model.generate, messages)
     return responses[0]
-
 
 async def judge_image(task, input_image_paths, image_path, key_points, model):
     system_msg = """You are an expert evaluator tasked with determining whether an image contains information about the necessary steps to complete a task.
@@ -77,46 +73,45 @@ Respond with:
 ### Reasoning**: [Your explanation]  
 ### Score**: [1-5]"""
 
+
     prompt = """**Task**: {task}
 
 **Key Points for Task Completion**: {key_points}
 
 The snapshot of the web page is shown in the image."""
-    text = prompt.format(task=task, key_points=key_points)
+    text = prompt.format(task=task,key_points=key_points)
 
     input_images_msg = []
-    if input_image_paths is not None:
+    if input_image_paths != None:
         for input_image_path in input_image_paths:
             input_images_jpg_base64_str = encode_image(Image.open(input_image_path))
             input_images_msg.append(
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{input_images_jpg_base64_str}", "detail": "high"},
-                }
-            )
+                                        {
+                                            'type': 'image_url',
+                                            'image_url': {"url": f"data:image/png;base64,{input_images_jpg_base64_str}", "detail": "high"}
+                                        }
+                                    )
     messages = [{"role": "system", "content": system_msg}]
 
     if input_images_msg:
-        messages.append(
-            {
-                "role": "user",
-                "content": [{"type": "text", "text": "The input images are:"}] + input_images_msg,
-            }
-        )
-
+        messages.append({
+            "role": "user",
+            "content": [{"type": "text", "text": "The input images are:"}] + input_images_msg
+        })
+    
     jpg_base64_str = encode_image(Image.open(image_path))
     messages.append(
-        {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": text},
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/jpeg;base64,{jpg_base64_str}", "detail": "high"},
-                },
-            ],
-        }
-    )
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": text},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{jpg_base64_str}", "detail": "high"},
+                    },
+                ]
+            }
+        )
 
     responses = await asyncio.to_thread(model.generate, messages)
     return responses[0]
@@ -128,15 +123,15 @@ async def WebJudge_general_eval(task, input_image_paths, action_thoughts, last_a
 Your response must strictly follow the following evaluation criteria!
 *Important Evaluation Criteria*:
 1: The filtered results must be displayed correctly. If filters were not properly applied (i.e., missing selection, missing confirmation, or no visible effect in results), it should be considered a failure.
-2: You must carefully check whether these snapshots and action history meet these key points. Ensure that specific filter conditions, such as \"best,\" \"highest,\" \"cheapest,\" \"latest,\" \"most recent,\" \"lowest,\" \"closest,\" \"highest-rated,\" \"largest,\" and \"newest\" are correctly applied using the filter function(e.g., sort function).
+2: You must carefully check whether these snapshots and action history meet these key points. Ensure that specific filter conditions, such as "best," "highest," "cheapest," "latest," "most recent," "lowest," "closest," "highest-rated," "largest," and "newest" are correctly applied using the filter function(e.g., sort function).
 3: Certain key points or requirements should be applied by the filter. Otherwise, a search with all requirements as input will be deemed a failure since it cannot guarantee that all results meet the requirements!
 4: If the task requires filtering by a specific range of money, years, or the number of beds and bathrooms, the applied filter must exactly match the given requirement. Any deviation results in failure. To ensure the task is successful, the applied filter must precisely match the specified range without being too broad or too narrow.
 5: Some tasks require a submission action or a display of results to be considered successful. Repeat actions or actions that do not lead to a visible result should be considered a failure.
-6: If the agent loops through a sequence of actions that do not make progress toward the goal (including failing to click \"Save\" or \"Submit,\" etc.), it should be considered a failure.
+6: If the agent loops through a sequence of actions that do not make progress toward the goal (including failing to click "Save" or "Submit," etc.), it should be considered a failure.
 
 Format your response into two lines as shown below:
 Thoughts: <your thoughts and reasoning process should base on double-checking each key points and the evaluation criteria>
-Status: \"success\" or \"failure\"
+Status: "success" or "failure"
 """
     prompt = """User Task: {task}
 
@@ -148,19 +143,21 @@ Action History:
 The potentially important snapshots of the webpage in the agent's trajectory and their reasons:
 {thoughts}"""
 
+
     key_points = await identify_key_points(task, input_image_paths, model)
     key_points = key_points.replace("\n\n", "\n")
 
     try:
         key_points = key_points.split("**Key Points**:")[1]
         key_points = "\n".join(line.lstrip() for line in key_points.splitlines())
-    except Exception:
+    except:
         key_points = key_points.split("Key Points:")[-1]
         key_points = "\n".join(line.lstrip() for line in key_points.splitlines())
-
+    
     tasks = [judge_image(task, input_image_paths, image_path, key_points, model) for image_path in images_path]
     image_responses = await asyncio.gather(*tasks)
 
+    input_images_msg = []
     whole_content_img = []
     whole_thoughts = []
     record = []
@@ -168,7 +165,7 @@ The potentially important snapshots of the webpage in the agent's trajectory and
     for response, image_path in zip(image_responses, images_path):
         try:
             score_text = response.split("### Score")[1]
-            thought = response.split("### Reasoning:")[-1].strip().lstrip("\n").split("### Score")[0].replace("\n", " ")
+            thought = response.split("### Reasoning:")[-1].strip().lstrip("\n").split("### Score")[0].replace('\n',' ')
             score = re.findall(pattern, score_text)[0]
             record.append({"Response": response, "Score": int(score)})
         except Exception as e:
@@ -180,8 +177,8 @@ The potentially important snapshots of the webpage in the agent's trajectory and
             jpg_base64_str = encode_image(Image.open(image_path))
             whole_content_img.append(
                 {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{jpg_base64_str}", "detail": "high"},
+                    'type': 'image_url',
+                    'image_url': {"url": f"data:image/png;base64,{jpg_base64_str}", "detail": "high"}
                 }
             )
             if thought != "":
@@ -197,50 +194,32 @@ Key Points: {key_points}
 Action History:
 {last_actions}"""
 
-    if action_thoughts is not None:
-        text = prompt.format(
-            task=task,
-            last_actions="\n".join(
-                f"{i+1}. {action}. Reasoning: {action_thought}"
-                for i, (action, action_thought) in enumerate(zip(last_actions, action_thoughts))
-            ),
-            key_points=key_points,
-            thoughts="\n".join(f"{i+1}. {thought}" for i, thought in enumerate(whole_thoughts)),
-        )
+    if action_thoughts != None:
+        text = prompt.format(task=task, last_actions="\n".join(f"{i+1}. {action}. Reasoning: {action_thought}" for i, (action, action_thought) in enumerate(zip(last_actions,action_thoughts))), key_points=key_points, thoughts = "\n".join(f"{i+1}. {thought}" for i, thought in enumerate(whole_thoughts)))
+
     else:
-        text = prompt.format(
-            task=task,
-            last_actions="\n".join(f"{i+1}. {action}" for i, action in enumerate(last_actions)),
-            key_points=key_points,
-            thoughts="\n".join(f"{i+1}. {thought}" for i, thought in enumerate(whole_thoughts)),
-        )
+        text = prompt.format(task=task, last_actions="\n".join(f"{i+1}. {action}" for i, action in enumerate(last_actions)), key_points=key_points, thoughts = "\n".join(f"{i+1}. {thought}" for i, thought in enumerate(whole_thoughts)))
 
     input_images_msg = []
     if input_image_paths is not None:
         for path in input_image_paths:
             input_images_jpg_base64_str = encode_image(Image.open(path))
-            input_images_msg.append(
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{input_images_jpg_base64_str}", "detail": "high"},
-                }
-            )
+            input_images_msg.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:image/png;base64,{input_images_jpg_base64_str}", "detail": "high"}
+            })
 
     messages = [{"role": "system", "content": system_msg}]
 
     if input_images_msg:
-        messages.append(
-            {
-                "role": "user",
-                "content": [{"type": "text", "text": "The input images are:"}] + input_images_msg,
-            }
-        )
-
-    messages.append(
-        {
+        messages.append({
             "role": "user",
-            "content": [{"type": "text", "text": text}] + whole_content_img,
-        }
-    )
+            "content": [{"type": "text", "text": "The input images are:"}] + input_images_msg
+        })
 
+    messages.append({
+        "role": "user",
+        "content": [{"type": "text", "text": text}] + whole_content_img
+    })
+    
     return messages, text, system_msg, record, key_points
