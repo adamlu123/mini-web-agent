@@ -58,7 +58,14 @@ EVAL_CKPT=/mnt/pvc/<alias>/models/<已merge的ckpt> NODES=4 TASK_LEVEL=all \
 bash docker/submit_dist_eval_q35_image.sh
 # 重跑失败任务(result.json 带 run_exception 的):前面加 RETRY_FAILED=1
 
-# C. 已有推理轨迹只判分;无 ckpt/vLLM/Browserbase/GPU
+# C1. 原生 harness 轨迹只判分(<task_id>/result.json + trajectory/)
+JUDGE_ONLY=1 \
+TRAJECTORIES_DIR=/mnt/pvc/<alias>/evals/<run_id>/outputs \
+EVAL_RUN_ID=<run_id> NODES=1 JUDGE_NUM_PROC=8 \
+bash docker/submit_dist_eval_q35_image.sh
+# 自动提交 1 个 CPU pod、GPUS=0;不需要 EVAL_CKPT,不启动 vLLM/Browserbase。
+
+# C2. final_runs 轨迹只判分;无 ckpt/vLLM/Browserbase/GPU
 # 必须从 mini-web-agent repo root 执行;同一 JUDGE_OUTPUT_DIR 重跑会跳过已判 task_id
 source /data/t-yifeili/webchain_sampling/cred.sh
 test -d /home/luyadong/sandbox/mini-web-agent/om2w_judge/methods
@@ -73,7 +80,9 @@ python scripts/eval_with_original_om2w.py \
   --num_worker 32
 ```
 
-模式 C 的 `TRAJECTORIES_DIR` 每个直接子目录必须以 task_id 命名,并包含
+先按轨迹布局选 C1/C2,不要混用。C1 每个 task 目录含 `result.json` 与
+`trajectory/`,同一 `EVAL_RUN_ID` 会复用 `outputs_eval_1` 里的已判 task_id。
+C2 的 `TRAJECTORIES_DIR` 每个直接子目录必须以 task_id 命名,并包含
 `final_runs/run_<N>/final_script_log.txt` 与
 `final_runs/run_<N>/screenshots/final_execution_*.png`;脚本自动选数值最大的
 `run_<N>`,并排除 action log 里的 final response。若路径只在 PVC 可见,用
@@ -128,12 +137,14 @@ EVAL_RUN_ID=dist_eval_smoke1 bash docker/submit_dist_eval_q35_image.sh
 | 各分片生成汇总 | `RUN_ROOT/logs/<EVAL_RUN_ID>/generation_summary_shardKofN.json` |
 | 各节点 vLLM 日志 | `RUN_ROOT/logs/vllm_shardK.log` |
 
-模式 C 不使用 `RUN_ROOT`;结果写到用户指定目录:
+模式 C1 复用 `RUN_ROOT`;C2 写到用户指定目录:
 
 | 内容 | 路径 |
 |---|---|
-| 逐任务 WebJudge JSONL | `JUDGE_OUTPUT_DIR/WebJudge_Online_Mind2Web_eval_<model>_score_threshold_<N>_auto_eval_results.json` |
-| 汇总 | 进程结束时 stdout 的 `Success rate: passed/total`;传 `--summary_path` 时同时写 JSON |
+| C1 最终汇总 | `RUN_ROOT/logs/<EVAL_RUN_ID>/run_summary_judge.json` |
+| C1 逐任务 WebJudge JSONL | `RUN_ROOT/outputs_eval_1/WebJudge_Online_Mind2Web_eval_<model>_score_threshold_3_auto_eval_results.json` |
+| C2 逐任务 WebJudge JSONL | `JUDGE_OUTPUT_DIR/WebJudge_Online_Mind2Web_eval_<model>_score_threshold_<N>_auto_eval_results.json` |
+| C2 汇总 | 进程结束时 stdout 的 `Success rate: passed/total`;传 `--summary_path` 时同时写 JSON |
 
 ## 约束与坑
 
@@ -148,11 +159,11 @@ EVAL_RUN_ID=dist_eval_smoke1 bash docker/submit_dist_eval_q35_image.sh
   (缺失按 fail 计),重提同 RUN_ID 补跑。
 - judge key/browserbase 凭据来自 webchain secret(提交脚本自动从
   `/data/t-yifeili/webchain_sampling/cred.sh` 创建挂载)。
-- 模式 C 的 vendored `OpenaiEngine` 直连 OpenAI,使用 secret 里的
+- 模式 C2 的 vendored `OpenaiEngine` 直连 OpenAI,使用 secret 里的
   `OPENAI_API_KEY`;不要传 legacy phyagi gateway token。
-- 模式 C 只接受上述 `final_runs/run_*` 轨迹布局;先抽查一个 task 目录。缺
+- 模式 C2 只接受上述 `final_runs/run_*` 轨迹布局;先抽查一个 task 目录。缺
   task mapping、action log 或截图时脚本会打印 `Skip ...` 而不是补做 generation。
-- 模式 C 的 `JUDGE_OUTPUT_DIR` 必须和轨迹目录分开并持久化;换输出目录会从头
+- 模式 C2 的 `JUDGE_OUTPUT_DIR` 必须和轨迹目录分开并持久化;换输出目录会从头
   判,复用输出目录才会按 JSONL 里的 task_id 断点续跑。
 
 ## 关键文件
@@ -160,7 +171,7 @@ EVAL_RUN_ID=dist_eval_smoke1 bash docker/submit_dist_eval_q35_image.sh
 | 路径 | 作用 |
 |---|---|
 | `docker/submit_sft_eval_q35_image.sh` | 模式 A 提交(train→多节点 eval) |
-| `docker/submit_dist_eval_q35_image.sh` | 模式 B 提交(独立多节点 eval/续评) |
+| `docker/submit_dist_eval_q35_image.sh` | 模式 B/C1 提交(生成+评测或 CPU-only 已有轨迹判分) |
 | `docker/run_dist_eval_q35_image.sh` | in-pod:每节点 vLLM+分片生成,master judge 汇总 |
 | `docker/prepare_warm_restart.py` | in-pod:一键续训准备(备份+merge+折算生成 yaml) |
 | `src/miniswewebagent/run/benchmarks/om2w.py` | harness 入口(--num-shards/--resume/--retry-failed/--judge-only) |

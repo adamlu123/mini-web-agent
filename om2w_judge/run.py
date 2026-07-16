@@ -130,16 +130,19 @@ def parallel_eval(args, num_workers=60):
     #Evaluate in parallel based on num of works
     task_dirs = [
         d for d in sorted(os.listdir(args.trajectories_dir)) 
-        if os.path.isdir(os.path.join(args.trajectories_dir, d))
+        if os.path.isfile(os.path.join(args.trajectories_dir, d, "result.json"))
     ]
     print(f"Evaluating {len(task_dirs)} tasks in total.")
-    chunk_size = len(task_dirs) // num_workers
-    task_subsets = [task_dirs[i:i + chunk_size] for i in range(0, len(task_dirs), chunk_size)]
+    if not task_dirs:
+        return
+    num_workers = max(1, min(num_workers, len(task_dirs)))
+    task_subsets = [task_dirs[i::num_workers] for i in range(num_workers)]
 
     #Load model
     model = OpenaiEngine(
         model=args.model,
-        api_key=args.api_key
+        api_key=args.api_key,
+        endpoint_target_uri=args.endpoint_target_uri,
     )
 
     lock = multiprocessing.Lock()
@@ -153,6 +156,9 @@ def parallel_eval(args, num_workers=60):
 
         for p in processes:
             p.join()
+        failed_processes = [p.pid for p in processes if p.exitcode]
+        if failed_processes:
+            raise RuntimeError(f"Judge workers failed: {failed_processes}")
 
         success_num = sum(final_predicted_labels) 
 
@@ -168,8 +174,8 @@ if __name__ == "__main__":
     parser.add_argument("--api_key", type=str, required=True, help="The api key")
     parser.add_argument("--output_path", type=str, required=True, help="The output path")
     parser.add_argument('--score_threshold', type=int, default=3)
-    parser.add_argument('--num_worker', type=int, default=60)
+    parser.add_argument('--num_worker', '--num_proc', dest='num_worker', type=int, default=60)
+    parser.add_argument('--endpoint_target_uri', '--endpoint-target-uri', dest='endpoint_target_uri', default='')
     args = parser.parse_args()
 
     parallel_eval(args, args.num_worker)
-

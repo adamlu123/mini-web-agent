@@ -171,7 +171,7 @@ def _build_missing_history_failure_response(row: dict[str, Any]) -> str:
 
 
 def _judge_result_file_path(output_dir: Path, judge_model: str) -> Path:
-    return output_dir / f"WebJudge_Online_Mind2Web_Sandbox_eval_{judge_model}_score_threshold_3_auto_eval_results.json"
+    return output_dir / f"WebJudge_Online_Mind2Web_eval_{judge_model}_score_threshold_3_auto_eval_results.json"
 
 
 def _ordered_step_stems(output_dir: Path) -> list[str]:
@@ -419,7 +419,7 @@ def run_online_mind2web_judge(
         str(judge_python),
         str(judge_script),
         "--mode",
-        "WebJudge_Online_Mind2Web_Sandbox_eval",
+        "WebJudge_Online_Mind2Web_eval",
         "--model",
         judge_model,
         "--trajectories_dir",
@@ -428,7 +428,7 @@ def run_online_mind2web_judge(
         api_key,
         "--output_path",
         str(output_dir),
-        "--num_proc",
+        "--num_worker",
         str(num_proc),
         "--score_threshold",
         "3",

@@ -444,7 +444,7 @@ def main(
                 log_path=run_log_path,
             )
             result_file = eval_output_dir / (
-                f"WebJudge_Online_Mind2Web_Sandbox_eval_{resolved_judge_model}_score_threshold_3_auto_eval_results.json"
+                f"WebJudge_Online_Mind2Web_eval_{resolved_judge_model}_score_threshold_3_auto_eval_results.json"
             )
             eval_rows = _read_eval_rows(result_file)
             return {
@@ -461,6 +461,17 @@ def main(
             eval_runs = list(executor.map(run_single_judge, range(1, resolved_judge_runs + 1)))
 
         summary["eval_runs"] = eval_runs
+        failed_eval_runs = [run["run_index"] for run in eval_runs if run["judge_returncode"]]
+        if failed_eval_runs:
+            raise RuntimeError(f"Online Mind2Web judge runs failed: {failed_eval_runs}")
+        expected_eval_rows = len(done_ids) if judge_only else len(generation_rows)
+        incomplete_eval_runs = [
+            run["run_index"] for run in eval_runs if run["n_eval_rows"] != expected_eval_rows
+        ]
+        if incomplete_eval_runs:
+            raise RuntimeError(
+                f"Online Mind2Web judge runs returned incomplete results: {incomplete_eval_runs}"
+            )
 
         # Per-level breakdown from the first judge run: task_id -> level comes from
         # the tasks file (covers every shard); tasks without a judge row (missing

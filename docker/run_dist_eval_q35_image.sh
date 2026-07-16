@@ -32,9 +32,14 @@ set -euo pipefail
 
 : "${DATA_ROOT:?DATA_ROOT not set}"
 : "${JOB_NAME:?JOB_NAME not set}"
-: "${EVAL_CKPT:?EVAL_CKPT not set}"
 : "${EVAL_RUN_ID:?EVAL_RUN_ID not set (stable id; resubmit the same id to resume)}"
 
+JUDGE_ONLY="${JUDGE_ONLY:-0}"
+EVAL_CKPT="${EVAL_CKPT:-}"
+if [[ "$JUDGE_ONLY" != "1" && -z "$EVAL_CKPT" ]]; then
+  echo "[dist-eval][error] EVAL_CKPT not set"
+  exit 1
+fi
 NNODES="${EVAL_NNODES:-${WORLD_SIZE:-1}}"
 NODE_RANK="${EVAL_NODE_RANK:-${RANK:-0}}"
 IS_MASTER=0; [[ "$NODE_RANK" == "0" ]] && IS_MASTER=1
@@ -62,6 +67,7 @@ CREDS_FILE="${CREDS_FILE:-/run/secrets/webchain-sampling/cred.sh}"
 
 RUN_ROOT="$DATA_ROOT/evals/$EVAL_RUN_ID"
 OUTPUTS_DIR="$RUN_ROOT/outputs"
+TRAJECTORIES_DIR="${TRAJECTORIES_DIR:-$OUTPUTS_DIR}"
 LOGS_DIR="$RUN_ROOT/logs"
 SHARDS_DIR="$RUN_ROOT/shards"
 DONE_FILE="$SHARDS_DIR/shard_${NODE_RANK}_of_${NNODES}.done"
@@ -83,7 +89,7 @@ MAX_OUTPUT_TOKENS="${MAX_OUTPUT_TOKENS:-4096}"
 MAX_CONTEXT_TOKENS="${MAX_CONTEXT_TOKENS:-48000}"
 SLIDING_WINDOW_KEEP_TURNS="${SLIDING_WINDOW_KEEP_TURNS:-10}"
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.92}"
-MODEL_NAME="${MODEL_NAME:-$(basename "$EVAL_CKPT")}"
+MODEL_NAME="${MODEL_NAME:-${EVAL_CKPT:+$(basename "$EVAL_CKPT")}}"
 TASKS_FILE="${TASKS_FILE:-$REPO/src/miniswewebagent/run/benchmarks/om2w_260220.json}"
 # 训练对齐的 chat template(qwen3_5 think 对齐,docs/qwen3_5_think_alignment.md)。
 # ckpt 自带的 chat_template.jinja 与它不同,不能省。置空则用 ckpt 自带模板。
@@ -96,7 +102,12 @@ EVAL_BARRIER_TIMEOUT="${EVAL_BARRIER_TIMEOUT:-14400}"
 
 echo "[dist-eval] job=$JOB_NAME host=$(hostname) shard=$NODE_RANK/$NNODES master=$IS_MASTER"
 echo "[dist-eval] run_id=$EVAL_RUN_ID run_root=$RUN_ROOT"
-echo "[dist-eval] ckpt=$EVAL_CKPT model=$MODEL_NAME"
+echo "[dist-eval] mode=$([[ "$JUDGE_ONLY" == "1" ]] && echo judge-only || echo generate-and-judge)"
+if [[ "$JUDGE_ONLY" == "1" ]]; then
+  echo "[dist-eval] trajectories=$TRAJECTORIES_DIR"
+else
+  echo "[dist-eval] ckpt=$EVAL_CKPT model=$MODEL_NAME"
+fi
 echo "[dist-eval] benchmark=$BENCHMARK_CONFIG level=$TASK_LEVEL limit=$LIMIT workers/node=$WORKERS"
 echo "[dist-eval] judge_model=$JUDGE_MODEL judge_workers=$JUDGE_NUM_PROC endpoint=${JUDGE_ENDPOINT:-<openai>}"
 
@@ -105,12 +116,18 @@ echo "[dist-eval] judge_model=$JUDGE_MODEL judge_workers=$JUDGE_NUM_PROC endpoin
 [[ -f "$TASKS_FILE" ]] || { echo "[dist-eval][error] tasks file not found: $TASKS_FILE"; exit 1; }
 [[ -f "$REPO/scripts/eval_with_original_om2w.py" ]] || {
   echo "[dist-eval][error] original OM2W evaluator not found"; exit 1; }
-[[ -d "$EVAL_CKPT" ]] || { echo "[dist-eval][error] ckpt dir not found: $EVAL_CKPT"; exit 1; }
-if ! compgen -G "$EVAL_CKPT/*.safetensors" >/dev/null && [[ ! -f "$EVAL_CKPT/model.safetensors.index.json" ]]; then
-  echo "[dist-eval][error] ckpt is not HF safetensors format: $EVAL_CKPT"; exit 1
-fi
-if [[ -n "$CHAT_TEMPLATE" && ! -f "$CHAT_TEMPLATE" ]]; then
-  echo "[dist-eval][error] chat template not found: $CHAT_TEMPLATE (set CHAT_TEMPLATE= to use the ckpt's own)"; exit 1
+if [[ "$JUDGE_ONLY" == "1" ]]; then
+  [[ "$NNODES" == "1" ]] || { echo "[dist-eval][error] judge-only requires one node"; exit 1; }
+  [[ -d "$TRAJECTORIES_DIR" ]] || {
+    echo "[dist-eval][error] trajectories dir not found: $TRAJECTORIES_DIR"; exit 1; }
+else
+  [[ -d "$EVAL_CKPT" ]] || { echo "[dist-eval][error] ckpt dir not found: $EVAL_CKPT"; exit 1; }
+  if ! compgen -G "$EVAL_CKPT/*.safetensors" >/dev/null && [[ ! -f "$EVAL_CKPT/model.safetensors.index.json" ]]; then
+    echo "[dist-eval][error] ckpt is not HF safetensors format: $EVAL_CKPT"; exit 1
+  fi
+  if [[ -n "$CHAT_TEMPLATE" && ! -f "$CHAT_TEMPLATE" ]]; then
+    echo "[dist-eval][error] chat template not found: $CHAT_TEMPLATE (set CHAT_TEMPLATE= to use the ckpt's own)"; exit 1
+  fi
 fi
 
 mkdir -p "$ENV_ROOT" "$OUTPUTS_DIR" "$LOGS_DIR" "$SHARDS_DIR"
@@ -196,6 +213,38 @@ fi
 
 export TRANSFORMERS_NO_ADVISORY_WARNINGS=1
 export NCCL_DEBUG="${NCCL_DEBUG_OVERRIDE:-WARN}"
+
+CONFIG_ARGS=( -c mini.yaml -c "$BENCHMARK_CONFIG" )
+if [[ -n "${EXTRA_CONFIGS:-}" ]]; then
+  IFS=',' read -r -a _extra_cfgs <<< "$EXTRA_CONFIGS"
+  for _cfg in "${_extra_cfgs[@]}"; do
+    _cfg="${_cfg#${_cfg%%[![:space:]]*}}"; _cfg="${_cfg%${_cfg##*[![:space:]]}}"
+    [[ -n "$_cfg" ]] && CONFIG_ARGS+=( -c "$_cfg" )
+  done
+fi
+
+if [[ "$JUDGE_ONLY" == "1" ]]; then
+  echo '[dist-eval] === judge-only over existing trajectories ==='
+  JUDGE_ENDPOINT_ARGS=()
+  [[ -n "$JUDGE_ENDPOINT" ]] && JUDGE_ENDPOINT_ARGS=( --judge-endpoint "$JUDGE_ENDPOINT" )
+  cd "$REPO"
+  python -m miniswewebagent.run.benchmarks.om2w \
+    "${CONFIG_ARGS[@]}" \
+    --tasks-file "$TASKS_FILE" \
+    --task-level "$TASK_LEVEL" \
+    --limit "$LIMIT" \
+    --judge-only \
+    --batch-name "$EVAL_RUN_ID" \
+    --judge-model "$JUDGE_MODEL" \
+    --judge-runs "$JUDGE_RUNS" \
+    --judge-num-proc "$JUDGE_NUM_PROC" \
+    --judge-python python \
+    --judge-script "$REPO/om2w_judge/run.py" \
+    "${JUDGE_ENDPOINT_ARGS[@]}" \
+    --log-root "$LOGS_DIR" \
+    --output-dir "$TRAJECTORIES_DIR"
+  exit 0
+fi
 
 # === 自动 vision merge(评中间 checkpoint-N 时缺 vision tower)================
 # 文本 SFT 的中间 ckpt 缺 vision 权重,直接 serve 必挂("visual.* not
@@ -283,14 +332,6 @@ fi
 
 echo "[dist-eval] === shard $NODE_RANK/$NNODES generation (resume on) ==="
 cd "$REPO"
-CONFIG_ARGS=( -c mini.yaml -c "$BENCHMARK_CONFIG" )
-if [[ -n "${EXTRA_CONFIGS:-}" ]]; then
-  IFS=',' read -r -a _extra_cfgs <<< "$EXTRA_CONFIGS"
-  for _cfg in "${_extra_cfgs[@]}"; do
-    _cfg="${_cfg#${_cfg%%[![:space:]]*}}"; _cfg="${_cfg%${_cfg##*[![:space:]]}}"
-    [[ -n "$_cfg" ]] && CONFIG_ARGS+=( -c "$_cfg" )
-  done
-fi
 RETRY_ARGS=()
 [[ "${RETRY_FAILED:-0}" == "1" ]] && RETRY_ARGS=( --retry-failed )
 
