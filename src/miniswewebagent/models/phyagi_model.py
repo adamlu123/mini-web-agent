@@ -256,6 +256,14 @@ def _serialize_response_input(messages: list[dict[str, Any]]) -> list[dict[str, 
         if role == "exit":
             continue
         content = message.get("content", "")
+        if role == "assistant":
+            extra = message.get("extra")
+            raw_response = extra.get("raw_response") if isinstance(extra, dict) else None
+            if isinstance(raw_response, dict):
+                # Keep the model's complete structured response in history. The
+                # display content contains only its thought, while the command,
+                # completion state, and final response live in raw_response.
+                content = json.dumps(raw_response, ensure_ascii=False, separators=(",", ":"))
         if isinstance(content, str):
             serialized_content = [text_part(content)]
         else:
