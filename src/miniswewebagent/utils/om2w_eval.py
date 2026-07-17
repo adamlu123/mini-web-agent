@@ -7,6 +7,11 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from miniswewebagent.utils.browser_evidence import (
+    load_browser_steps,
+    resolve_workspace_path,
+)
+
 
 _PLACEHOLDER_PNG_BYTES = bytes.fromhex(
     "89504e470d0a1a0a"
@@ -198,9 +203,15 @@ def _resolve_step_screenshot_path(output_dir: Path, row: dict[str, Any], step_st
     if screenshot_path:
         candidates.append(str(screenshot_path))
 
-    recent_screenshots = observation.get("recent_screenshots", [])
-    if isinstance(recent_screenshots, list):
-        candidates.extend(str(item) for item in recent_screenshots if str(item).strip())
+    # New local-workspace observations distinguish images created by this
+    # command from older workspace images. Preserve the legacy fallback only
+    # for observations written before ``new_screenshots`` existed.
+    if "new_screenshots" in observation:
+        step_screenshots = observation.get("new_screenshots", [])
+    else:
+        step_screenshots = observation.get("recent_screenshots", [])
+    if isinstance(step_screenshots, list):
+        candidates.extend(str(item) for item in step_screenshots if str(item).strip())
 
     candidates.append(f"screenshots/{step_stem}.png")
 
@@ -272,33 +283,57 @@ def export_online_mind2web_artifacts(
         stale_path.unlink()
 
     debug_steps = _load_debug_steps(output_dir)
-    ordered_step_stems = _ordered_step_stems(output_dir)
+    browser_steps = load_browser_steps(output_dir)
+    ordered_step_stems = _ordered_step_stems(output_dir) if not browser_steps else []
 
     copied_screenshots: list[str] = []
-    for index, step_stem in enumerate(ordered_step_stems):
-        src = None
-        if index < len(debug_steps):
-            src = _resolve_step_screenshot_path(output_dir, debug_steps[index], step_stem)
-        if src is None:
-            legacy_src = output_dir / "screenshots" / f"{step_stem}.png"
-            if legacy_src.exists():
-                src = legacy_src
-        dst = trajectory_dir / f"{index}_full_screenshot.png"
-        if src is not None:
-            if src.resolve() != dst.resolve():
-                shutil.copy2(src, dst)
-        else:
-            _write_placeholder_screenshot(dst)
-        copied_screenshots.append(str(dst))
+    if browser_steps:
+        for index, browser_step in enumerate(browser_steps):
+            screenshot_value = str(browser_step.get("screenshot_path") or "")
+            src = resolve_workspace_path(output_dir, screenshot_value) if screenshot_value else None
+            if src is not None and not src.is_file():
+                src = None
+            dst = trajectory_dir / f"{index}_full_screenshot.png"
+            if src is not None:
+                if src.resolve() != dst.resolve():
+                    shutil.copy2(src, dst)
+            else:
+                _write_placeholder_screenshot(dst)
+            copied_screenshots.append(str(dst))
+    else:
+        for index, step_stem in enumerate(ordered_step_stems):
+            src = None
+            if index < len(debug_steps):
+                src = _resolve_step_screenshot_path(output_dir, debug_steps[index], step_stem)
+            if src is None:
+                legacy_src = output_dir / "screenshots" / f"{step_stem}.png"
+                if legacy_src.exists():
+                    src = legacy_src
+            dst = trajectory_dir / f"{index}_full_screenshot.png"
+            if src is not None:
+                if src.resolve() != dst.resolve():
+                    shutil.copy2(src, dst)
+            else:
+                _write_placeholder_screenshot(dst)
+            copied_screenshots.append(str(dst))
 
     action_history: list[str] = []
     thoughts: list[str] = []
-    for row in debug_steps:
-        python_code = str(row.get("python_code", "")).strip()
-        if not python_code:
-            continue
-        action_history.append(python_code)
-        thoughts.append(str(row.get("thought", "")).strip())
+    if browser_steps:
+        debug_by_agent_step = {
+            int(row.get("step") or 0): str(row.get("thought", "")).strip()
+            for row in debug_steps
+        }
+        for row in browser_steps:
+            action_history.append(str(row.get("action") or "").strip())
+            thoughts.append(debug_by_agent_step.get(int(row.get("agent_step") or 0), ""))
+    else:
+        for row in debug_steps:
+            python_code = str(row.get("python_code", "")).strip()
+            if not python_code:
+                continue
+            action_history.append(python_code)
+            thoughts.append(str(row.get("thought", "")).strip())
 
     if not action_history:
         action_history, thoughts = _fallback_actions_and_thoughts(output_dir / "trajectory.json")
@@ -307,7 +342,15 @@ def export_online_mind2web_artifacts(
     if final_script_actions:
         action_history = final_script_actions
 
-    action_history_source = "final_script_log" if final_script_actions else ("debug_steps" if debug_steps else "trajectory")
+    action_history_source = (
+        "final_script_log"
+        if final_script_actions
+        else "browser_steps"
+        if browser_steps
+        else "debug_steps"
+        if debug_steps
+        else "trajectory"
+    )
 
     result_payload = {
         "task_id": task_id or output_dir.name,
