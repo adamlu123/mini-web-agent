@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -7,10 +8,12 @@ import pytest
 from miniswewebagent.tools.self_reflection import (
     _infer_run_dir_from_images,
     _load_action_history_log,
+    _load_trajectory_scope,
     _render_final_verdict_user_prompt,
     _resolve_artifact_dir,
     _gateway_config,
     build_parser,
+    main,
 )
 
 
@@ -109,3 +112,106 @@ def test_gateway_config_preserves_legacy_responses_override() -> None:
     assert cfg.model == "gpt-5.4"
     assert cfg.api_key == "sk-test"
     assert cfg.endpoint == "http://gateway.phyagi.net/api/responses"
+
+
+def test_load_trajectory_scope_uses_all_saved_images_across_epochs(tmp_path: Path) -> None:
+    screenshots = tmp_path / "screenshots"
+    screenshots.mkdir()
+    (screenshots / "one.png").write_bytes(b"one")
+    (screenshots / "two.png").write_bytes(b"two")
+    (tmp_path / "browser-steps.jsonl").write_text(
+        "\n".join(
+            [
+                '{"browser_step": 1, "agent_step": 2, "session_epoch": 1, '
+                '"action": "Open results", "success": true, '
+                '"screenshot_path": "screenshots/one.png"}',
+                '{"browser_step": 2, "agent_step": 3, "session_epoch": 2, '
+                '"action": "Recover in a new tab", "success": true, '
+                '"screenshot_path": "screenshots/two.png"}',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    scope = _load_trajectory_scope(tmp_path)
+
+    assert [path.name for path in scope["images"]] == ["one.png", "two.png"]
+    assert scope["session_epochs"] == [1, 2]
+    assert scope["covered_through_browser_step"] == 2
+    assert "Recover in a new tab" in scope["action_history_log"]
+    assert "Session epoch: 2" in scope["image_contexts"][str(scope["images"][1])]
+
+
+def test_trajectory_main_caches_image_judgment_and_writes_freshness_metadata(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    screenshot = tmp_path / "screenshots" / "browser_step_0001.png"
+    screenshot.parent.mkdir()
+    screenshot.write_bytes(b"png")
+    (tmp_path / "browser-steps.jsonl").write_text(
+        json.dumps(
+            {
+                "browser_step": 1,
+                "agent_step": 2,
+                "session_epoch": 1,
+                "action": "Apply the exact filter",
+                "success": True,
+                "screenshot_path": "screenshots/browser_step_0001.png",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "plan.md").write_text("- [x] exact filter", encoding="utf-8")
+    config = tmp_path / "judge_config.json"
+    config.write_text(
+        json.dumps(
+            {
+                "image_judge_system_prompt": "judge image",
+                "image_judge_user_prompt": "check all constraints",
+                "final_verdict_system_prompt": "judge trajectory",
+                "final_verdict_user_prompt": "{action_history_log}\n{image_reasonings}",
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls: list[str] = []
+
+    def fake_call_gateway(**kwargs):
+        calls.append(kwargs["tag"])
+        if kwargs["tag"] == "self_reflection.image":
+            return "Reasoning: The exact filter is visibly selected.\nScore: 5"
+        return "Thoughts: All critical points are evidenced.\nStatus: success"
+
+    monkeypatch.setattr(
+        "miniswewebagent.tools.self_reflection._call_gateway", fake_call_gateway
+    )
+    args = [
+        "--scope",
+        "trajectory",
+        "--workspace-dir",
+        str(tmp_path),
+        "--config",
+        str(config),
+        "--output",
+        "reflection/judge_result.json",
+        "--model",
+        "gpt-5.4",
+        "--api-key",
+        "test",
+    ]
+
+    assert main(args) == 0
+    payload = json.loads(
+        (tmp_path / "reflection" / "judge_result.json").read_text(encoding="utf-8")
+    )
+    assert payload["scope"] == "trajectory"
+    assert payload["covered_through_browser_step"] == 1
+    assert payload["image_count"] == 1
+    assert payload["image_records"][0]["CacheHit"] is False
+    assert calls == ["self_reflection.image", "self_reflection.final"]
+
+    calls.clear()
+    assert main(args) == 0
+    assert calls == ["self_reflection.final"]

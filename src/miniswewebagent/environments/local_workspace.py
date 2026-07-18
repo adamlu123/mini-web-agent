@@ -154,9 +154,13 @@ class LocalWorkspaceEnvironment:
         ).strip()
         self._persist_step_command(command)
         resolved_cwd = self._resolve_cwd(cwd)
+        screenshots_before = {
+            path.resolve(): path.stat().st_mtime_ns for path in self._recent_screenshots()
+        }
 
         command_env = os.environ | self._credential_env | self.config.env | {
             "WORKSPACE_DIR": str(self._workspace_dir()),
+            "MWA_AGENT_STEP": str(self._step_index),
             "OM2W_TASK_JSON": str(self._task_metadata_path()),
             "FINAL_SCRIPT_PATH": str(self._final_script_path()),
             "TMPDIR": str(self._workspace_dir() / ".tmp"),
@@ -193,6 +197,7 @@ class LocalWorkspaceEnvironment:
             returncode=returncode,
             exception_info=exception_info,
             log_path=log_path,
+            screenshots_before=screenshots_before,
         )
         return {
             "output": output,
@@ -210,10 +215,18 @@ class LocalWorkspaceEnvironment:
         returncode: int,
         exception_info: str,
         log_path: Path | None,
+        screenshots_before: dict[Path, int] | None = None,
     ) -> dict[str, Any]:
         final_script_path = self._final_script_path()
         recent_screenshot_paths = self._recent_screenshots()
-        latest_screenshot = recent_screenshot_paths[0] if recent_screenshot_paths else None
+        before = screenshots_before or {}
+        step_screenshot_paths = []
+        for path in recent_screenshot_paths:
+            resolved = path.resolve()
+            previous_mtime = before.get(resolved)
+            if previous_mtime is None or path.stat().st_mtime_ns != previous_mtime:
+                step_screenshot_paths.append(path)
+        latest_screenshot = step_screenshot_paths[0] if step_screenshot_paths else None
         final_script_preview = ""
         if final_script_path.exists():
             final_script_preview = self._truncate(
@@ -223,6 +236,7 @@ class LocalWorkspaceEnvironment:
 
         workspace_dir = self._workspace_dir()
         recent_screenshots = [str(path.relative_to(workspace_dir)) for path in recent_screenshot_paths[:10]]
+        new_screenshots = [str(path.relative_to(workspace_dir)) for path in step_screenshot_paths]
         return {
             "success": returncode == 0 and not exception_info,
             "exception": exception_info,
@@ -242,6 +256,7 @@ class LocalWorkspaceEnvironment:
             "final_script_exists": final_script_path.exists(),
             "final_script_preview": final_script_preview,
             "screenshot_path": str(latest_screenshot) if latest_screenshot is not None else "",
+            "new_screenshots": new_screenshots,
             "recent_screenshots": recent_screenshots,
             "workspace_files": self._recent_workspace_files(),
         }

@@ -111,6 +111,58 @@ def test_export_online_mind2web_artifacts_uses_workspace_observation_screenshots
     assert exported_image.read_bytes() == screenshot_bytes
 
 
+def test_export_online_mind2web_artifacts_prefers_incremental_browser_manifest(
+    tmp_path: Path,
+) -> None:
+    output_dir = tmp_path / "task"
+    screenshots = output_dir / "screenshots"
+    screenshots.mkdir(parents=True)
+    evidence = screenshots / "browser_step_0002.png"
+    evidence.write_bytes(b"browser-evidence")
+    (output_dir / "browser-steps.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "browser_step": 1,
+                        "agent_step": 2,
+                        "session_epoch": 1,
+                        "action": "Open the search page",
+                        "success": True,
+                        "screenshot_path": None,
+                    }
+                ),
+                json.dumps(
+                    {
+                        "browser_step": 2,
+                        "agent_step": 3,
+                        "session_epoch": 1,
+                        "action": "Apply the exact filter",
+                        "success": True,
+                        "screenshot_path": "screenshots/browser_step_0002.png",
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    export_online_mind2web_artifacts(
+        output_dir=output_dir,
+        task="Example task",
+        task_id="task-1",
+        start_url="https://example.com",
+        agent_result={"final_response": "done"},
+    )
+
+    payload = json.loads((output_dir / "result.json").read_text(encoding="utf-8"))
+    assert payload["action_history_source"] == "browser_steps"
+    assert payload["action_history"] == ["Open the search page", "Apply the exact filter"]
+    assert len(payload["screenshot_paths"]) == 2
+    assert Path(payload["screenshot_paths"][1]).read_bytes() == b"browser-evidence"
+
+
 def test_export_online_mind2web_artifacts_prefers_final_script_log_for_action_history(tmp_path) -> None:
     output_dir = tmp_path / "task"
     (output_dir / "debug" / "steps").mkdir(parents=True)

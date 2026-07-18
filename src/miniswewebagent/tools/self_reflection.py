@@ -57,6 +57,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import hashlib
 import json
 import mimetypes
 import os
@@ -71,6 +72,15 @@ from typing import Any
 import httpx
 
 from miniswewebagent.models.phyagi_model import _extract_response_text, text_part
+from miniswewebagent.utils.browser_evidence import (
+    DEFAULT_BROWSER_STEPS_FILE,
+    format_action_history,
+    image_context,
+    load_browser_steps,
+    optional_file_digest,
+    trajectory_evidence_digest,
+    trajectory_images,
+)
 
 DEFAULT_RESPONSES_MODEL = "gpt-5.4"
 DEFAULT_RESPONSES_ENDPOINT = "http://gateway.phyagi.net/api/responses"
@@ -223,6 +233,75 @@ def _load_action_history_log(artifact_dir: Path | None) -> str:
     return log_path.read_text(encoding="utf-8").rstrip()
 
 
+def _load_trajectory_scope(
+    workspace_dir: Path,
+    manifest: str | Path = DEFAULT_BROWSER_STEPS_FILE,
+) -> dict[str, Any]:
+    rows = load_browser_steps(workspace_dir, manifest)
+    image_entries = trajectory_images(workspace_dir, rows)
+    images = [path for path, _row in image_entries]
+    contexts = {str(path): image_context(row) for path, row in image_entries}
+    return {
+        "rows": rows,
+        "images": images,
+        "image_contexts": contexts,
+        "action_history_log": format_action_history(rows),
+        "evidence_digest": trajectory_evidence_digest(workspace_dir, rows),
+        "covered_through_browser_step": max(
+            (int(row.get("browser_step") or 0) for row in rows), default=0
+        ),
+        "session_epochs": sorted(
+            {int(row.get("session_epoch") or 0) for row in rows if row.get("session_epoch")}
+        ),
+    }
+
+
+def _image_cache_key(
+    image_path: Path,
+    *,
+    image_context_text: str,
+    image_judge_system_prompt: str,
+    image_judge_user_prompt: str,
+    gateway_config: _GatewayConfig,
+) -> str:
+    digest = hashlib.sha256()
+    digest.update(image_path.read_bytes())
+    for value in (
+        image_context_text,
+        image_judge_system_prompt,
+        image_judge_user_prompt,
+        gateway_config.backend,
+        gateway_config.endpoint,
+        gateway_config.model,
+    ):
+        digest.update(b"\0")
+        digest.update(value.encode("utf-8"))
+    return digest.hexdigest()
+
+
+def _load_image_cache(path: Path | None) -> dict[str, dict[str, Any]]:
+    if path is None or not path.is_file():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    entries = payload.get("entries", {}) if isinstance(payload, dict) else {}
+    if not isinstance(entries, dict):
+        return {}
+    return {str(key): value for key, value in entries.items() if isinstance(value, dict)}
+
+
+def _write_image_cache(path: Path, entries: dict[str, dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    temporary.write_text(
+        json.dumps({"version": 1, "entries": entries}, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    os.replace(temporary, path)
+
+
 def _render_final_verdict_user_prompt(
     template: str,
     *,
@@ -244,13 +323,13 @@ def _render_final_verdict_user_prompt(
                 "braces as {{ and }}."
             ) from exc
 
-    # additions: list[str] = []
-    # if "{action_history_log}" not in template and action_history_log:
-    #     additions.append(f"Action history log:\n{action_history_log}")
-    # if "{image_reasonings}" not in template and image_reasonings:
-    #     additions.append(f"Image reasonings:\n{image_reasonings}")
-    # if additions:
-    #     rendered = f"{rendered.rstrip()}\n\n" + "\n\n".join(additions)
+    additions: list[str] = []
+    if "{action_history_log}" not in template and action_history_log:
+        additions.append(f"Action history log:\n{action_history_log}")
+    if "{image_reasonings}" not in template and image_reasonings:
+        additions.append(f"Image reasonings:\n{image_reasonings}")
+    if additions:
+        rendered = f"{rendered.rstrip()}\n\n" + "\n\n".join(additions)
     return rendered
 
 
@@ -635,6 +714,7 @@ async def _judge_one_image(
     image_path: Path,
     image_judge_system_prompt: str,
     image_judge_user_prompt: str,
+    image_context_text: str,
     gateway_config: _GatewayConfig,
     timeout_seconds: int,
     max_attempts: int,
@@ -642,8 +722,11 @@ async def _judge_one_image(
     max_new_tokens: int,
     max_parse_retries: int,
 ) -> dict[str, Any]:
+    user_text = image_judge_user_prompt
+    if image_context_text:
+        user_text = f"{user_text.rstrip()}\n\n{image_context_text}"
     user_content = [
-        text_part(image_judge_user_prompt),
+        text_part(user_text),
         _high_detail_image_part_from_path(image_path),
     ]
 
@@ -670,6 +753,7 @@ async def _judge_one_image(
                 "Reasoning": reasoning,
                 "Attempts": attempt,
                 "ParseFailed": False,
+                "ImageContext": image_context_text,
             }
         except Exception as exc:  # noqa: BLE001
             last_error = exc
@@ -687,6 +771,7 @@ async def _judge_one_image(
         "Attempts": max_parse_retries,
         "ParseFailed": True,
         "ParseError": str(last_error) if last_error is not None else "unknown",
+        "ImageContext": image_context_text,
     }
 
 
@@ -726,6 +811,9 @@ async def run_self_reflection_async(
     final_verdict_system_prompt: str,
     final_verdict_user_prompt: str,
     action_history_log: str,
+    image_contexts: dict[str, str] | None = None,
+    cached_image_records: dict[str, dict[str, Any]] | None = None,
+    image_cache_keys: dict[str, str] | None = None,
     max_image_parse_retries: int,
     final_max_new_tokens: int,
     image_max_new_tokens: int,
@@ -735,26 +823,44 @@ async def run_self_reflection_async(
     retry_base_delay: float,
 ) -> SelfReflectionResult:
     per_image = []
+    image_contexts = image_contexts or {}
+    cached_image_records = cached_image_records or {}
+    image_cache_keys = image_cache_keys or {}
     if images:
         for path in images:
-            record = await _judge_one_image(
-                image_path=path,
-                image_judge_system_prompt=image_judge_system_prompt,
-                image_judge_user_prompt=image_judge_user_prompt,
-                gateway_config=gateway_config,
-                timeout_seconds=timeout_seconds,
-                max_attempts=max_attempts,
-                retry_base_delay=retry_base_delay,
-                max_new_tokens=image_max_new_tokens,
-                max_parse_retries=max_image_parse_retries,
-            )
+            cache_key = image_cache_keys.get(str(path), "")
+            cached = cached_image_records.get(cache_key) if cache_key else None
+            if cached is not None:
+                record = dict(cached)
+                record["image_path"] = str(path)
+                record["CacheHit"] = True
+            else:
+                record = await _judge_one_image(
+                    image_path=path,
+                    image_judge_system_prompt=image_judge_system_prompt,
+                    image_judge_user_prompt=image_judge_user_prompt,
+                    image_context_text=image_contexts.get(str(path), ""),
+                    gateway_config=gateway_config,
+                    timeout_seconds=timeout_seconds,
+                    max_attempts=max_attempts,
+                    retry_base_delay=retry_base_delay,
+                    max_new_tokens=image_max_new_tokens,
+                    max_parse_retries=max_image_parse_retries,
+                )
+                record["CacheHit"] = False
+            if cache_key:
+                record["CacheKey"] = cache_key
             per_image.append(record)
 
     image_paths = [record["image_path"] for record in per_image]
     reasonings = [record["Reasoning"] or "" for record in per_image]
 
     reasonings_block = "\n".join(
-        f"{i + 1}. {text}" for i, text in enumerate(reasonings)
+        (
+            f"{i + 1}. {image_contexts.get(image_paths[i], '').strip()}\n"
+            f"   Image assessment: {text}"
+        )
+        for i, text in enumerate(reasonings)
     )
 
     final_user_text = _render_final_verdict_user_prompt(
@@ -834,6 +940,27 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--workspace-dir", default="", help="Base directory for relative image paths.")
     parser.add_argument("--output", default="", help="Write JSON result to this path instead of stdout.")
     parser.add_argument(
+        "--scope",
+        choices=("latest-run", "trajectory"),
+        default="latest-run",
+        help="Judge the legacy latest final run or every saved incremental browser step.",
+    )
+    parser.add_argument(
+        "--trajectory-manifest",
+        default=DEFAULT_BROWSER_STEPS_FILE,
+        help=f"Trajectory JSONL path (default: {DEFAULT_BROWSER_STEPS_FILE}).",
+    )
+    parser.add_argument(
+        "--image-cache",
+        default="",
+        help="Cache per-image judgments. Trajectory scope defaults to reflection/image-cache.json.",
+    )
+    parser.add_argument(
+        "--plan-file",
+        default="plan.md",
+        help="Plan path included in trajectory reflection freshness metadata.",
+    )
+    parser.add_argument(
         "--auto-latest-run",
         default="final_runs",
         help=(
@@ -894,38 +1021,53 @@ def main(argv: list[str] | None = None) -> int:
         for key, required in _PROMPT_FIELDS
     }
 
-    images_config = cfg.get("images") or cfg.get("images_path") or []
-    resolved_images = [
-        _resolve_image_path(p, workspace_dir=args.workspace_dir) for p in images_config
-    ]
-    discovered_run_dir = _infer_run_dir_from_images(resolved_images)
+    trajectory_scope: dict[str, Any] | None = None
+    image_contexts: dict[str, str] = {}
+    if args.scope == "trajectory":
+        trajectory_scope = _load_trajectory_scope(base_dir, args.trajectory_manifest)
+        resolved_images = trajectory_scope["images"]
+        image_contexts = trajectory_scope["image_contexts"]
+        action_history_log = trajectory_scope["action_history_log"]
+        discovered_run_dir = None
+        print(
+            f"[self_reflection] trajectory contains {len(trajectory_scope['rows'])} browser "
+            f"steps and {len(resolved_images)} saved screenshots",
+            file=sys.stderr,
+        )
+    else:
+        images_config = cfg.get("images") or cfg.get("images_path") or []
+        resolved_images = [
+            _resolve_image_path(p, workspace_dir=args.workspace_dir) for p in images_config
+        ]
+        discovered_run_dir = _infer_run_dir_from_images(resolved_images)
 
-    # If config did not provide images, fall back to the latest run's screenshots.
-    if not resolved_images:
-        discovered: list[Path] = []
-        discovered_source = ""
-        if args.auto_latest_run:
-            auto_root = Path(args.auto_latest_run)
-            if not auto_root.is_absolute():
-                auto_root = base_dir / auto_root
-            auto_root = auto_root.resolve()
-            discovered_run_dir, discovered = _discover_latest_run_screenshots(auto_root)
-            if discovered_run_dir is not None:
-                discovered_source = str(discovered_run_dir / "screenshots")
-        if discovered:
-            resolved_images = discovered
-            print(
-                f"[self_reflection] auto-discovered {len(resolved_images)} screenshots from {discovered_source}",
-                file=sys.stderr,
-            )
+        # If config did not provide images, fall back to the latest run's screenshots.
+        if not resolved_images:
+            discovered: list[Path] = []
+            discovered_source = ""
+            if args.auto_latest_run:
+                auto_root = Path(args.auto_latest_run)
+                if not auto_root.is_absolute():
+                    auto_root = base_dir / auto_root
+                auto_root = auto_root.resolve()
+                discovered_run_dir, discovered = _discover_latest_run_screenshots(auto_root)
+                if discovered_run_dir is not None:
+                    discovered_source = str(discovered_run_dir / "screenshots")
+            if discovered:
+                resolved_images = discovered
+                print(
+                    f"[self_reflection] auto-discovered {len(resolved_images)} screenshots from "
+                    f"{discovered_source}",
+                    file=sys.stderr,
+                )
 
-    artifact_dir = _resolve_artifact_dir(
-        images=resolved_images,
-        discovered_run_dir=discovered_run_dir,
-        output_path=args.output,
-        workspace_dir=args.workspace_dir,
-    )
-    action_history_log = _load_action_history_log(artifact_dir)
+        artifact_dir = _resolve_artifact_dir(
+            images=resolved_images,
+            discovered_run_dir=discovered_run_dir,
+            output_path=args.output,
+            workspace_dir=args.workspace_dir,
+        )
+        action_history_log = _load_action_history_log(artifact_dir)
 
     if not resolved_images:
         print(
@@ -935,13 +1077,32 @@ def main(argv: list[str] | None = None) -> int:
 
     if not action_history_log:
         print(
-            "[self_reflection] warning: no final_script_log.txt found; final prompt will omit action history content.",
+            "[self_reflection] warning: no action history found; final prompt will omit it.",
             file=sys.stderr,
         )
 
     gateway_config = _gateway_config(
         api_key=args.api_key, endpoint=args.endpoint, model=args.model
     )
+
+    cache_path: Path | None = None
+    if args.image_cache:
+        cache_path = Path(args.image_cache)
+        if not cache_path.is_absolute():
+            cache_path = base_dir / cache_path
+    elif args.scope == "trajectory":
+        cache_path = base_dir / "reflection" / "image-cache.json"
+    cached_image_records = _load_image_cache(cache_path)
+    image_cache_keys = {
+        str(path): _image_cache_key(
+            path,
+            image_context_text=image_contexts.get(str(path), ""),
+            image_judge_system_prompt=prompts["image_judge_system_prompt"],
+            image_judge_user_prompt=prompts["image_judge_user_prompt"],
+            gateway_config=gateway_config,
+        )
+        for path in resolved_images
+    }
 
     if args.num_evals < 1:
         print(
@@ -967,6 +1128,9 @@ def main(argv: list[str] | None = None) -> int:
                     final_verdict_system_prompt=prompts["final_verdict_system_prompt"],
                     final_verdict_user_prompt=prompts["final_verdict_user_prompt"],
                     action_history_log=action_history_log,
+                    image_contexts=image_contexts,
+                    cached_image_records=cached_image_records,
+                    image_cache_keys=image_cache_keys,
                     max_image_parse_retries=args.max_image_parse_retries,
                     final_max_new_tokens=args.final_max_new_tokens,
                     image_max_new_tokens=args.image_max_new_tokens,
@@ -1007,11 +1171,49 @@ def main(argv: list[str] | None = None) -> int:
         }
         for r in results
     ]
+    if trajectory_scope is not None:
+        plan_path = Path(args.plan_file)
+        if not plan_path.is_absolute():
+            plan_path = base_dir / plan_path
+        config_path = Path(args.config)
+        if args.config != "-" and not config_path.is_absolute():
+            config_path = Path.cwd() / config_path
+        payload.update(
+            {
+                "scope": "trajectory",
+                "trajectory_manifest": str(args.trajectory_manifest),
+                "covered_through_browser_step": trajectory_scope[
+                    "covered_through_browser_step"
+                ],
+                "session_epochs": trajectory_scope["session_epochs"],
+                "image_count": len(resolved_images),
+                "evidence_digest": trajectory_scope["evidence_digest"],
+                "plan_digest": optional_file_digest(plan_path.resolve()),
+                "judge_config_digest": optional_file_digest(config_path.resolve())
+                if args.config != "-"
+                else "",
+            }
+        )
+
+    if cache_path is not None:
+        updated_cache = dict(cached_image_records)
+        for record in chosen.image_records:
+            cache_key = str(record.get("CacheKey") or "")
+            if not cache_key or record.get("ParseFailed"):
+                continue
+            stored = dict(record)
+            stored.pop("CacheHit", None)
+            updated_cache[cache_key] = stored
+        _write_image_cache(cache_path, updated_cache)
 
     serialized = json.dumps(payload, indent=2, ensure_ascii=False)
     if args.output:
-        Path(args.output).write_text(serialized, encoding="utf-8")
-        print(f"Wrote result to {args.output}", file=sys.stderr)
+        output_path = Path(args.output)
+        if not output_path.is_absolute():
+            output_path = base_dir / output_path
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(serialized, encoding="utf-8")
+        print(f"Wrote result to {output_path}", file=sys.stderr)
     else:
         sys.stdout.write(serialized)
         sys.stdout.write("\n")

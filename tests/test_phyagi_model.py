@@ -553,6 +553,17 @@ echo ok
     }
 
 
+def test_phyagi_model_includes_reasoning_effort_in_payload() -> None:
+    model = PhyagiModel(
+        openai_gateway_api_key="dummy",
+        reasoning_effort="xhigh",
+    )
+
+    payload = model._build_payload([{"role": "user", "content": "Task"}])
+
+    assert payload["reasoning"] == {"effort": "xhigh"}
+
+
 def test_phyagi_model_legacy_endpoint_is_normalized_to_sdk_base_url() -> None:
     model = PhyagiModel(
         openai_gateway_api_key="dummy",
@@ -576,3 +587,29 @@ def test_serialize_response_input_uses_output_text_for_assistant_messages() -> N
     assert serialized[1]["content"][0]["type"] == "input_text"
     assert serialized[2]["role"] == "assistant"
     assert serialized[2]["content"][0]["type"] == "output_text"
+
+
+def test_serialize_response_input_preserves_complete_raw_assistant_response() -> None:
+    raw_response = {
+        "thought": "Create the plan before browsing.",
+        "bash_command": "printf 'plan' > plan.md",
+        "done": False,
+        "final_response": "",
+    }
+
+    serialized = _serialize_response_input(
+        [
+            {
+                "role": "assistant",
+                "content": raw_response["thought"],
+                "extra": {
+                    "actions": [{"bash_command": raw_response["bash_command"]}],
+                    "raw_response": raw_response,
+                },
+            }
+        ]
+    )
+
+    assistant_text = serialized[0]["content"][0]["text"]
+    assert json.loads(assistant_text) == raw_response
+    assert raw_response["bash_command"] in assistant_text
