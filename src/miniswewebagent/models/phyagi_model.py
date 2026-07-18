@@ -8,7 +8,7 @@ import os
 import re
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 import openai
@@ -363,6 +363,7 @@ class PhyagiModelConfig(BaseModel):
     openai_gateway_api_key: str = ""
     openai_gateway_endpoint: str = "https://gateway.phyagi.net/api"
     openai_gateway_tier: str = "base"
+    reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh"] | None = None
     cache_ttl: int | None = None
     session_id: str = ""
     strict_session: bool = False
@@ -610,6 +611,8 @@ class PhyagiModel:
             "max_output_tokens": self.config.max_output_tokens,
             "extra_body": extra_body,
         }
+        if self.config.reasoning_effort is not None:
+            payload["reasoning"] = {"effort": self.config.reasoning_effort}
         if self.config.response_mode == "json_schema":
             payload["text"] = {
                 "format": {

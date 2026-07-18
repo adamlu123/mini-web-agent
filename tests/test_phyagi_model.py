@@ -553,6 +553,17 @@ echo ok
     }
 
 
+def test_phyagi_model_includes_reasoning_effort_in_payload() -> None:
+    model = PhyagiModel(
+        openai_gateway_api_key="dummy",
+        reasoning_effort="xhigh",
+    )
+
+    payload = model._build_payload([{"role": "user", "content": "Task"}])
+
+    assert payload["reasoning"] == {"effort": "xhigh"}
+
+
 def test_phyagi_model_legacy_endpoint_is_normalized_to_sdk_base_url() -> None:
     model = PhyagiModel(
         openai_gateway_api_key="dummy",

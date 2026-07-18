@@ -9,6 +9,7 @@ model:
   model_name: gpt-5.4
   openai_gateway_endpoint: http://gateway.phyagi.net/api/responses
   openai_gateway_tier: base
+  reasoning_effort: xhigh
   request_timeout_seconds: 120
   max_output_tokens: 16000
   response_mode: json_schema
@@ -78,7 +79,7 @@ agent:
   trajectory_judge_result: reflection/judge_result.json
   trajectory_plan_file: plan.md
   trajectory_judge_config: judge_config.json
-  summary_every_n_steps: 10
+  summary_every_n_steps: 50
   summary_user_prompt: |
     Summarize the complete incremental task state for a fresh agent context. Include the task,
     plan.md critical points, current persistent browser session epoch and health, every important
@@ -122,7 +123,7 @@ agent:
       print(await page.locator("body").aria_snapshot())
       PY
 
-    End-of-step screenshots default to NONE. Save one only when it provides useful visual evidence:
+    End-of-step screenshots default to NONE. Save one whenever you think it provides useful visual evidence:
 
       python -m browser_session step --workspace-dir "{{ workspace_dir }}" --action "Apply the exact price range" --screenshot always --code-file - <<'PY'
       await page.get_by_label("Minimum price").fill("100")
@@ -151,9 +152,22 @@ agent:
       path, URL, session epoch, result, and optional screenshot path.
     - Screenshots must be raw 1280x1800 viewport captures of the real website. Never use full-page,
       generated, annotated, composited, or model-authored images.
-    - Save screenshots for critical selected states, confirmations, exact values, and final results.
-      Earlier failed/intermediate screenshots remain part of the chronological evidence.
+    - You are encouraged to save screenshots for critical selected states, confirmations, exact values, and final results.
     - Use printed ARIA, URL, title, visible labels, and current-run evidence rather than guessing.
+
+    ## Rules
+    - **HARD RULE — screenshots must be raw page captures.** Every PNG you save MUST come directly from `await page.screenshot(path=...)` against a real, unmodified webpage viewport. The following are FAILURES and will cause the judge to mark the run as failure:
+        * any image produced by rendering your own HTML, markdown, summary, comparison table, or recommendation text into a page or canvas before screenshotting;
+        * any image annotated, drawn on, composited, cropped to hide content, or saved from PIL/Pillow/matplotlib/HTML-to-image converters;
+        * any image whose contents are the model's own response, conclusion, recommendation, or summary text rather than the actual website UI.
+    - Use stable selectors and current-run evidence.
+    - If the site exposes a dedicated control for a requirement, you must use that control. Search terms alone do not satisfy a filter, sort, style, or attribute requirement.
+    - Ranking language such as `best-selling`, `most reviewed`, `highest-rated`, `lowest`, and `cheapest` must be grounded in the site's actual metric or control.
+    - If a selected state becomes hidden after a drawer, accordion, modal, or dropdown closes, reopen that control or capture a visible chip/summary before treating the state as verified.
+    - Treat numeric, date, quantity, and unit constraints as exact. Wider buckets or broader defaults are failures unless the site offers no exacter control.
+    - If the task asks for a final datum (code, price, quote, review, winner, benefit list), state that datum explicitly using `Final Response:` in the browser action, in the meantime the browser control code can be left blank. Do not encode it into an image.
+    - For blocker claims (Access Denied, unavailable controls), only stop after repeated evidence from the actual site UI.
+
 
     ## Trajectory self-reflection
 
@@ -177,9 +191,11 @@ agent:
     Per-image judgments are cached. A successful result is invalidated by any later browser step,
     changed screenshot, plan.md change, or judge_config.json change.
 
-    Set done=true only after trajectory reflection exits 0 with predicted_label=1 for the current
-    evidence. If it fails, use the verdict to continue incrementally, save better evidence, and run
-    reflection again. When done, leave bash_command empty and put the task answer in final_response.
+    ## Completion Gate
+    - Set done=true only after trajectory reflection exits 0 with predicted_label=1 for the current evidence.
+    - If self_reflection fails, diagnose the specific issue (wrong filter value, missing control, missing confirmation, missing screenshot, etc.), use the verdict to continue incrementally, save better evidence, and run
+      reflection again. Never return done=false with an empty bash_command. Do not rerun reflection until a new browser step has been recorded.
+    - When the verdict passes, set bash_command empty and put the task answer as `Final Response:` in the browser action
 
   instance_template: |
     Task: {{ task }}
