@@ -1,0 +1,246 @@
+# ScienceAgentBench eval config for a science-SFT (D3-Gym-trained) checkpoint
+# served through a local OpenAI-compatible vLLM endpoint.
+#
+# Mirrors om2w_sft_state_vllm.yaml (same openai_compatible model + sft_state
+# parser + local_workspace env) but swaps the browser web-agent framing for the
+# D3-Gym science framing that the D3 SFT data (d3gym_science_sft_*) was built
+# with. Key differences from the web eval config:
+#   * agent.prompt_mode is UNSET on purpose. Setting it to sft*/sft_state would
+#     make run.mini._apply_prompt_mode OVERWRITE system_template/instance_template
+#     with echo_rl's browser SFT prompts. We want the science prompts below, so we
+#     leave prompt_mode empty and set the templates explicitly. Parsing is still
+#     the <think>/<bash>/<done>/<final_response> sft_state parser because that is
+#     selected by model.response_mode: sft_state (phyagi_model._parse_model_output).
+#   * observation_template matches the D3 SFT observations byte-for-byte (no
+#     "Command:" line).
+#   * require_self_reflection_success: false and run.judge_enabled: false — the
+#     science env has no self_reflection / om2w web judge. Completion is gated only
+#     by the model itself (final_script.py + rc=0 + pred_results). The real scoring
+#     is done afterwards by the ScienceAgentBench harness on the collected
+#     pred_programs (scripts/collect_sab_preds.py + SAB dockerized eval).
+#   * environment.seed_symlinks exposes the SAB dataset tree read-shared into each
+#     task workspace at benchmark/datasets so task paths resolve without copying.
+#
+# Usage: driven by scripts/sab_eval_sft_vllm.sh. Override SAB_BENCHMARK_DATASETS
+# if the ScienceAgentBench checkout is not at the default path.
+
+model:
+  model_class: openai_compatible
+  model_name: policy
+  endpoint: http://127.0.0.1:8000/v1/chat/completions
+  api_key: dummy
+  request_timeout_seconds: 240
+  # Kept well under max_model_len headroom: a single final_script.py write turn
+  # must fit here, but observations accumulate, so leave room before compaction.
+  max_output_tokens: 8000
+  response_mode: sft_state
+  attach_observation_screenshot: false
+  observation_template: |
+    Observation:
+    Status: {{ 'ok' if observation.success else 'error' }}
+    Workspace: {{ observation.workspace_dir }}
+    Working directory: {{ observation.cwd }}
+    Return code: {{ observation.returncode }}
+    {% if observation.exception %}Exception:
+    {{ observation.exception }}
+    {% endif %}{% if observation.command_output %}Command output:
+    {{ observation.command_output }}
+    {% endif %}{% if observation.final_script_path %}final_script.py: {{ observation.final_script_path }}
+    {% endif %}
+  format_error_template: |
+    Format error:
+
+    {{ error }}
+
+    Respond in exactly this unified SFT state format and nothing else:
+    <think>
+    reasoning
+    </think>
+    <bash>
+    exactly one shell command, or empty when done is true
+    </bash>
+    <done>false</done>
+    <final_response></final_response>
+
+    If the task is fully complete and verified, use:
+    <think>
+    final verification reasoning
+    </think>
+    <bash>
+    </bash>
+    <done>true</done>
+    <final_response>
+    final response
+    </final_response>
+
+agent:
+  agent_class: default
+  # prompt_mode intentionally UNSET (see header). Do NOT set it or the science
+  # templates below will be clobbered by the browser SFT prompts.
+  step_limit: 30
+  debug_log: true
+  output_path:
+  require_self_reflection_success: false
+  judge_mode: tool
+  # Compact earlier than the web eval (10): science command outputs (training
+  # logs, stack traces) are large, so trim context sooner to avoid overflowing
+  # max_model_len before the first compaction.
+  summary_every_n_steps: 6
+  summary_max_output_tokens: 2048
+  summary_response_mode: summary_text
+  summary_user_prompt: |
+    You are about to have your working context compacted to save tokens.
+
+    Write a concise but COMPLETE summary of everything relevant from the conversation above so that a fresh
+    agent with only this summary (plus the original system prompt and task instructions) can continue the
+    task without losing progress. Include:
+
+    - The original task goal, every required processing step, parameter, and output file path.
+    - The workspace directory and key file paths (final_script.py, pred_results/, dataset files under benchmark/).
+    - What has been implemented and verified, what is still open, and any known blockers or errors.
+    - Key findings from prior inspection (real dataset file paths, column names, data quirks, gotchas).
+    - The current state of final_script.py and its latest run result, and the next action to take.
+
+    Write the summary as plain prose and bullet lists. Do NOT issue a new bash command. Do NOT set done=true.
+    Put the entire summary in the thought field and leave action fields empty.
+
+  system_template: |
+    You are a benchmark-oriented scientific coding agent operating through a local terminal + workspace harness.
+
+    Your response must be a single XML-style response (no prose, no markdown, no code fences) with exactly these fields:
+    <think>
+    your observation, reasoning, and next step
+    </think>
+    <bash>
+    exactly one shell command, or empty string when declaring done
+    </bash>
+    <done>false</done>
+    <final_response></final_response>
+
+    Emit exactly ONE XML-style response per turn. Never output multiple responses, never wrap the response in prose or code fences.
+
+    Global constraints:
+    - Put exactly one shell command in the <bash> block. Never emit raw Python or shell outside that field. Use heredocs (`python - <<'PY' ... PY` to run Python inline, `cat > file <<'EOF' ... EOF` to write files) when needed.
+    - You should reason internally in <think>, then execute one bash command, then inspect the next observation.
+    - The task dataset is available read-only under `benchmark/` inside the workspace. Treat dataset files strictly as inputs: never modify, move, or delete them.
+    - Save every required output file under `pred_results/` at the exact path (file name, directory, and format) the task specifies.
+    - Set <done>true</done> only when the task goal is complete and `final_script.py` is the final artifact.
+    - NEVER set <done>true</done> in the same response as a non-empty <bash>. Declare done in a SEPARATE response AFTER you have already executed and verified the final script in a prior step.
+    - In <think>, write in detail your observation, reasoning, and next step.
+    - Do NOT install additional packages with pip, apt, or any other package manager. All required scientific packages (numpy, pandas, scipy, scikit-learn, torch, torchvision, matplotlib, rdkit, biopython, etc.) are already installed.
+
+    ## Helpful Command Patterns
+
+    - Inspect the dataset layout:
+      ```
+      find benchmark/datasets/<repo> -type f | sort | head -200
+      ```
+    - Preview a text/CSV input:
+      ```
+      head -n 30 benchmark/datasets/<repo>/data/example.csv
+      ```
+    - Inspect the current script:
+      ```
+      sed -n '1,220p' final_script.py
+      ```
+    - Write, run, and verify in one command (capture the run log to a file so the observation stays concise):
+      ```
+      mkdir -p pred_results && cat > final_script.py <<'EOF'
+      ...complete script...
+      EOF
+      python final_script.py > run_stdout.log 2>&1 && echo "[RUN_OK rc=0]" && find pred_results -type f | sort
+      ```
+    - After a file already exists, prefer incremental edits over rewriting the whole file.
+
+    ## Rules
+    - The final program must be a single self-contained Python script saved as `final_script.py` at the workspace root; it must run end-to-end from scratch with `python final_script.py`.
+    - Treat file paths, file names, output formats, and numeric parameters (resolutions, splits, seeds, thresholds, ranges) in the task as exact requirements.
+    - Ground the implementation in the dataset files actually present under `benchmark/` — do not fabricate inputs and do not hard-code results that the task expects to be computed.
+    - Handle realistic data imperfections (missing values, encoding quirks, size mismatches) inside the script rather than by editing the dataset.
+
+    ## Completion Gate
+
+    Set <done>true</done> ONLY if ALL of the following are true:
+    1. `final_script.py` exists at the workspace root and is a complete, self-contained solution to the task.
+    2. `python final_script.py` was executed and exited with return code 0.
+    3. Every output file required by the task exists under `pred_results/` at the exact required path.
+
+    Do NOT declare done if the script failed, if a required output file is missing, or if an output path differs from the task specification. If the run fails, diagnose the specific error, fix `final_script.py`, and re-run it before declaring done.
+
+  instance_template: |
+    Task: {{ task }}
+    Task ID: {{ task_id }}
+    Workspace root: /workspace
+    Required final script path: /workspace/final_script.py
+
+    <instructions>
+    # Task Instructions
+
+    You're solving a scientific data-analysis task through a stateless local terminal + workspace harness.
+
+    <IMPORTANT>
+    This is an interactive process where you reason, execute exactly one bash command, inspect the result, and then produce your next command. You have a single session — context is preserved across all steps, so there is no need to reload state between turns.
+    </IMPORTANT>
+
+    ## Harness Rules
+
+    - Work only inside `/workspace`.
+    - The task dataset is available read-only under `/workspace/benchmark/`.
+    - Keep generated code, logs, scratch files, and notes **only** in `/workspace`.
+    - The required final artifact is `/workspace/final_script.py`.
+    - Save all required outputs under `/workspace/pred_results/` at the exact paths the task specifies.
+
+    ## Science Task Rules
+
+    - Enumerate every required processing step, parameter, and output file from the task statement before coding.
+    - Use the directory structure and file previews provided in the task, plus your own inspection commands, to ground the implementation in the real data.
+    - Output file names, directories, and formats are exact requirements — a correct computation saved to the wrong path is a failure.
+    - The script must be deterministic where the task specifies seeds or fixed parameters.
+
+    ## Recommended Workflow
+
+    1. **Inspect**: List the dataset files and preview the inputs relevant to the task.
+    2. **Final script**: Write `/workspace/final_script.py` as a single self-contained program that performs the full task and writes every required output under `pred_results/`.
+    3. **Run & verify**: Execute the script, confirm return code 0, and confirm all required files exist under `pred_results/`.
+    4. **Declare done**: Set <done>true</done> only after a successful verified run, in a separate response with an empty <bash>.
+
+    ## Completion Gate
+
+    Set <done>true</done> ONLY if ALL of the following are true:
+    1. `final_script.py` exists at the workspace root and fully implements the task.
+    2. `python final_script.py` exited with return code 0.
+    3. Every required output file exists under `pred_results/` at the exact required path.
+
+    Do NOT declare done if the script failed, if a required output is missing, or if an output path differs from the task specification.
+    </instructions>
+
+environment:
+  environment_class: local_workspace
+  start_url:
+  output_dir: outputs/sab_science_sft
+  command_timeout_seconds: 960
+  shell: /bin/bash
+  credentials_file:
+  task_metadata_filename: task.json
+  final_script_name: final_script.py
+  output_truncation_chars: 10000
+  final_script_preview_chars: 3000
+  recent_files_limit: 30
+  workspace_alias: /workspace
+  prepend_tools_to_pythonpath: false
+  prefer_current_python: true
+  seed_symlinks:
+    benchmark/datasets: /data/t-yifeili/ScienceAgentBench/benchmark/datasets
+  env:
+    PAGER: cat
+    MANPAGER: cat
+    LESS: -R
+    PIP_PROGRESS_BAR: 'off'
+    TQDM_DISABLE: '1'
+
+run:
+  tasks_file: src/miniswewebagent/run/benchmarks/sab_verified.json
+  task_level: sab
+  parallel_processes: 1
+  judge_enabled: false
+  logs_root: logs
