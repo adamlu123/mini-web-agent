@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
+# Archived: this submitter evaluates root-level Echo/SkyRL configs.
 # Submit an EVAL-ONLY cluster job on the generic qwen3.5 image, single node.
-# Cluster-side equivalent of run_local_eval.sh: runs docker/run_eval_q35_image.sh
+# Cluster-side equivalent of run_local_eval.sh: runs docker/archive/run_eval_q35_image.sh
 # over the om2w easy train+val parquets (OSW judge), either on the base weights
 # from the eval config or on a trained HF ckpt you pass via EVAL_CKPT.
 #
@@ -9,10 +10,10 @@
 #
 # Usage:
 #   # base weights from the config
-#   bash docker/submit_eval_q35_image.sh
+#   bash docker/archive/submit_eval_q35_image.sh
 #   # a trained HF ckpt that already lives on the cluster PVC
 #   EVAL_CKPT=/mnt/.../models/qwen35_4b/full/websft_merged \
-#     bash docker/submit_eval_q35_image.sh
+#     bash docker/archive/submit_eval_q35_image.sh
 #
 # NOTE: EVAL_CKPT must be a path visible INSIDE the pod (e.g. on the PVC). To
 # eval a ckpt produced by a prior training job, point it at that job's synced
@@ -68,4 +69,4 @@ bash "$SUBMIT" \
     --secret-volume echo-rl-openai:/run/secrets/echo-rl-openai \
     --extra-env-vars "$EXTRA_ENV" \
     --follow-logs \
-    --cmd 'exec bash $PVC_MOUNT/$USER_ALIAS/runs/$JOB_NAME/mini-web-agent/docker/run_eval_q35_image.sh'
+    --cmd 'exec bash $PVC_MOUNT/$USER_ALIAS/runs/$JOB_NAME/mini-web-agent/docker/archive/run_eval_q35_image.sh'

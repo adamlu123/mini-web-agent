@@ -1,4 +1,4 @@
-# Cluster scripts — echo_rl web-agent RL on bonete61 (B200)
+# Archived cluster scripts — echo_rl web-agent RL on bonete61 (B200)
 
 Launch scripts for running `echo_rl.web_agent` RL on the Microsoft Lambda
 **bonete61** cluster (NVIDIA B200, 8 GPU/node) using the **generic qwen3.5 NGC
@@ -12,28 +12,30 @@ This image bakes the compiled stack (torch 2.10 / TE 2.13 / deepspeed /
 flash-attn / **vllm 0.18 + cu130**) on which **Qwen3.5 actually runs** (the older
 echo-rl image's vllm 0.19 corrupts Qwen3.5 weights → multilingual gibberish).
 
+The SkyRL/root-config launchers described below now live in `docker/archive/`.
+
 ## Scripts
 
 | Script | What it does |
 |--------|--------------|
-| `submit_debug_q35_image.sh` | Submit a long-lived 8×B200 **debug** pod (`sleep infinity`); `kubectl exec` into it for an interactive, fully-bootstrapped shell. |
-| `run_debug_q35_image.sh` | In-pod driver for the debug pod (uploaded, run via the submit's tiny WAF-safe `--cmd`). |
-| `submit_train_q35_image.sh` | Submit a non-interactive **training** job (runs `entrypoint` to completion, `--follow-logs`). Default config = Qwen3.5-9B / 8 GPU. |
-| `run_train_q35_image.sh` | In-pod driver for the training job (same bootstrap as debug, but launches training instead of sleeping). |
+| `archive/submit_debug_q35_image.sh` | Submit a long-lived 8×B200 **debug** pod (`sleep infinity`); `kubectl exec` into it for an interactive, fully-bootstrapped shell. |
+| `archive/run_debug_q35_image.sh` | In-pod driver for the debug pod (uploaded, run via the submit's tiny WAF-safe `--cmd`). |
+| `archive/submit_train_q35_image.sh` | Submit a non-interactive **training** job (runs `entrypoint` to completion, `--follow-logs`). Default config = Qwen3.5-9B / 8 GPU. |
+| `archive/run_train_q35_image.sh` | In-pod driver for the training job (same bootstrap as debug, but launches training instead of sleeping). |
 | `requirements.txt` | **Load-bearing** — the drivers parse it to decide which deps to install. Do not delete. |
 
 ## Usage
 
 ```bash
 # Interactive debug pod (8 GPU), then exec in and run any config by hand:
-bash docker/submit_debug_q35_image.sh
+bash docker/archive/submit_debug_q35_image.sh
 kubectl -n bonete61 get pods | grep cua          # wait for Running + .debug_ready
 kubectl -n bonete61 exec -it <pod> -- bash       # lands ready: env+creds set, cwd=code/SkyRL
 python -m echo_rl.web_agent.entrypoint --config echo_configs/qwen35_9b_web_agent_easy_8gpu.yaml
 
 # Non-interactive training job (defaults to 9B/8GPU, full 16/16/10 hyperparams):
-bash docker/submit_train_q35_image.sh
-CONFIG=echo_configs/qwen35_4b_web_agent_easy_4gpu.yaml GPUS=4 bash docker/submit_train_q35_image.sh
+bash docker/archive/submit_train_q35_image.sh
+CONFIG=echo_configs/qwen35_4b_web_agent_easy_4gpu.yaml GPUS=4 bash docker/archive/submit_train_q35_image.sh
 
 # Tear down:
 kubectl -n bonete61 delete job.batch.volcano.sh/<JOB_FQN> --wait=false

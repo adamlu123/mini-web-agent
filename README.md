@@ -31,7 +31,7 @@ echo_rl/web_agent/
     └── run_real_rollout.py          # HF model + Browserbase + judge, no SkyRL needed
 
 configs/qwen35_4b_web_agent.yaml     # echo-rl GRPO baseline retargeted at Qwen3.5-4B + web env
-scripts/run_web_agent.sh             # entry script (analog of run_echo_terminal_agent.sh)
+scripts/archive/run_web_agent.sh     # archived entry script (analog of run_echo_terminal_agent.sh)
 tests/test_web_agent_e2e.py          # pytest smoke test (stub + deterministic reward)
 docs/web_agent_training.md           # full parameter doc and launch procedure
 ```
@@ -181,7 +181,7 @@ unset OPENAI_GATEWAY_API_KEY
 # 3. Launch training
 export OUTPUT_DIR=/path/to/outputs/qwen35_4b_web_agent
 export CONFIG_PATH=configs/qwen35_4b_web_agent.yaml
-./scripts/run_web_agent.sh
+./scripts/archive/run_web_agent.sh
 ```
 
 See [`docs/web_agent_training.md`](docs/web_agent_training.md) for the full
@@ -240,7 +240,7 @@ Apply the SkyRL patch:
 
 ```bash
 cd ../echo-rl
-./scripts/apply_hooks_to_skyrl.sh ../SkyRL
+./scripts/archive/apply_hooks_to_skyrl.sh ../SkyRL
 ```
 
 ## Run

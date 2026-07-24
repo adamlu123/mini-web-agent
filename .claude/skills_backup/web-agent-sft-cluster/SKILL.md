@@ -38,7 +38,7 @@ PROJECT_NAME=rlscaling bash docker/submit_sft_eval_q35_image.sh
 # ...or eval an already-trained ckpt on its own (clean pod, reads the PVC ckpt):
 PROJECT_NAME=rlscaling \
 EVAL_CKPT=/mnt/pvc/t-yifeili/models/qwen35_9b/full/websft_merged \
-  bash docker/submit_eval_q35_image.sh
+  bash docker/archive/submit_eval_q35_image.sh
 ```
 
 The submit's `--follow-logs` **detaches while the pod keeps running** (it prints
@@ -161,10 +161,10 @@ PROJECT_NAME=rlscaling \
 EVAL_CKPT=/mnt/pvc/t-yifeili/models/qwen35_9b/full/websft_merged \
 EVAL_CONFIG=configs/qwen35_9b_web_agent_easy_eval_sft.yaml \
 EVAL_RUN_TAG=merged_9b_sft \
-  bash docker/submit_eval_q35_image.sh
+  bash docker/archive/submit_eval_q35_image.sh
 ```
 
-`docker/run_eval_q35_image.sh` is the cluster equivalent of the local
+`docker/archive/run_eval_q35_image.sh` is the cluster equivalent of the local
 `run_local_eval.sh`: bootstraps the RL/eval stack (same as the RL train driver),
 loads the HF ckpt into vLLM, and runs a single `evaluate()` pass over the om2w
 easy train+val parquets (each scored separately), logging
@@ -239,8 +239,8 @@ These are the traps that cost real jobs; the scripts now bake in the fixes.
 | `LlamaFactory/examples/train_full/qwen35_9b_websft_merged.yaml` | 9B merged-data train config (ZeRO-2) |
 | `docker/submit_sft_eval_q35_image.sh` | submit combined train→eval (uploads both repos) |
 | `docker/run_sft_q35_image.sh` | in-pod: train + sync + vision-merge + (EVAL_AFTER) eval |
-| `docker/submit_eval_q35_image.sh` | submit standalone eval of a ckpt |
-| `docker/run_eval_q35_image.sh` | in-pod cluster eval (single-engine, failure diag) |
+| `docker/archive/submit_eval_q35_image.sh` | submit standalone eval of a ckpt |
+| `docker/archive/run_eval_q35_image.sh` | in-pod cluster eval (single-engine, failure diag) |
 | `configs/qwen35_9b_web_agent_easy_eval_sft.yaml` | SFT-aligned eval config (use this!) |
 | `run_local_eval.sh` | the LOCAL (4×H100) eval the cluster driver mirrors |
 | `/mnt/pvc/$USER/models/<...>` | stable PVC ckpt path (survives future jobs) |

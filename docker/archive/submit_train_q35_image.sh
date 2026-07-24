@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Archived: this submitter launches legacy SkyRL training configs.
 # Launch a NON-INTERACTIVE TRAINING job on the *generic* qwen3.5 image
 #   aifrontiers.azurecr.io/nvidia25.11-pytorch2.10.0-te2.13-deepspeed0.18.9-fa2main-vllm0.18.0:20260415
 # on a single 8xB200 node; runs to completion (no sleep-infinity debug pod).
@@ -8,12 +9,12 @@
 # GPU 0-7 instead of piling on GPU 0). Override with CONFIG=.
 #
 # All setup + the training launch live in the uploaded driver
-# (docker/run_train_q35_image.sh); `--cmd` is just a tiny exec of it, keeping the
+# (docker/archive/run_train_q35_image.sh); `--cmd` is just a tiny exec of it, keeping the
 # `kubectl create` POST body clear of the bonete61 Cloudflare WAF that blocks big
 # inline shell preambles. Submitted with --follow-logs so it tails the run.
 #
-#   bash docker/submit_train_q35_image.sh
-#   CONFIG=echo_configs/qwen35_4b_web_agent_easy_4gpu.yaml GPUS=4 bash docker/submit_train_q35_image.sh
+#   bash docker/archive/submit_train_q35_image.sh
+#   CONFIG=echo_configs/qwen35_4b_web_agent_easy_4gpu.yaml GPUS=4 bash docker/archive/submit_train_q35_image.sh
 #
 # Kill manually with:
 #   kubectl -n bonete61 delete job.batch.volcano.sh/<JOB_FQN> --wait=false
@@ -63,4 +64,4 @@ bash "$SUBMIT" \
     --secret-volume echo-rl-openai:/run/secrets/echo-rl-openai \
     --extra-env-vars "TRAIN_CONFIG=${CONFIG}" \
     --follow-logs \
-    --cmd 'exec bash $PVC_MOUNT/$USER_ALIAS/runs/$JOB_NAME/mini-web-agent/docker/run_train_q35_image.sh'
+    --cmd 'exec bash $PVC_MOUNT/$USER_ALIAS/runs/$JOB_NAME/mini-web-agent/docker/archive/run_train_q35_image.sh'

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Archived: this submitter targets a LlamaFactory YAML outside src/miniswewebagent/config.
 # Script 3/3 -- launch a second 9B web-agent SFT run with cutoff_len = 128k
 # tokens (qwen35_9b_websft_128k.yaml) so every untruncated convo (max ~89k tok)
 # is kept whole. Thin wrapper around the existing cluster submitter
@@ -8,8 +9,8 @@
 # logits is huge and may OOM on a 180GB B200 without a fused/chunked CE. !!!
 #
 # Usage:
-#   bash scripts/submit_sft_q35_9b_128k.sh
-#   WANDB_PROJECT=qwen35_9b_websft_128k bash scripts/submit_sft_q35_9b_128k.sh
+#   bash scripts/archive/submit_sft_q35_9b_128k.sh
+#   WANDB_PROJECT=qwen35_9b_websft_128k bash scripts/archive/submit_sft_q35_9b_128k.sh
 set -euo pipefail
 
 REPO="${MINI_WEB_AGENT_DIR:-/data/t-yifeili/mini-web-agent}"

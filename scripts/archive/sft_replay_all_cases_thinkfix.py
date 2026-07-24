@@ -1,5 +1,5 @@
 ﻿#!/usr/bin/env python3
-"""Replay web-agent SFT data one assistant turn at a time (think-fix variant).
+"""Archived utility for replaying web-agent SFT data (think-fix variant).
 
 Identical to sft_replay_all_cases.py, but REQUIRES the vLLM server to be
 launched with the train-aligned chat template

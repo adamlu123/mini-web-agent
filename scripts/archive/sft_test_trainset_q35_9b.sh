@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Archived: this test targets SFT data/configs outside src/miniswewebagent/config.
 # Script 1/3 -- OFFLINE sanity test of the 9B web-agent SFT checkpoint on the
 # SAME training set it was trained on (web_agent_pae100_full). For every
 # assistant turn we teacher-force the preceding context (system + all earlier
@@ -11,8 +12,8 @@
 # per-turn imitation, NOT closed-loop agent success -- use script 2 for that.
 #
 # Usage:
-#   bash scripts/sft_test_trainset_q35_9b.sh
-#   CKPT=/path/to/hf/ckpt MAX_PROMPT_TOKENS=40000 bash scripts/sft_test_trainset_q35_9b.sh
+#   bash scripts/archive/sft_test_trainset_q35_9b.sh
+#   CKPT=/path/to/hf/ckpt MAX_PROMPT_TOKENS=40000 bash scripts/archive/sft_test_trainset_q35_9b.sh
 set -euo pipefail
 
 REPO=/data/t-yifeili/mini-web-agent

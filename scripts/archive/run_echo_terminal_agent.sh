@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Archived: this launcher targets an Echo/SkyRL config outside src/miniswewebagent/config.
 set -euo pipefail
 
 CONFIG_PATH=${CONFIG_PATH:-echo_configs/qwen3_8b_rl.yaml}

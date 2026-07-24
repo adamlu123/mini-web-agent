@@ -17,7 +17,7 @@
 # The judge (osw_judge / WebJudge_Online_Mind2Web) is UNCHANGED, so the eval
 # target (task-level success from task + actions + screenshots) is identical to
 # the existing om2w eval. Run with run_local_eval-style env via
-# scripts/sft_eval_online_m2w_sft_aligned.sh.
+# scripts/archive/sft_eval_online_m2w_sft_aligned.sh.
 
 data:
   train_data:

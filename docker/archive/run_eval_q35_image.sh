@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Archived: this driver evaluates root-level Echo/SkyRL configs, not MiniWebAgent YAMLs.
 # In-pod CLUSTER EVAL driver for the web-agent on the *generic* qwen3.5 image
 #   aifrontiers.azurecr.io/nvidia25.11-pytorch2.10.0-te2.13-deepspeed0.18.9-fa2main-vllm0.18.0:20260415
 #
@@ -7,7 +8,7 @@
 # (each scored separately), logging eval/<data_source>/... to the console.
 # No FSDP, no optimizer, no training -- just rollout + OSW judge scoring.
 #
-# Same RL/eval stack bootstrap as docker/run_train_q35_image.sh (resolve the few
+# Same RL/eval stack bootstrap as docker/archive/run_train_q35_image.sh (resolve the few
 # deps the image lacks WITHOUT clobbering its baked torch2.10/te2.13/vllm0.18
 # stack, --no-deps the 4 editables, ray2.55 placement-group shim, playwright
 # chromium, creds). The ONLY difference vs the train driver: it launches

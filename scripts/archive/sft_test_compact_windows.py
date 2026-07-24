@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Teacher-forced compact-window test for web-agent SFT checkpoints.
+"""Archived teacher-forced compact-window test for web-agent SFT checkpoints.
 
 For each compact-window ShareGPT sample, condition on the gold prefix ending at
 the final summary prompt and greedily generate only the final assistant turn.
