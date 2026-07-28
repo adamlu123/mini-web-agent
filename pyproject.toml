@@ -10,10 +10,13 @@ description = "Minimal local Playwright web agent"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "backoff",
     "browserbase",
     "httpx",
     "jinja2",
+    "openai",
     "platformdirs",
+    "pillow",
     "playwright",
     "pydantic>=2.0",
     "python-dotenv",

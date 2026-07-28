@@ -1,6 +1,5 @@
-"""Evaluate a mini-web-agent output directory with the original upstream
-`WebJudge_Online_Mind2Web_eval` implementation (unmodified copy at
-/home/luyadong/sandbox/Online-Mind2Web/src).
+"""Evaluate a mini-web-agent output directory with the vendored
+`WebJudge_Online_Mind2Web_eval` implementation under ``om2w_judge``.
 
 Per-task inputs:
   - last_actions: parsed from
@@ -33,8 +32,9 @@ from pathlib import Path
 
 from PIL import Image
 
-# Make the freshly-cloned upstream package importable as-is.
-UPSTREAM_SRC = Path("/home/luyadong/sandbox/Online-Mind2Web/src")
+# Make the vendored judge's top-level ``methods`` package importable.
+REPO_ROOT = Path(__file__).resolve().parents[1]
+UPSTREAM_SRC = REPO_ROOT / "om2w_judge"
 if str(UPSTREAM_SRC) not in sys.path:
     sys.path.insert(0, str(UPSTREAM_SRC))
 
@@ -44,9 +44,8 @@ from methods import webjudge_online_mind2web as upstream_webjudge  # noqa: E402
 # max_tokens -> max_completion_tokens and drops temperature when required).
 # Upstream utils.extract_predication is the same logic but we inline its
 # behavior via the local one to keep a single import source.
-_REPO = Path("/home/luyadong/sandbox/mini-web-agent")
-if str(_REPO) not in sys.path:
-    sys.path.insert(0, str(_REPO))
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 from om2w_judge.utils import OpenaiEngine, extract_predication  # noqa: E402
 
 
@@ -57,10 +56,13 @@ STEP_ACTION_RE = re.compile(r"^\s*step\s+\d+\s+action\s*:\s*.+\s*$", re.IGNORECA
 # judge scores the trajectory, not the agent's self-reported answer.
 FINAL_RESPONSE_RE = re.compile(r"^\s*final[ _]?(?:response|answer)\s*:", re.IGNORECASE)
 SCREENSHOT_RE = re.compile(r"^final_execution_(\d+).*\.png$", re.IGNORECASE)
+STEP_SCRIPT_NUMBER_RE = re.compile(r"\d+")
 MODE = "WebJudge_Online_Mind2Web_eval"
 DEFAULT_TASKS_FILE = Path(
     "/home/luyadong/sandbox/mini-web-agent/src/miniswewebagent/run/benchmarks/om2w_260220.json"
 )
+ACTION_HISTORY_MAX_LINES = 500
+ACTION_HISTORY_MAX_CHARS = 60_000
 
 
 def load_task_description_map(tasks_file: Path) -> dict[str, str]:
@@ -126,6 +128,70 @@ def load_actions(log_path: Path, plain_text: bool = False) -> list[str]:
         if plain_text or STEP_ACTION_RE.match(s):
             out.append(s)
     return out
+
+
+def load_step_actions(steps_dir: Path) -> list[str]:
+    if not steps_dir.is_dir():
+        return []
+
+    def sort_key(path: Path) -> tuple[int, tuple[int, ...], str]:
+        numbers = tuple(int(value) for value in STEP_SCRIPT_NUMBER_RE.findall(path.stem))
+        return (0 if numbers else 1, numbers, path.name.lower())
+
+    actions: list[str] = []
+    for path in sorted(steps_dir.glob("*.sh"), key=sort_key):
+        action = path.read_text(encoding="utf-8", errors="replace").strip()
+        if action:
+            actions.append(action)
+    return actions
+
+
+def load_action_history(task_dir: Path, run_dir: Path, source: str) -> list[str]:
+    if source == "step_scripts":
+        return load_step_actions(task_dir / "steps")
+    if source == "final_script_log":
+        return load_actions(run_dir / "final_script_log.txt", plain_text=True)
+    raise ValueError(f"Unsupported action history source: {source}")
+
+
+def bound_action_history(actions: list[str]) -> list[str]:
+    if (
+        len(actions) <= ACTION_HISTORY_MAX_LINES
+        and sum(map(len, actions)) <= ACTION_HISTORY_MAX_CHARS
+    ):
+        return actions
+
+    marker = ""
+    marker_index = 0
+    retained = actions
+    if len(actions) > ACTION_HISTORY_MAX_LINES:
+        head_size = ACTION_HISTORY_MAX_LINES // 2
+        tail_size = ACTION_HISTORY_MAX_LINES - head_size
+        omitted = len(actions) - ACTION_HISTORY_MAX_LINES
+        marker = f"[{omitted} action log line(s) omitted]"
+        marker_index = head_size
+        retained = actions[:head_size] + actions[-tail_size:]
+
+    budget = ACTION_HISTORY_MAX_CHARS - len(marker)
+    low, high = 0, max(map(len, retained), default=0)
+    while low < high:
+        cap = (low + high + 1) // 2
+        if sum(min(len(action), cap) for action in retained) <= budget:
+            low = cap
+        else:
+            high = cap - 1
+
+    def clip(action: str) -> str:
+        if len(action) <= low:
+            return action
+        if low <= 3:
+            return action[:low]
+        return f"{action[: low - 3]}..."
+
+    bounded = [clip(action) for action in retained]
+    if marker:
+        bounded.insert(marker_index, marker)
+    return bounded
 
 
 def load_screenshots(shots_dir: Path) -> list[str]:
@@ -391,6 +457,14 @@ Action History:
     return messages, text, system_msg, record, key_points
 
 
+def append_output_result(output_json_path, output_results, final_predicted_labels, lock):
+    os.makedirs(os.path.dirname(output_json_path), exist_ok=True)
+    with lock:
+        final_predicted_labels.append(output_results["predicted_label"])
+        with open(output_json_path, "a+", encoding="utf-8") as f_out:
+            f_out.write(json.dumps(output_results) + "\n")
+
+
 def auto_eval(args, task_subset, final_predicted_labels, lock, model, task_map):
     output_json_path = os.path.join(
         args.output_path,
@@ -423,17 +497,38 @@ def auto_eval(args, task_subset, final_predicted_labels, lock, model, task_map):
 
         run_dir = resolve_latest_run_dir(task_dir)
         if run_dir is None:
-            print(f"Skip {task_id}: no final_runs/run_* directory found")
+            output_results.update(
+                {
+                    "task_id": task_id,
+                    "mode": MODE,
+                    "final_run_dir": None,
+                    "action_history": [],
+                    "action_history_source": args.action_history_source,
+                    "sandbox_screenshot_paths": [],
+                    "image_judge_record": [],
+                    "key_points": "",
+                    "input_text": "",
+                    "system_msg": "",
+                    "evaluation_details": {
+                        "response": "No final_runs/run_* artifacts were available.",
+                        "predicted_label": 0,
+                    },
+                    "predicted_label": 0,
+                }
+            )
+            append_output_result(
+                output_json_path,
+                output_results,
+                final_predicted_labels,
+                lock,
+            )
+            print(f"[pid {os.getpid()}] done {task_id}: no final run, predicted_label=0")
             continue
 
-        action_history = load_actions(
-            run_dir / "final_script_log.txt", plain_text=True
+        action_history = bound_action_history(
+            load_action_history(task_dir, run_dir, args.action_history_source)
         )
         screenshot_paths = load_screenshots(run_dir / "screenshots")
-
-        if not screenshot_paths:
-            print(f"Skip {task_id}: no screenshots under {run_dir}/screenshots")
-            continue
 
         print(
             f"[pid {os.getpid()}] {task_id}: run={run_dir.name} "
@@ -457,7 +552,7 @@ def auto_eval(args, task_subset, final_predicted_labels, lock, model, task_map):
         output_results["mode"] = MODE
         output_results["final_run_dir"] = str(run_dir)
         output_results["action_history"] = action_history
-        output_results["action_history_source"] = "final_script_log"
+        output_results["action_history_source"] = args.action_history_source
         output_results["sandbox_screenshot_paths"] = screenshot_paths
         output_results["image_judge_record"] = record
         output_results["key_points"] = key_points
@@ -469,13 +564,12 @@ def auto_eval(args, task_subset, final_predicted_labels, lock, model, task_map):
         }
         output_results["predicted_label"] = predicted_label
 
-        with lock:
-            final_predicted_labels.append(predicted_label)
-
-        os.makedirs(args.output_path, exist_ok=True)
-        with lock:
-            with open(output_json_path, "a+", encoding="utf-8") as f_out:
-                f_out.write(json.dumps(output_results) + "\n")
+        append_output_result(
+            output_json_path,
+            output_results,
+            final_predicted_labels,
+            lock,
+        )
 
         print(f"[pid {os.getpid()}] done {task_id}: predicted_label={predicted_label}")
 
@@ -490,16 +584,36 @@ def process_subset(task_subset, args, final_predicted_labels, lock, task_map):
 
 
 def parallel_eval(args, num_workers: int) -> None:
-    task_map = load_task_description_map(Path(args.tasks_file))
+    task_entries = json.loads(Path(args.tasks_file).read_text(encoding="utf-8"))
+    task_map = {
+        str(entry["task_id"]): str(entry.get("confirmed_task") or entry.get("task"))
+        for entry in task_entries
+        if entry.get("task_id") and (entry.get("confirmed_task") or entry.get("task"))
+    }
     print(f"Loaded {len(task_map)} task descriptions from {args.tasks_file}")
+    requested_levels = {
+        level.strip().lower()
+        for level in args.task_level.split("+")
+        if level.strip() and level.strip().lower() != "all"
+    }
+    selected_entries = [
+        entry
+        for entry in task_entries
+        if not requested_levels
+        or str(entry.get("level", "")).strip().lower() in requested_levels
+    ]
+    if args.limit > 0:
+        selected_entries = selected_entries[: args.limit]
+    selected_ids = [str(entry["task_id"]) for entry in selected_entries]
     task_dirs = [
-        d
-        for d in sorted(os.listdir(args.trajectories_dir))
-        if os.path.isdir(os.path.join(args.trajectories_dir, d))
+        task_id
+        for task_id in selected_ids
+        if task_id in task_map
+        and os.path.isdir(os.path.join(args.trajectories_dir, task_id))
     ]
     print(f"Evaluating {len(task_dirs)} tasks in {args.trajectories_dir}")
     if not task_dirs:
-        return
+        raise RuntimeError("No matching task directories found")
 
     num_workers = max(1, min(num_workers, len(task_dirs)))
     task_subsets = [task_dirs[i::num_workers] for i in range(num_workers)]
@@ -515,8 +629,6 @@ def parallel_eval(args, num_workers: int) -> None:
             endpoint_target_uri=args.endpoint_target_uri,
         )
         auto_eval(args, task_dirs, labels, lock, model, task_map)
-        total = len(task_dirs)
-        success = sum(labels)
     else:
         lock = multiprocessing.Lock()
         with multiprocessing.Manager() as manager:
@@ -530,12 +642,71 @@ def parallel_eval(args, num_workers: int) -> None:
                 procs.append(p)
             for p in procs:
                 p.join()
-            total = len(task_dirs)
-            success = sum(labels)
+            failed_workers = [p.pid for p in procs if p.exitcode]
+            if failed_workers:
+                raise RuntimeError(
+                    f"{len(failed_workers)} judge worker process(es) failed: {failed_workers}"
+                )
+
+    output_json_path = os.path.join(
+        args.output_path,
+        f"{MODE}_{args.model}_score_threshold_{args.score_threshold}_auto_eval_results.json",
+    )
+    predictions: dict[str, int] = {}
+    if os.path.exists(output_json_path):
+        with open(output_json_path, "r", encoding="utf-8") as f:
+            for line in f:
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                task_id = row.get("task_id")
+                predicted_label = row.get("predicted_label")
+                if task_id in task_dirs and predicted_label in (0, 1):
+                    predictions[task_id] = predicted_label
+
+    missing = sorted(set(task_dirs) - predictions.keys())
+    if missing:
+        raise RuntimeError(f"{len(missing)} task(s) have no judge result")
+
+    total = len(task_dirs)
+    success = sum(predictions.values())
+    level_by_task = {
+        str(entry["task_id"]): str(entry.get("level") or "unknown")
+        for entry in selected_entries
+    }
+    level_breakdown: dict[str, dict[str, int]] = {}
+    for task_id in task_dirs:
+        level = level_by_task.get(task_id, "unknown")
+        bucket = level_breakdown.setdefault(
+            level,
+            {"success": 0, "judged": 0, "total_tasks": 0},
+        )
+        bucket["success"] += predictions[task_id]
+        bucket["judged"] += 1
+        bucket["total_tasks"] += 1
+
+    summary = {
+        "judge_result_file": output_json_path,
+        "model": args.model,
+        "score_threshold": args.score_threshold,
+        "task_level": args.task_level or "all",
+        "limit": args.limit,
+        "overall": {
+            "success": success,
+            "judged": len(predictions),
+            "total_tasks": total,
+            "success_rate": f"{(success / total) * 100:.1f}%",
+        },
+        "level_breakdown": level_breakdown,
+    }
+    if args.summary_path:
+        summary_path = Path(args.summary_path)
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+        summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
     print("Evaluation complete.")
-    if total:
-        print(f"Success rate: {success}/{total} = {(success / total) * 100:.2f}%")
+    print(f"Success rate: {success}/{total} = {(success / total) * 100:.2f}%")
 
 
 def main() -> None:
@@ -563,6 +734,27 @@ def main() -> None:
         help="Optional gateway responses API endpoint. Defaults to $OPENAI_GATEWAY_ENDPOINT.",
     )
     parser.add_argument("--score_threshold", type=int, default=3)
+    parser.add_argument(
+        "--task_level",
+        "--task-level",
+        dest="task_level",
+        type=str,
+        default="all",
+        help="Filter tasks by level, e.g. hard or easy+medium.",
+    )
+    parser.add_argument("--limit", type=int, default=0)
+    parser.add_argument("--summary_path", "--summary-path", dest="summary_path")
+    parser.add_argument(
+        "--action_history_source",
+        "--action-history-source",
+        dest="action_history_source",
+        choices=("final_script_log", "step_scripts"),
+        default="final_script_log",
+        help=(
+            "Read actions from the latest run's final_script_log.txt or from "
+            "numerically ordered task_folder/steps/*.sh files."
+        ),
+    )
     parser.add_argument(
         "--tasks_file",
         type=str,

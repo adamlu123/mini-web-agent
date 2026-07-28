@@ -60,6 +60,23 @@ mini-web-om2w --tasks-file /Users/lu/Documents/sandbox/Online-Mind2Web/om2w_2602
 
 The legacy `mini-web-batch` command still works and now points at the same benchmark runner under `src/miniswewebagent/run/benchmarks/`.
 
+For resumable or distributed evaluation, give every invocation the same output directory and batch name:
+
+```bash
+mini-web-om2w --tasks-file /path/to/tasks.json --task-level easy+medium \
+  --num-shards 2 --shard-index 0 --batch-name om2w-run --resume \
+  --output-dir outputs/om2w-run
+```
+
+Run the other shard with `--shard-index 1`, then judge the combined output without generating tasks:
+
+```bash
+mini-web-om2w --tasks-file /path/to/tasks.json --batch-name om2w-run \
+  --judge-only --output-dir outputs/om2w-run
+```
+
+Use `--retry-failed` with `--resume` to replace task directories whose `result.json` records `run_exception`.
+
 ## Trace viewer
 
 To inspect runs under `outputs/default` in a browser:

@@ -16,15 +16,18 @@ src/miniswewebagent/agents/iterative_strict.py
 src/miniswewebagent/config/__init__.py
 src/miniswewebagent/config/best_default_judge.yaml
 src/miniswewebagent/config/best_default_judge_json.yaml
+src/miniswewebagent/config/best_default_judge_json_agnostic.yaml
 src/miniswewebagent/config/best_default_judge_json_claude.yaml
 src/miniswewebagent/config/best_default_judge_json_kimi.yaml
 src/miniswewebagent/config/best_default_judge_json_kimi_openrouter.yaml
 src/miniswewebagent/config/best_default_judge_json_om2w.yaml
+src/miniswewebagent/config/best_default_judge_json_openrouter_qwen35_9b.yaml
 src/miniswewebagent/config/best_default_judge_json_openrouter_qwen36_cli.yaml
 src/miniswewebagent/config/best_default_judge_json_openrouter_qwen36_cli_multi.yaml
 src/miniswewebagent/config/best_default_judge_json_oracle.yaml
 src/miniswewebagent/config/best_default_judge_json_oracle_cli.yaml
 src/miniswewebagent/config/best_default_judge_json_oracle_cli_datepicker.yaml
+src/miniswewebagent/config/best_default_judge_json_persistent_cli.yaml
 src/miniswewebagent/config/best_iterative_judge.yaml
 src/miniswewebagent/config/best_iterative_judge_v2.yaml
 src/miniswewebagent/config/best_iterative_judge_v2_cli.yaml
@@ -33,6 +36,7 @@ src/miniswewebagent/config/iterative.yaml
 src/miniswewebagent/config/iterative_judge.yaml
 src/miniswewebagent/config/iterative_strict.yaml
 src/miniswewebagent/config/mini.yaml
+src/miniswewebagent/config/__pycache__/__init__.cpython-312.pyc
 src/miniswewebagent/config/benchmark/browserbase.yaml
 src/miniswewebagent/config/benchmark/om2w_hard_local_workspace.yaml
 src/miniswewebagent/config/benchmark/om2w_hard_local_workspace_image_qa_flog_run_folders.yaml
@@ -68,6 +72,7 @@ src/miniswewebagent/tasks/__init__.py
 src/miniswewebagent/tasks/om2w.py
 src/miniswewebagent/tools/__init__.py
 src/miniswewebagent/tools/_trapi_kimi_helper.py
+src/miniswewebagent/tools/browser_session.py
 src/miniswewebagent/tools/browserbase_session.py
 src/miniswewebagent/tools/image_qa.py
 src/miniswewebagent/tools/local_browser_session.py
@@ -78,7 +83,11 @@ src/miniswewebagent/tools/self_reflection_old.py
 src/miniswewebagent/tools/self_reflection_oracle.py
 src/miniswewebagent/tools/test_date_picker.py
 src/miniswewebagent/tools/two_stage_judge.py
+src/miniswewebagent/trainer/__init__.py
+src/miniswewebagent/trainer/data.py
+src/miniswewebagent/trainer/train.py
 src/miniswewebagent/utils/__init__.py
+src/miniswewebagent/utils/browser_evidence.py
 src/miniswewebagent/utils/logging.py
 src/miniswewebagent/utils/om2w_eval.py
 src/miniswewebagent/utils/runtime.py
@@ -86,7 +95,10 @@ src/miniswewebagent/utils/serialize.py
 src/miniswewebagent/viewer/app.js
 src/miniswewebagent/viewer/index.html
 src/miniswewebagent/viewer/styles.css
+tests/test_browser_evidence.py
+tests/test_browser_session_cli.py
 tests/test_end_to_end_smoke.py
+tests/test_eval_with_original_om2w.py
 tests/test_image_qa.py
 tests/test_local_browser_environment.py
 tests/test_local_workspace_environment.py
@@ -99,5 +111,6 @@ tests/test_probe_website_cli.py
 tests/test_review_viewer.py
 tests/test_self_reflection.py
 tests/test_trace_viewer.py
+tests/test_trajectory_completion_gate.py
 tests/test_webjudge_online_mind2web_sandbox_modes.py
 tests/test_webtail_flight_hotel_cli.py
