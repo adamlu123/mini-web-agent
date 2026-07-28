@@ -102,7 +102,7 @@ export OPENAI_GATEWAY_ENDPOINT=http://gateway.phyagi.net/api/responses
 # Playwright must be installed inside the training container/conda env:
 #   pip install playwright && playwright install chromium
 
-./scripts/run_web_agent.sh
+./scripts/archive/run_web_agent.sh
 ```
 
 Checkpoints land in `${OUTPUT_DIR}/ckpts`, logs in `${OUTPUT_DIR}/skyrl_logs`.
@@ -267,6 +267,6 @@ echo_rl/web_agent/
     └── run_real_rollout.py          # real rollout: HF model + Browserbase + judge
 
 configs/qwen35_4b_web_agent.yaml     # GRPO baseline retargeted at Qwen3.5-4B + web env
-scripts/run_web_agent.sh             # entry script (analog of run_echo_terminal_agent.sh)
+scripts/archive/run_web_agent.sh     # archived entry script (analog of run_echo_terminal_agent.sh)
 tests/test_web_agent_e2e.py          # pytest-based smoke test (stub + deterministic)
 ```

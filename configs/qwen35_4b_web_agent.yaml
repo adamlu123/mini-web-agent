@@ -17,7 +17,7 @@
 #        export OPENAI_GATEWAY_API_KEY=...
 #        export OPENAI_GATEWAY_ENDPOINT=http://gateway.phyagi.net/api/responses
 #   3. Make sure Playwright is installed: `playwright install chromium`
-#   4. Run via `scripts/run_web_agent.sh` (or set OUTPUT_DIR/CONFIG_PATH and call
+#   4. Run via `scripts/archive/run_web_agent.sh` (or set OUTPUT_DIR/CONFIG_PATH and call
 #      the entrypoint that script wraps).
 
 data:

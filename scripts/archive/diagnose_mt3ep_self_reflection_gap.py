@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Diagnose mt-3ep self-reflection on externally successful OM2W tasks.
+"""Archived utility for diagnosing mt-3ep self-reflection on successful OM2W tasks.
 
 This script takes the WebJudge success set, reruns the current self_reflection
 CLI against each task's latest final run, and writes a JSONL/summary comparing
@@ -7,13 +7,13 @@ external WebJudge success with mt-3ep self_reflection labels.
 
 Typical usage after starting a local vLLM endpoint for /data/t-yifeili/ckpts/eval_mt_3ep:
 
-  python scripts/diagnose_mt3ep_self_reflection_gap.py \
+  python scripts/archive/diagnose_mt3ep_self_reflection_gap.py \
     --trajectories-dir outputs/sft_ckpt_vllm/eval_mt_3ep_om2w_all_step100_o4096_len65536 \
     --webjudge-results outputs/sft_ckpt_vllm/eval_mt_3ep_om2w_all_step100_o4096_len65536_eval_1/WebJudge_Online_Mind2Web_Sandbox_eval_o4-mini_score_threshold_3_auto_eval_results.json
 
 Or let the script launch vLLM and clean it up afterwards:
 
-  python scripts/diagnose_mt3ep_self_reflection_gap.py --start-vllm
+  python scripts/archive/diagnose_mt3ep_self_reflection_gap.py --start-vllm
 """
 
 from __future__ import annotations

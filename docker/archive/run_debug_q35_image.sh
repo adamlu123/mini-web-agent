@@ -1,17 +1,9 @@
 #!/usr/bin/env bash
-# In-pod driver for a PURE-IMAGE TRAINING run on the *generic* qwen3.5 image
+# Archived: this driver serves the legacy SkyRL/root-config debug workflow.
+# In-pod driver for a long-lived 8xB200 DEBUG pod running on the *generic*
+# qwen3.5 image
 #   aifrontiers.azurecr.io/nvidia25.11-pytorch2.10.0-te2.13-deepspeed0.18.9-fa2main-vllm0.18.0:20260415
 # rather than our own t-yifeili/echo-rl image.
-#
-# Same bootstrap as run_debug_q35_image.sh (deny-list deps, force-upgrade
-# omegaconf/antlr4, install vllm-router, --no-deps -e the 4 editables, ray
-# placement_group shim). The ONLY difference vs the debug driver: instead of
-# writing an activate script and `sleep infinity`, this one sources creds +
-# exports env, then LAUNCHES training (python -m echo_rl.web_agent.entrypoint
-# --config $TRAIN_CONFIG) and exits with the trainer's rc.
-#
-# Required env (forwarded by submit_train_q35_image.sh via --extra-env-vars):
-#   TRAIN_CONFIG   -- config path relative to SkyRL/ (e.g. echo_configs/...yaml)
 #
 # Why a separate driver from run_debug_pure_image.sh:
 #   run_debug_pure_image.sh assumes the echo-rl image (which BAKES the full
@@ -32,7 +24,7 @@
 # pure-image driver.
 #
 # UPLOADED with the repo and executed via a tiny `--cmd` one-liner (see
-# docker/submit_debug_q35_image.sh) -- keeps the `kubectl create` body clear of
+# docker/archive/submit_debug_q35_image.sh) -- keeps the `kubectl create` body clear of
 # the Cloudflare WAF that blocks big inline shell preambles.
 #
 # Required env (auto-injected by submit_job.sh):
@@ -43,24 +35,22 @@
 
 set -e
 
-# Unlike the debug driver, a TRAINING pod SHOULD exit on bootstrap failure
-# (don't hold 8 B200s sleeping) -- so NO sleep-infinity ERR trap here; set -e
-# propagates and Volcano marks the job failed.
-echo "[boot] q35-image TRAIN pod $JOB_NAME on $(hostname)"
-echo "[boot] TRAIN_CONFIG=${TRAIN_CONFIG:?TRAIN_CONFIG not set}"
+# A debug pod MUST stay alive so you can exec in and fix things by hand even if
+# bootstrap fails. Without this, any `set -e` failure (e.g. the pre-flight
+# import tripping on a dep mismatch) makes the container exit, which Volcano's
+# PodFailed->AbortJob policy turns into a dead job within minutes. Trap any
+# error and fall through to `sleep infinity` instead of exiting.
+trap 'rc=$?; echo "[boot] !!! bootstrap error (rc=$rc) -- keeping pod ALIVE for debug; exec in, fix by hand, then re-run"; sleep infinity' ERR
 
-# Multi-node (NODES>1 at submit): volcano's pytorch plugin injects
-# MASTER_ADDR / RANK / WORLD_SIZE into every pod; all pods run this same
-# driver. rank0 = ray head + trainer, others = ray workers that block until
-# the master task completes (volcano policy TaskCompleted -> CompleteJob).
-NNODES="${WORLD_SIZE:-1}"
-NODE_RANK="${RANK:-0}"
-echo "[boot] NNODES=$NNODES NODE_RANK=$NODE_RANK MASTER_ADDR=${MASTER_ADDR:-<unset>}"
+echo "[boot] q35-image debug pod $JOB_NAME on $(hostname)"
 
 CODE_ROOT=$PVC_MOUNT/$USER_ALIAS/code
 UPLOAD_ROOT=$PVC_MOUNT/$USER_ALIAS/runs/$JOB_NAME
 OUTPUT_DIR=$PVC_MOUNT/$USER_ALIAS/outputs/$JOB_NAME
 ENV_ROOT=$PVC_MOUNT/$USER_ALIAS/envs/q35-image
+ACTIVATE=$ENV_ROOT/env_activate.sh
+READY=$ENV_ROOT/.debug_ready
+rm -f "$READY"
 mkdir -p "$CODE_ROOT" "$OUTPUT_DIR" "$ENV_ROOT"
 
 echo '[boot] === copy uploaded code to stable PVC path ==='
@@ -68,23 +58,13 @@ if ! command -v rsync >/dev/null 2>&1; then
   echo '[boot] installing rsync (one-time per pod)...'
   apt-get update -qq && apt-get install -y -qq rsync
 fi
-# Only rank0 rsyncs (32 pods racing --delete into the same PVC dir corrupts
-# the tree); the rest wait for the per-job marker.
-SYNC_MARKER="$UPLOAD_ROOT/.code_synced_${JOB_NAME}"
-if [ "$NODE_RANK" = "0" ]; then
-  rsync -a --delete --no-perms --no-owner --no-group --no-times \
-      "$UPLOAD_ROOT/SkyRL/"          "$CODE_ROOT/SkyRL/"
-  rsync -a --delete --no-perms --no-owner --no-group --no-times \
-      "$UPLOAD_ROOT/mini-web-agent/" "$CODE_ROOT/mini-web-agent/"
-  date > "$SYNC_MARKER"
-else
-  echo '[boot] worker: waiting for rank0 code sync marker...'
-  for i in $(seq 1 180); do [ -f "$SYNC_MARKER" ] && break; sleep 10; done
-  [ -f "$SYNC_MARKER" ] || { echo '[boot] ERROR: code sync marker never appeared'; exit 1; }
-fi
+rsync -a --delete --no-perms --no-owner --no-group --no-times \
+    "$UPLOAD_ROOT/SkyRL/"          "$CODE_ROOT/SkyRL/"
+rsync -a --delete --no-perms --no-owner --no-group --no-times \
+    "$UPLOAD_ROOT/mini-web-agent/" "$CODE_ROOT/mini-web-agent/"
 
 REQ="$CODE_ROOT/mini-web-agent/docker/requirements.txt"
-MISSING="$ENV_ROOT/requirements.missing.rank${NODE_RANK}.txt"
+MISSING="$ENV_ROOT/requirements.missing.txt"
 
 echo '[boot] === resolve missing deps (keep everything the image already bakes) ==='
 echo "[boot] python -> $(command -v python) ; $(python -V 2>&1)"
@@ -210,30 +190,44 @@ echo '[boot] === install playwright chromium (not baked in this image) ==='
 playwright install --with-deps chromium || playwright install chromium || \
     echo '[boot] WARN: playwright browser install failed (ok if using browserbase)'
 
-echo '[boot] === source creds + route OSW judge ==='
+# ------------------------------------------------------------------
+# Write the sourceable activate script (fast, idempotent, re-source safe).
+# Sourced by every login shell so the env is ALWAYS ready on exec.
+# NOTE: no venv activation here -- the image Python is already on PATH.
+# ------------------------------------------------------------------
+echo "[boot] === writing $ACTIVATE ==="
+cat > "$ACTIVATE" <<ACTEOF
+# Auto-generated by run_debug_q35_image.sh -- prepares the q35-image echo-rl env.
 source /run/secrets/echo-rl-creds/cred.sh
 unset OPENAI_GATEWAY_API_KEY
-if [ -f /run/secrets/echo-rl-openai/PHYAGI_API_KEY ]; then
-  # 2026-07-13: the sk-proj key ran out of quota (insufficient_quota zeroed a
-  # whole training step); judge now routes through the phyagi gateway with the
-  # PHYAGI key, exactly like the dist eval harness (sandbox judge engine).
-  export PHYAGI_API_KEY="$(cat /run/secrets/echo-rl-openai/PHYAGI_API_KEY)"
-  export OPENAI_GATEWAY_ENDPOINT="${OPENAI_GATEWAY_ENDPOINT:-http://gateway.phyagi.net/api/responses}"
-  echo "[boot] PHYAGI_API_KEY set; judge -> $OPENAI_GATEWAY_ENDPOINT"
-elif [ -f /run/secrets/echo-rl-openai/OPENAI_API_KEY ]; then
-  export OPENAI_API_KEY="$(cat /run/secrets/echo-rl-openai/OPENAI_API_KEY)"
+# The phyagi gateway key in cred.sh is dead; use the working sk-proj key from the
+# echo-rl-openai secret and route the OSW judge straight to api.openai.com.
+if [ -f /run/secrets/echo-rl-openai/OPENAI_API_KEY ]; then
+  export OPENAI_API_KEY="\$(cat /run/secrets/echo-rl-openai/OPENAI_API_KEY)"
   export OPENAI_GATEWAY_ENDPOINT=''
-  echo '[boot] OPENAI_API_KEY set from echo-rl-openai secret; judge -> api.openai.com'
 fi
-
-echo '[boot] === env paths ==='
 export MINI_WEB_AGENT_ROOT=$CODE_ROOT/mini-web-agent
 export ECHO_RL_DATA=$CODE_ROOT/mini-web-agent/data/web_agent
 export OUTPUT_DIR=$OUTPUT_DIR
 export TRANSFORMERS_NO_ADVISORY_WARNINGS=1
-echo "[boot] MINI_WEB_AGENT_ROOT=$MINI_WEB_AGENT_ROOT"
-echo "[boot] ECHO_RL_DATA=$ECHO_RL_DATA"
-echo "[boot] OUTPUT_DIR=$OUTPUT_DIR"
+cd $CODE_ROOT/SkyRL
+ACTEOF
+
+# ------------------------------------------------------------------
+# Wire the activate script into login + interactive shells so any
+# 'kubectl exec' lands you in a ready environment automatically.
+# ------------------------------------------------------------------
+SRC_LINE="source $ACTIVATE"
+GUARD='# >>> echo-rl q35-image debug env >>>'
+for rc in /root/.bashrc /root/.bash_profile; do
+  touch "$rc"
+  if ! grep -qF "$GUARD" "$rc"; then
+    printf '%s\n%s\n# <<< echo-rl q35-image debug env <<<\n' "$GUARD" "$SRC_LINE" >> "$rc"
+  fi
+done
+if ! grep -qF '.bashrc' /root/.bash_profile 2>/dev/null; then
+  printf '[ -f ~/.bashrc ] && source ~/.bashrc\n' >> /root/.bash_profile
+fi
 
 echo '[boot] === pre-flight (validates every fix this driver applies) ==='
 nvidia-smi -L
@@ -253,52 +247,16 @@ print("torch", torch.__version__, "| vllm", vllm.__version__,
 print("imports + vllm_router + omegaconf oc.env + skyrl ray-import: ALL OK")
 PY
 
-if [ "$NNODES" -gt 1 ]; then
-  # Per-node plasma store must fit the pod's /dev/shm (same sizing rule as
-  # skyrl initialize_ray); ray start fixes it per node, and initialize_ray
-  # skips object_store_memory when RAY_ADDRESS is set.
-  OBJ_STORE_BYTES="${SKYRL_OBJECT_STORE_MEMORY_BYTES:-$((50 * 1024 * 1024 * 1024))}"
-  RAY_PORT=6379
-  if [ "$NODE_RANK" != "0" ]; then
-    echo "[boot] === ray worker: joining ${MASTER_ADDR}:${RAY_PORT} ==="
-    # Retry until the head is up; --block holds the worker for the job's
-    # lifetime (master task completion ends the volcano job and reaps us).
-    until ray start --address="${MASTER_ADDR}:${RAY_PORT}" \
-        --object-store-memory="$OBJ_STORE_BYTES" --block; do
-      echo '[boot] ray head not ready yet; retrying in 15s...'
-      sleep 15
-    done
-    echo '[boot] ray worker exited (head gone); done'
-    exit 0
-  fi
-  echo "[boot] === ray head: starting on port ${RAY_PORT} ==="
-  ray start --head --port="$RAY_PORT" --object-store-memory="$OBJ_STORE_BYTES" \
-      --dashboard-host=0.0.0.0
-  export RAY_ADDRESS="127.0.0.1:${RAY_PORT}"
-  echo "[boot] === waiting for all $NNODES ray nodes to register ==="
-  python - "$NNODES" <<'PY'
-import sys, time
-import ray
+# Verify the activate script actually exports the env the configs require
+# (generator.reward.mini_web_agent_root = ${oc.env:MINI_WEB_AGENT_ROOT}, no default).
+( . "$ACTIVATE" && [ -n "${MINI_WEB_AGENT_ROOT:-}" ] && [ -d "$MINI_WEB_AGENT_ROOT" ] \
+    && echo "[boot] activate OK: MINI_WEB_AGENT_ROOT=$MINI_WEB_AGENT_ROOT ECHO_RL_DATA=$ECHO_RL_DATA" ) \
+  || echo "[boot] WARN: activate env check failed (MINI_WEB_AGENT_ROOT unset or missing dir)"
 
-expected = int(sys.argv[1])
-ray.init(address="auto")
-for _ in range(120):  # up to 20 min for stragglers still pip-installing
-    alive = [n for n in ray.nodes() if n.get("Alive")]
-    print(f"[boot] ray nodes alive: {len(alive)}/{expected}", flush=True)
-    if len(alive) >= expected:
-        break
-    time.sleep(10)
-else:
-    raise SystemExit(f"only {len(alive)}/{expected} ray nodes joined")
-ray.shutdown()
-PY
-fi
-
-echo "[boot] === launching training: $TRAIN_CONFIG (no time cap) ==="
-cd "$CODE_ROOT/SkyRL"
-RAY_DEDUP_LOGS=0 python -m echo_rl.web_agent.entrypoint --config "$TRAIN_CONFIG" \
-    2>&1 | tee -a "$OUTPUT_DIR/console.log"
-RC=${PIPESTATUS[0]}
-echo "[boot] training exited rc=$RC"
-echo '[boot] === done ==='
-exit "$RC"
+touch "$READY"
+echo '[boot] ============================================================'
+echo '[boot] Q35-IMAGE DEBUG ENV READY. exec into this pod for a ready shell.'
+echo "[boot]   activate file: $ACTIVATE"
+echo "[boot]   output dir:    $OUTPUT_DIR"
+echo '[boot] ============================================================'
+sleep infinity

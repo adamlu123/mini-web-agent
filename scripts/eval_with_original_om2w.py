@@ -2,8 +2,9 @@
 `WebJudge_Online_Mind2Web_eval` implementation under `om2w_judge`.
 
 Per-task inputs:
-  - last_actions: parsed and bounded from
+  - last_actions: parsed and bounded from either
       <task_folder>/final_runs/run_<highest id>/final_script_log.txt
+    or numerically ordered <task_folder>/steps/*.sh files
   - images_path: every PNG under
       <task_folder>/final_runs/run_<highest id>/screenshots/
     (sorted by the numeric suffix in "final_execution_<N>_...")
@@ -55,6 +56,7 @@ STEP_ACTION_RE = re.compile(r"^\s*step\s+\d+\s+action\s*:\s*.+\s*$", re.IGNORECA
 # judge scores the trajectory, not the agent's self-reported answer.
 FINAL_RESPONSE_RE = re.compile(r"^\s*final[ _]?(?:response|answer)\s*:", re.IGNORECASE)
 SCREENSHOT_RE = re.compile(r"^final_execution_(\d+).*\.png$", re.IGNORECASE)
+STEP_SCRIPT_NUMBER_RE = re.compile(r"\d+")
 MODE = "WebJudge_Online_Mind2Web_eval"
 DEFAULT_TASKS_FILE = Path(
     "/home/luyadong/sandbox/mini-web-agent/src/miniswewebagent/run/benchmarks/om2w_260220.json"
@@ -128,6 +130,30 @@ def load_actions(log_path: Path, plain_text: bool = False) -> list[str]:
         if plain_text or STEP_ACTION_RE.match(s):
             out.append(s)
     return out
+
+
+def load_step_actions(steps_dir: Path) -> list[str]:
+    if not steps_dir.is_dir():
+        return []
+
+    def sort_key(path: Path) -> tuple[int, tuple[int, ...], str]:
+        numbers = tuple(int(value) for value in STEP_SCRIPT_NUMBER_RE.findall(path.stem))
+        return (0 if numbers else 1, numbers, path.name.lower())
+
+    actions = []
+    for path in sorted(steps_dir.glob("*.sh"), key=sort_key):
+        action = path.read_text(encoding="utf-8", errors="replace").strip()
+        if action:
+            actions.append(action)
+    return actions
+
+
+def load_action_history(task_dir: Path, run_dir: Path, source: str) -> list[str]:
+    if source == "step_scripts":
+        return load_step_actions(task_dir / "steps")
+    if source == "final_script_log":
+        return load_actions(run_dir / "final_script_log.txt", plain_text=True)
+    raise ValueError(f"Unsupported action history source: {source}")
 
 
 def bound_action_history(actions: list[str]) -> list[str]:
@@ -479,7 +505,7 @@ def auto_eval(args, task_subset, final_predicted_labels, lock, model, task_map):
                     "mode": MODE,
                     "final_run_dir": None,
                     "action_history": [],
-                    "action_history_source": "final_script_log",
+                    "action_history_source": args.action_history_source,
                     "sandbox_screenshot_paths": [],
                     "image_judge_record": [],
                     "key_points": "",
@@ -502,7 +528,7 @@ def auto_eval(args, task_subset, final_predicted_labels, lock, model, task_map):
             continue
 
         action_history = bound_action_history(
-            load_actions(run_dir / "final_script_log.txt", plain_text=True)
+            load_action_history(task_dir, run_dir, args.action_history_source)
         )
         screenshot_paths = load_screenshots(run_dir / "screenshots")
 
@@ -528,7 +554,7 @@ def auto_eval(args, task_subset, final_predicted_labels, lock, model, task_map):
         output_results["mode"] = MODE
         output_results["final_run_dir"] = str(run_dir)
         output_results["action_history"] = action_history
-        output_results["action_history_source"] = "final_script_log"
+        output_results["action_history_source"] = args.action_history_source
         output_results["sandbox_screenshot_paths"] = screenshot_paths
         output_results["image_judge_record"] = record
         output_results["key_points"] = key_points
@@ -713,6 +739,17 @@ def main() -> None:
     )
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--summary_path", "--summary-path", dest="summary_path")
+    parser.add_argument(
+        "--action_history_source",
+        "--action-history-source",
+        dest="action_history_source",
+        choices=("final_script_log", "step_scripts"),
+        default="final_script_log",
+        help=(
+            "Read actions from the latest run's final_script_log.txt or from "
+            "numerically ordered task_folder/steps/*.sh files."
+        ),
+    )
     parser.add_argument(
         "--tasks_file",
         type=str,

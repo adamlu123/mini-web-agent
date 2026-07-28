@@ -397,7 +397,7 @@ curl -s localhost:8000/v1/chat/completions -H 'Content-Type: application/json' -
     --mm-processor-kwargs '{"max_pixels":262144}'
   ```
   或一劳永逸：`cp configs/qwen3_5_train_aligned.jinja $CKPT/chat_template.jinja`。
-- teacher-forced 复现检查用 `scripts/sft_replay_all_cases_thinkfix.py`（自带模板探针）。
+- teacher-forced 复现检查用 `scripts/archive/sft_replay_all_cases_thinkfix.py`（自带模板探针）。
 - om2w 全量/集群 eval 流程与 gotchas 见 `web-agent-sft-cluster` skill
   （SFT-ALIGNED eval config、单引擎、colocate_all=false 等）。
 

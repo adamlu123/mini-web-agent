@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
+# Archived: this launcher targets a SkyRL config outside src/miniswewebagent/config.
 # Self-contained launcher for the local 4-GPU web-agent RL run on Qwen3.5-9B
-# over om2w *easy* tasks. Mirrors scripts/run_web_agent_easy_4gpu.sh but
+# over om2w *easy* tasks. Mirrors scripts/archive/run_web_agent_easy_4gpu.sh but
 # points at the 9B model + 4gpu config (tp=1 × 4 engines, gpu_mem_util=0.65).
 #
 # Usage:
-#   bash scripts/run_web_agent_9b_easy_4gpu.sh
+#   bash scripts/archive/run_web_agent_9b_easy_4gpu.sh
 #
 # Override knobs (env vars):
 #   CONFIG_NAME    — yaml under SkyRL/echo_configs/ (default 9B easy 4gpu config)

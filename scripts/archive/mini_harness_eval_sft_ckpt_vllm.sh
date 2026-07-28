@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Archived: its default benchmark YAML is no longer in src/miniswewebagent/config.
 # 用历史 miniswewebagent harness 评测 SFT 后的 HuggingFace 格式 checkpoint。
 # 这个 wrapper 固定使用 SFT prompt 与 <think>/<bash>/<answer> 解析配置；
 # 其余运行参数仍由 scripts/mini_harness_eval_sft_vllm.sh 统一处理。

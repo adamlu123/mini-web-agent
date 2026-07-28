@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
+# Archived: this launcher targets a SkyRL config outside src/miniswewebagent/config.
 # Per-user launcher for the 2-GPU web-agent RL run on Qwen3.5-0.8B over
-# om2w *hard* tasks. Mirrors scripts/run_web_agent_hard_4gpu.sh but with
+# om2w *hard* tasks. Mirrors scripts/archive/run_web_agent_hard_4gpu.sh but with
 # all paths pointed at /data/t-yifeili/ and ~/cred.sh.
 #
 # Usage:
-#   bash scripts/run_web_agent_yifei.sh
+#   bash scripts/archive/run_web_agent_yifei.sh
 #
 # Override knobs (env vars):
 #   CONFIG_NAME    — yaml under ${SKYRL_DIR}/echo_configs/ (default 2-GPU 0.8B)

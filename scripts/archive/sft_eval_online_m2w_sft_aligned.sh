@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
+# Archived: this launcher targets eval configs outside src/miniswewebagent/config.
 # ONLINE om2w eval of the 9B web-agent SFT checkpoint, with the rollout prompt /
 # action-format / harness ALIGNED to the SFT training data (prompt_mode=sft,
 # parser=bash, env sft_mode=true). This is the prompt-aligned counterpart to
-# scripts/sft_eval_online_m2w_q35_9b.sh (which used the qwen35 tool-call prompt
+# scripts/archive/sft_eval_online_m2w_q35_9b.sh (which used the qwen35 tool-call prompt
 # and is therefore mismatched to the <think>/<bash>/<answer> SFT model).
 #
 # What "aligned" means here (see configs/qwen35_9b_web_agent_easy_eval_sft.yaml):
@@ -14,9 +15,9 @@
 #   - judge (osw_judge / WebJudge_Online_Mind2Web) is UNCHANGED -> same eval target
 #
 # Usage:
-#   bash scripts/sft_eval_online_m2w_sft_aligned.sh                 # full easy train+val
-#   SMOKE=1 bash scripts/sft_eval_online_m2w_sft_aligned.sh         # 1 task, concurrency 1
-#   WEB_SFT_CKPT=/path/to/hf/ckpt RUN_TAG=sftA bash scripts/sft_eval_online_m2w_sft_aligned.sh
+#   bash scripts/archive/sft_eval_online_m2w_sft_aligned.sh         # full easy train+val
+#   SMOKE=1 bash scripts/archive/sft_eval_online_m2w_sft_aligned.sh # 1 task, concurrency 1
+#   WEB_SFT_CKPT=/path/to/hf/ckpt RUN_TAG=sftA bash scripts/archive/sft_eval_online_m2w_sft_aligned.sh
 #
 # Requires the same online prerequisites as run_local_eval.sh: 4 GPUs +
 # Browserbase / judge creds (sourced below from cred.sh).

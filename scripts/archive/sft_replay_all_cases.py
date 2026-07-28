@@ -1,5 +1,5 @@
 ﻿#!/usr/bin/env python3
-"""Replay web-agent SFT data one assistant turn at a time.
+"""Archived utility for replaying web-agent SFT data one assistant turn at a time.
 
 For every GPT turn in each ShareGPT example, this script sends the exact gold
 prefix before that turn to an OpenAI-compatible chat-completions endpoint and

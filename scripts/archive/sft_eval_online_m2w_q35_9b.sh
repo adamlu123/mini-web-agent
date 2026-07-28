@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Archived: this launcher targets an eval config outside src/miniswewebagent/config.
 # Script 2/3 -- ONLINE om2w (Mind2Web-online) eval of the 9B web-agent SFT
 # checkpoint. Thin wrapper around run_local_eval.sh: it points the eval driver
 # at the trained HF checkpoint (instead of the base Qwen3.5-9B weights) and runs
@@ -10,8 +11,8 @@
 # (safetensors + config + tokenizer), so no FSDP->HF conversion is needed.
 #
 # Usage:
-#   bash scripts/sft_eval_online_m2w_q35_9b.sh
-#   CKPT=/path/to/hf/ckpt RUN_TAG=sft9b_ep1 bash scripts/sft_eval_online_m2w_q35_9b.sh
+#   bash scripts/archive/sft_eval_online_m2w_q35_9b.sh
+#   CKPT=/path/to/hf/ckpt RUN_TAG=sft9b_ep1 bash scripts/archive/sft_eval_online_m2w_q35_9b.sh
 #
 # Requires the same online-eval prerequisites as run_local_eval.sh: GPUs +
 # Browserbase / judge creds (sourced inside run_local_eval.sh from cred.sh).

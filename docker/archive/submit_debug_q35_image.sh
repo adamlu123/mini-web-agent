@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Archived: this submitter serves the legacy SkyRL/root-config debug workflow.
 # Launch a long-lived 8xB200 DEBUG pod on the *generic* qwen3.5 image
 #   aifrontiers.azurecr.io/nvidia25.11-pytorch2.10.0-te2.13-deepspeed0.18.9-fa2main-vllm0.18.0:20260415
 # instead of our own t-yifeili/echo-rl image. The point: qwen3.5 is reported to
@@ -7,7 +8,7 @@
 # pod lets us test echo_rl.web_agent against that known-good runtime.
 #
 # Unlike submit_debug_pure_image.sh, this image does NOT bake docker/
-# requirements.txt; the uploaded driver (docker/run_debug_q35_image.sh) installs
+# requirements.txt; the uploaded driver (docker/archive/run_debug_q35_image.sh) installs
 # only the deps the image is MISSING (keeping its baked vllm/torch/te stack
 # intact) and then `--no-deps -e`'s the four editables.
 #
@@ -16,8 +17,8 @@
 # tiny exec of it -- keeps the `kubectl create` request body clear of the
 # Cloudflare WAF that blocks big inline shell preambles.
 #
-#   bash docker/submit_debug_q35_image.sh
-#   GPUS=8 bash docker/submit_debug_q35_image.sh   # override gpu count
+#   bash docker/archive/submit_debug_q35_image.sh
+#   GPUS=8 bash docker/archive/submit_debug_q35_image.sh   # override gpu count
 #
 # After it returns, exec into the pod (wait for the .debug_ready marker under
 # $PVC/envs/q35-image/):
@@ -63,4 +64,4 @@ bash "$SUBMIT" \
     --cpu 64 --memory 512Gi --shm 64Gi \
     --secret-volume echo-rl-creds:/run/secrets/echo-rl-creds \
     --secret-volume echo-rl-openai:/run/secrets/echo-rl-openai \
-    --cmd 'exec bash $PVC_MOUNT/$USER_ALIAS/runs/$JOB_NAME/mini-web-agent/docker/run_debug_q35_image.sh'
+    --cmd 'exec bash $PVC_MOUNT/$USER_ALIAS/runs/$JOB_NAME/mini-web-agent/docker/archive/run_debug_q35_image.sh'

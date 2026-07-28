@@ -14,30 +14,41 @@ description: >-
 
 # 分布式 train+eval 与断点续跑(2026-07-09 起)
 
-支持三种模式,A/B 的 eval 为 mini-web-agent 自带 OM2W harness:每节点本地
+支持四种模式,A/B 的 eval 为 mini-web-agent 自带 OM2W harness:每节点本地
 `vllm serve` + miniswewebagent agent 循环(train 侧是 LlamaFactory,全程
 不涉及 SkyRL):
 
 - **A. train + 多节点 eval 一条 job**(训练可从 ckpt 续):训练用几个节点,
-  训完这些节点就地并行 eval。
-- **B. 独立多节点 eval**(断点可续):评任意 PVC 上的 HF ckpt。
+  训完这些节点就地并行 eval。LlamaFactory 输出故意不带 PhiTrain
+  manifest,eval 使用 manifestless 兼容 profile。
+- **B. 独立多节点 eval**(断点可续):评 PVC 上带 PhiTrain runtime manifest
+  的 WebWright HF ckpt,或走显式兼容路径评兼容的旧 Qwen3.5/LlamaFactory
+  full-multimodal HF ckpt。
 - **C. 已有推理轨迹只判分**(无 generation):直接对用户指定的
   `TRAJECTORIES_DIR` 跑原版 OM2W WebJudge,不加载 ckpt、不启动 vLLM/
   Browserbase、不占 GPU。
+- **D. step scripts + 最后 run 截图只判分**:action history 只读每个
+  `<task_id>/steps/*.sh`(按文件名中的数字排序),图片只读数值最大的
+  `<task_id>/final_runs/run_<N>/screenshots/*.png`;明确不读
+  `final_script_log.txt`。适合 CPU-only 高并发重判已有轨迹。
 
 ## 运行协议(提交前用 AskUserQuestion 问清)
 
-1. **先选 A/B/C。** A/B 才问 `NODES`;C 不问节点或 ckpt。
+1. **先选 A/B/C/D。** A/B 才问 `NODES`;C/D 不问节点或 ckpt。
 2. **是全新训练、续训、独立生成+eval、还是已有轨迹只判分?** 续训要
-   checkpoint-N 路径 + 目标总 epoch;B 要已 vision merge 的 ckpt;C 要
-   `TRAJECTORIES_DIR` + 独立持久化的 `JUDGE_OUTPUT_DIR`。
+   checkpoint-N 路径 + 目标总 epoch;B 要确认 ckpt 是否带
+   `web_agent_runtime.json`(PhiTrain WebWright 必须带;旧 ckpt 必须已
+   vision merge);C 要
+   `TRAJECTORIES_DIR` + 独立持久化的 `JUDGE_OUTPUT_DIR`;D 还要确认
+   `<task_id>/steps/*.sh` 与最后 `final_runs/run_<N>/screenshots/` 存在。
 3. **eval 范围/并发?** `TASK_LEVEL`(all=300/easy80/medium143/hard77)、
    `TOTAL_WORKERS`(A/B,默认 80=browserbase 安全水位);C 的范围由轨迹目录
-   内 task_id 决定,另问 `JUDGE_NUM_WORKERS`(默认 32)。
+   内 task_id 决定,另问 `JUDGE_NUM_WORKERS`(C 默认 32,D 默认 150)。
 4. **p0/p1 与 PRIORITY_CLASS_NAME**:p0/p1 只进 job 名和 dashboard 分桶,
    **真正的调度优先级是 `PRIORITY_CLASS_NAME`**(默认 high);用户选 p1 时
    一并问要不要把 class 降成 medium(真让路,可能排队)。C 在本机可见轨迹时
-   直接运行;轨迹只在 PVC 时才提交单节点 CPU job。
+   直接运行;轨迹只在 PVC 时才提交单节点 CPU job。D 必须是 finite job,
+   不得用 sleep/interactive 保活。
 
 ## 四条命令
 
@@ -53,10 +64,18 @@ TARGET_TOTAL_EPOCHS=4 \
 NODES=4 SFT_CONFIG=examples/train_full/<原yaml> ... bash docker/submit_sft_eval_q35_image.sh
 # (纯训练不带 eval 用 submit_sft_q35_image.sh,同样支持这两个 env)
 
-# B. 独立多节点 eval;断点续评 = 原样重提同一 EVAL_RUN_ID
-EVAL_CKPT=/mnt/pvc/<alias>/models/<已merge的ckpt> NODES=4 TASK_LEVEL=all \
+# B1. PhiTrain WebWright 独立 eval;manifest 缺失或不匹配会在 GPU 启动前失败
+EVAL_CKPT=/mnt/pvc/<alias>/.../last_hf REQUIRE_RUNTIME_MANIFEST=1 \
+NODES=4 TASK_LEVEL=all \
 bash docker/submit_dist_eval_q35_image.sh
 # 重跑失败任务(result.json 带 run_exception 的):前面加 RETRY_FAILED=1
+
+# B2. 不带 web_agent_runtime.json 的旧 Qwen3.5/LlamaFactory full ckpt 兼容路径
+# 不设置 REQUIRE_RUNTIME_MANIFEST(默认 0);使用原来的 65k/48k/4k/10-turn、
+# configs/qwen3_5_train_aligned.jinja、无 blank image、无 stop override。
+# 若 manifest 存在则始终严格校验;REQUIRE_RUNTIME_MANIFEST=0 不能绕过坏 manifest。
+EVAL_CKPT=/mnt/pvc/<alias>/models/<已merge的旧ckpt> NODES=4 TASK_LEVEL=all \
+bash docker/submit_dist_eval_q35_image.sh
 
 # C. 已有推理轨迹只判分;无 ckpt/vLLM/Browserbase/GPU
 # 必须从 mini-web-agent repo root 执行;同一 JUDGE_OUTPUT_DIR 重跑会跳过已判 task_id
@@ -71,6 +90,20 @@ python scripts/eval_with_original_om2w.py \
   --model o4-mini \
   --score_threshold 3 \
   --num_worker 32
+
+# D. steps/*.sh 作 action history + 最后 run 的全部截图;无 GPU
+# 绝不读取 final_script_log.txt。同一输出目录可断点续判。
+TRAJECTORIES_DIR=<用户指定的绝对路径>
+JUDGE_OUTPUT_DIR=<与轨迹目录分开的持久化绝对路径>
+python scripts/eval_with_original_om2w.py \
+  --trajectories_dir "$TRAJECTORIES_DIR" \
+  --output_path "$JUDGE_OUTPUT_DIR" \
+  --summary_path "$JUDGE_OUTPUT_DIR/run_summary_judge.json" \
+  --tasks_file src/miniswewebagent/run/benchmarks/om2w_260220.json \
+  --action_history_source step_scripts \
+  --model o4-mini \
+  --score_threshold 3 \
+  --num_worker 150
 ```
 
 模式 C 的 `TRAJECTORIES_DIR` 每个直接子目录必须以 task_id 命名,并包含
@@ -83,10 +116,23 @@ generic `submit_job.sh` 提交 **1 节点、0 GPU** CPU job,上传
 所以 job command 要先把上传目录软链到
 `/home/luyadong/sandbox/mini-web-agent`,再执行同一 Python 命令。
 
+D 与 C 共用 evaluator、任务映射、截图排序和断点输出,但 action source
+固定为 `step_scripts`:每个非空 `.sh` 文件整体作为一条 action,按文件名
+中的数字自然排序;不会在 steps 缺失时 fallback 到 `final_script_log.txt`。
+PVC-only 轨迹提交为单节点 **0 GPU** CPU job;job 名必须含 p0/p1/p2,
+metadata 必须带 `submitter`、canonical `workstream`、`priority`,并使用匹配
+的 priority class。p0 必须 finite 且 class=high。cluster job 的 `--cmd`
+只执行 `docker/run_step_script_judge.sh`,所有 preflight、secret 加载与 judge
+参数都放在该上传脚本内,避免长 inline command 被 API 入口 WAF 拒绝。
+Mode D credential secret 从 `/home/luyadong/cred.sh` 创建;runner 明确用其中
+`OPENAI_GATEWAY_API_KEY` + `OPENAI_GATEWAY_ENDPOINT`,并覆盖该文件内可能存在的
+`OPENAI_API_KEY`,不得改走 direct OpenAI key。
+
 **首次上全量前先冒烟**(几分钟,验证 RANK 注入/分片/barrier/judge 全链):
 
 ```bash
-EVAL_CKPT=<ckpt> NODES=4 TASK_LEVEL=easy LIMIT=8 TOTAL_WORKERS=8 \
+EVAL_CKPT=<ckpt> REQUIRE_RUNTIME_MANIFEST=1 \
+NODES=4 TASK_LEVEL=easy LIMIT=8 TOTAL_WORKERS=8 \
 EVAL_RUN_ID=dist_eval_smoke1 bash docker/submit_dist_eval_q35_image.sh
 # 日志核对:4 个 pod 各打出 shard=K/4;各 Selected 2 task(s);
 # master 有 "shard rcs: 0 0 0 0" + judge 汇总;job 最终 Completed。
@@ -96,8 +142,17 @@ EVAL_RUN_ID=dist_eval_smoke1 bash docker/submit_dist_eval_q35_image.sh
 
 - **分片**:任务文件顺序固定,每 pod 算 `idx % WORLD_SIZE == RANK`
   (volcano pytorch 插件注入 RANK/WORLD_SIZE),分片互不重叠、无通信。
-- **推理**:每节点本地 `vllm serve`(tp=8,自动挂
-  `configs/qwen3_5_train_aligned.jinja` + sliding window 48000)。
+- **推理**:每节点本地 `vllm serve`(tp=8)。带
+  `web_agent_runtime.json` 的 PhiTrain WebWright ckpt 先做严格 preflight,
+  且只接受 Qwen3.5-4B + `full_multimodal` + `legacy_blank_v1`;从 manifest
+  解析并校验 bundled chat template、32k model length、16k input、4k output、
+  keep 1 turn、processor pixel bounds、`black_56` text-only image 与 stop
+  sequence。Mode A 与旧 manifestless ckpt 使用
+  `configs/qwen3_5_train_aligned.jinja` + 65k/48k/4k/10-turn、无 blank image、
+  无 stop override 的兼容 profile。
+- **prompt 渲染**:`sft_state_debug` system asset 按训练数据逐字节传入;
+  其中看似 Jinja 的 `{{ start_url }}` / `{{ workspace_dir }}` 是给模型看的
+  字面示例,不替换。第一条 user/instance template 仍按任务动态渲染。
 - **汇合**:所有分片写同一 PVC 目录;干完写 `shards/shard_K_of_N.done`
   (内容含 JOB_NAME+rc,旧 job 残留不误触发);master 等齐后 `--judge-only`
   统一判分。
@@ -127,20 +182,31 @@ EVAL_RUN_ID=dist_eval_smoke1 bash docker/submit_dist_eval_q35_image.sh
 | 逐任务轨迹/产物 | `RUN_ROOT/outputs/<task_id>/`(result.json = 完成判据) |
 | 各分片生成汇总 | `RUN_ROOT/logs/<EVAL_RUN_ID>/generation_summary_shardKofN.json` |
 | 各节点 vLLM 日志 | `RUN_ROOT/logs/vllm_shardK.log` |
+| strict manifest preflight 日志 | `RUN_ROOT/logs/runtime_preflight_shardK.log` |
+| strict manifest 解析结果 | `RUN_ROOT/logs/resolved_runtime_shardK.json` |
 
 模式 C 不使用 `RUN_ROOT`;结果写到用户指定目录:
 
 | 内容 | 路径 |
 |---|---|
-| 逐任务 WebJudge JSONL | `JUDGE_OUTPUT_DIR/WebJudge_Online_Mind2Web_eval_<model>_score_threshold_<N>_auto_eval_results.json` |
-| 汇总 | 进程结束时 stdout 的 `Success rate: passed/total`;传 `--summary_path` 时同时写 JSON |
+| C 逐任务 WebJudge JSONL | `JUDGE_OUTPUT_DIR/WebJudge_Online_Mind2Web_eval_<model>_score_threshold_<N>_auto_eval_results.json` |
+| C 汇总 | 进程结束时 stdout 的 `Success rate: passed/total`;传 `--summary_path` 时同时写 JSON |
+| D 逐任务 WebJudge JSONL | `JUDGE_OUTPUT_DIR/WebJudge_Online_Mind2Web_eval_<model>_score_threshold_<N>_auto_eval_results.json` |
+| D 汇总 | `JUDGE_OUTPUT_DIR/run_summary_judge.json` |
 
 ## 约束与坑
 
 - **续训 NODES 必须与原 run 一致**;`TARGET_TOTAL_EPOCHS` 是含已训部分的总
   目标,不填=只补完原 yaml 计划的 epoch。
-- 独立 eval 的 ckpt 必须已 vision merge(`vision.safetensors` 在);模式 A
-  链式 eval 用的是 master 刚 sync+merge 的 ckpt,自动满足。
+- PhiTrain WebWright 独立 eval 必须设置 `REQUIRE_RUNTIME_MANIFEST=1`;这个
+  flag 只控制 manifest 缺失时是否 fail closed,不是 profile selector。
+  manifest 只要存在就始终严格校验,设 0 也不能绕过。缺 manifest、prompt
+  asset hash 不符、非 `legacy_blank_v1`、vLLM 太旧或手工 inference override
+  冲突都会在 GPU 启动前失败。只有明确排查时才设
+  `ALLOW_TRAINING_CONTRACT_OVERRIDE=1`;它不绕过 asset/hash/schema 校验。
+- manifestless 独立 eval 的 ckpt 必须已包含完整 vision tensors;模式 A
+  链式 eval 用的是 master 刚 sync+merge 的 ckpt,自动满足。manifestless
+  路径不注入 `black_56`,也不声称与 PhiTrain WebWright tokenization 对齐。
 - 总 browserbase 并发 = TOTAL_WORKERS(自动均分到节点),80 是验证过的水位。
 - sliding window 对 aria/URL 密集内容会低估 token,少数任务仍可能 vLLM 400
   → `RETRY_FAILED=1` 重提补跑。
@@ -152,6 +218,9 @@ EVAL_RUN_ID=dist_eval_smoke1 bash docker/submit_dist_eval_q35_image.sh
   `OPENAI_API_KEY`;不要传 legacy phyagi gateway token。
 - 模式 C 只接受上述 `final_runs/run_*` 轨迹布局;先抽查一个 task 目录。缺
   task mapping、action log 或截图时脚本会打印 `Skip ...` 而不是补做 generation。
+- 模式 D 的 action history 只接受 `<task_id>/steps/*.sh`;不要传
+  `final_script_log.txt`,也不要在缺 step scripts 时 fallback。图片仍取数值
+  最大的 `final_runs/run_<N>/screenshots/` 下全部 PNG。
 - 模式 C 的 `JUDGE_OUTPUT_DIR` 必须和轨迹目录分开并持久化;换输出目录会从头
   判,复用输出目录才会按 JSONL 里的 task_id 断点续跑。
 
@@ -162,9 +231,11 @@ EVAL_RUN_ID=dist_eval_smoke1 bash docker/submit_dist_eval_q35_image.sh
 | `docker/submit_sft_eval_q35_image.sh` | 模式 A 提交(train→多节点 eval) |
 | `docker/submit_dist_eval_q35_image.sh` | 模式 B 提交(独立多节点 eval/续评) |
 | `docker/run_dist_eval_q35_image.sh` | in-pod:每节点 vLLM+分片生成,master judge 汇总 |
+| `src/miniswewebagent/utils/web_agent_runtime.py` | PhiTrain manifest schema/preflight/asset hash 与 inference contract 解析 |
+| `docker/run_step_script_judge.sh` | 模式 D CPU pod:布局 preflight + 150-worker step-script judge |
 | `docker/prepare_warm_restart.py` | in-pod:一键续训准备(备份+merge+折算生成 yaml) |
 | `src/miniswewebagent/run/benchmarks/om2w.py` | harness 入口(--num-shards/--resume/--retry-failed/--judge-only) |
-| `scripts/eval_with_original_om2w.py` | 模式 C:vendored 原版 WebJudge,只消费已有轨迹 |
+| `scripts/eval_with_original_om2w.py` | 模式 C/D:vendored 原版 WebJudge,只消费已有轨迹 |
 | `LlamaFactory/examples/train_full/*_cont*.yaml` | 手写续训 yaml 的参考例子 |
 
 手工 warm-restart 折算(特殊情况用):备份 ckpt → vision merge → 改 yaml

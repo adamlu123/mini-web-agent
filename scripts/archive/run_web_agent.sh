@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Archived: this launcher targets a SkyRL config outside src/miniswewebagent/config.
 # Launch the web-agent SkyRL training run. Mirrors run_echo_terminal_agent.sh
 # but points at the web-agent entrypoint and threads the judge / browserbase
 # credentials through.

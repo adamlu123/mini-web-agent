@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Archived: not part of the active src/miniswewebagent/config YAML run path.
 set -euo pipefail
 
 if [[ ${1:-} == "" ]]; then
@@ -28,7 +29,7 @@ git -C "$SKYRL_DIR" apply "$REPO_ROOT/patches/skyrl_minimal_hooks.patch"
 cp -a "$REPO_ROOT/echo_rl" "$SKYRL_DIR/"
 mkdir -p "$SKYRL_DIR/echo_configs"
 cp -a "$REPO_ROOT/configs/." "$SKYRL_DIR/echo_configs/"
-cp "$REPO_ROOT/scripts/run_echo_terminal_agent.sh" "$SKYRL_DIR/run_echo_terminal_agent.sh"
+cp "$REPO_ROOT/scripts/archive/run_echo_terminal_agent.sh" "$SKYRL_DIR/run_echo_terminal_agent.sh"
 chmod +x "$SKYRL_DIR/run_echo_terminal_agent.sh"
 
 echo "Applied ECHO minimal hooks and copied readable ECHO files into $SKYRL_DIR"

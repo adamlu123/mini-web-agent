@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
+# Archived: this launcher targets a SkyRL config outside src/miniswewebagent/config.
 # Self-contained launcher for the 4-GPU web-agent RL run on Qwen3.5-4B over
 # om2w *hard* tasks. Sources credentials, sets up env, and invokes the SkyRL
 # entrypoint from inside the SkyRL repo (where `apply_hooks_to_skyrl.sh`
 # copied echo_rl/ and echo_configs/).
 #
 # Usage:
-#   bash scripts/run_web_agent_hard_4gpu.sh                # default prompt mode
+#   bash scripts/archive/run_web_agent_hard_4gpu.sh        # default prompt mode
 #   CONFIG_NAME=qwen35_4b_web_agent_hard_4gpu_self_launch.yaml \
-#     bash scripts/run_web_agent_hard_4gpu.sh              # self_launch_persistent_browser
+#     bash scripts/archive/run_web_agent_hard_4gpu.sh      # self_launch_persistent_browser
 #
 # Override knobs (env vars):
 #   CONFIG_NAME    — yaml under SkyRL/echo_configs/ (default hard 4gpu config)

@@ -393,7 +393,7 @@ if [ "$RC" -eq 0 ] && [ "${EVAL_AFTER:-0}" = "1" ]; then
       echo "" > "$EVAL_READY"
     fi
   else
-    EVAL_DRIVER="$CODE_ROOT/mini-web-agent/docker/run_eval_q35_image.sh"
+    EVAL_DRIVER="$CODE_ROOT/mini-web-agent/docker/archive/run_eval_q35_image.sh"
     if [ -d "$EVAL_CKPT_PATH" ] && [ -f "$EVAL_DRIVER" ]; then
       echo "[eval] === EVAL_AFTER=1 (skyrl) -> cluster eval on trained ckpt: $EVAL_CKPT_PATH ==="
       # The SFT phase already rsynced mini-web-agent; the eval driver still needs

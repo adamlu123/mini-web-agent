@@ -102,12 +102,12 @@ curl -s http://127.0.0.1:${PORT}/tokenize -H 'Content-Type: application/json' -d
 | 脚本 | 用途 |
 |---|---|
 | `replay_compare_turn.py <i>` | 单轮调试：取 `prompt_messages.jsonl` 第 i 行，打印完整输入/输出并与 debug bundle 对应 turn 做 diff。`--train-render` 按训练渲染手工拼 prompt 走 `/v1/completions`（绕过服务端模板），用于区分"模型没学会"和"输入不对齐"；`--no-send` 只比输入。 |
-| `scripts/sft_replay_all_cases_thinkfix.py` | 全量 teacher-forced replay + 评分。相比原版 `sft_replay_all_cases.py`：①启动即跑 2.2 的探针，服务端剥 think 直接报错退出（`--skip-template-check` 跳过）；②评分做坑 B 归一化（gold 无 think 且 pred 带空 think 前缀时剥掉再比，记录 `stripped_injected_empty_think` 标记）；③输出 `prompt_token_counts.csv`。 |
+| `scripts/archive/sft_replay_all_cases_thinkfix.py` | 全量 teacher-forced replay + 评分。相比归档原版 `scripts/archive/sft_replay_all_cases.py`：①启动即跑 2.2 的探针，服务端剥 think 直接报错退出（`--skip-template-check` 跳过）；②评分做坑 B 归一化（gold 无 think 且 pred 带空 think 前缀时剥掉再比，记录 `stripped_injected_empty_think` 标记）；③输出 `prompt_token_counts.csv`。 |
 
 复现命令（m2w_exp_0280 overfit 探针）：
 
 ```bash
-.venv/bin/python scripts/sft_replay_all_cases_thinkfix.py \
+.venv/bin/python scripts/archive/sft_replay_all_cases_thinkfix.py \
   --data m2w_exp_0280_debug_bundle/web_agent_debug_m2w_exp_0280.json \
   --media-dir <repo>/scripts \
   --out deterministic_replay_m2w_exp_0280_thinkfix --save-prompts

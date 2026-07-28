@@ -25,6 +25,8 @@
 #   TP MAX_MODEL_LEN MAX_OUTPUT_TOKENS MAX_CONTEXT_TOKENS
 #   SLIDING_WINDOW_KEEP_TURNS GPU_MEMORY_UTILIZATION
 #   MODEL_NAME CHAT_TEMPLATE RETRY_FAILED EXTRA_CONFIGS JUDGE_ENDPOINT
+#   REQUIRE_RUNTIME_MANIFEST ALLOW_TRAINING_CONTRACT_OVERRIDE
+#   EVAL_CONTRACT_PREFLIGHT_ONLY CANONICAL_REPO_LINK
 #   REPO(SFT 链复用时指到 $CODE_ROOT/mini-web-agent)
 # secrets:/run/secrets/webchain-sampling/cred.sh(browserbase + judge key)
 
@@ -53,8 +55,9 @@ if [[ -d "$REPO" ]]; then
   cp -R --no-preserve=mode,ownership,timestamps "$REPO/." "$LOCAL_REPO/"
   REPO="$LOCAL_REPO"
 fi
-mkdir -p /home/luyadong/sandbox
-ln -sfnT "$REPO" /home/luyadong/sandbox/mini-web-agent
+CANONICAL_REPO_LINK="${CANONICAL_REPO_LINK:-/home/luyadong/sandbox/mini-web-agent}"
+mkdir -p "$(dirname "$CANONICAL_REPO_LINK")"
+ln -sfnT "$REPO" "$CANONICAL_REPO_LINK"
 ENV_ROOT="$DATA_ROOT/envs/q35-mini-harness"
 REQ="$REPO/docker/requirements.txt"
 MISSING="$ENV_ROOT/requirements.missing.rank${NODE_RANK}.txt"
@@ -76,20 +79,24 @@ JUDGE_MODEL="${JUDGE_MODEL:-o4-mini}"
 JUDGE_SCORE_THRESHOLD="${JUDGE_SCORE_THRESHOLD:-3}"
 JUDGE_ENDPOINT="${JUDGE_ENDPOINT:-http://gateway.phyagi.net/api/responses}"
 TP="${TP:-8}"
-MAX_MODEL_LEN="${MAX_MODEL_LEN:-65536}"
-MAX_OUTPUT_TOKENS="${MAX_OUTPUT_TOKENS:-4096}"
-# 客户端 sliding window 预算(openrouter_model.py;0=关)。48000 是 65536 上下文
-# 下留出估算容错的验证值,防长会话 vLLM 400。
-MAX_CONTEXT_TOKENS="${MAX_CONTEXT_TOKENS:-48000}"
-SLIDING_WINDOW_KEEP_TURNS="${SLIDING_WINDOW_KEEP_TURNS:-10}"
+# Manifest-bearing checkpoints own these defaults. Explicit env values are
+# treated as requested overrides and validated before GPU startup.
+MAX_MODEL_LEN="${MAX_MODEL_LEN:-}"
+MAX_OUTPUT_TOKENS="${MAX_OUTPUT_TOKENS:-}"
+MAX_CONTEXT_TOKENS="${MAX_CONTEXT_TOKENS:-}"
+SLIDING_WINDOW_KEEP_TURNS="${SLIDING_WINDOW_KEEP_TURNS:-}"
+ALLOW_TRAINING_CONTRACT_OVERRIDE="${ALLOW_TRAINING_CONTRACT_OVERRIDE:-0}"
+REQUIRE_RUNTIME_MANIFEST="${REQUIRE_RUNTIME_MANIFEST:-0}"
+EVAL_CONTRACT_PREFLIGHT_ONLY="${EVAL_CONTRACT_PREFLIGHT_ONLY:-0}"
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.92}"
 MODEL_NAME="${MODEL_NAME:-$(basename "$EVAL_CKPT")}"
 TASKS_FILE="${TASKS_FILE:-$REPO/src/miniswewebagent/run/benchmarks/om2w_260220.json}"
-# 训练对齐的 chat template(qwen3_5 think 对齐,docs/qwen3_5_think_alignment.md)。
-# ckpt 自带的 chat_template.jinja 与它不同,不能省。置空则用 ckpt 自带模板。
-CHAT_TEMPLATE="${CHAT_TEMPLATE-$REPO/configs/qwen3_5_train_aligned.jinja}"
+# Manifest checkpoints use the exact template bundled by PhiTrain.
+CHAT_TEMPLATE_WAS_SET=0
+[[ -v CHAT_TEMPLATE ]] && CHAT_TEMPLATE_WAS_SET=1
+CHAT_TEMPLATE="${CHAT_TEMPLATE-}"
 # CHAT_TEMPLATE_NAME:相对 $REPO/configs 的模板文件名(跨机路径无关的指定方式)
-[[ -n "${CHAT_TEMPLATE_NAME:-}" ]] && CHAT_TEMPLATE="$REPO/configs/$CHAT_TEMPLATE_NAME"
+[[ -n "${CHAT_TEMPLATE_NAME:-}" ]] && { CHAT_TEMPLATE="$REPO/configs/$CHAT_TEMPLATE_NAME"; CHAT_TEMPLATE_WAS_SET=1; }
 HOST=127.0.0.1
 PORT="${PORT:-8000}"
 ENDPOINT="http://${HOST}:${PORT}/v1/chat/completions"
@@ -111,10 +118,26 @@ echo "[dist-eval] judge_model=$JUDGE_MODEL judge_workers=$JUDGE_NUM_PROC endpoin
 if ! compgen -G "$EVAL_CKPT/*.safetensors" >/dev/null && [[ ! -f "$EVAL_CKPT/model.safetensors.index.json" ]]; then
   echo "[dist-eval][error] ckpt is not HF safetensors format: $EVAL_CKPT"; exit 1
 fi
-if [[ -n "$CHAT_TEMPLATE" && ! -f "$CHAT_TEMPLATE" ]]; then
-  echo "[dist-eval][error] chat template not found: $CHAT_TEMPLATE (set CHAT_TEMPLATE= to use the ckpt's own)"; exit 1
+[[ "$REQUIRE_RUNTIME_MANIFEST" == "0" ||
+   "$REQUIRE_RUNTIME_MANIFEST" == "1" ]] || {
+  echo "[dist-eval][error] REQUIRE_RUNTIME_MANIFEST must be 0 or 1" >&2
+  exit 1
+}
+[[ "$ALLOW_TRAINING_CONTRACT_OVERRIDE" == "0" ||
+   "$ALLOW_TRAINING_CONTRACT_OVERRIDE" == "1" ]] || {
+  echo "[dist-eval][error] ALLOW_TRAINING_CONTRACT_OVERRIDE must be 0 or 1" >&2
+  exit 1
+}
+[[ "$EVAL_CONTRACT_PREFLIGHT_ONLY" == "0" ||
+   "$EVAL_CONTRACT_PREFLIGHT_ONLY" == "1" ]] || {
+  echo "[dist-eval][error] EVAL_CONTRACT_PREFLIGHT_ONLY must be 0 or 1" >&2
+  exit 1
+}
+RUNTIME_MANIFEST="$EVAL_CKPT/web_agent_runtime.json"
+if [[ "$REQUIRE_RUNTIME_MANIFEST" == "1" && ! -f "$RUNTIME_MANIFEST" ]]; then
+  echo "[dist-eval][error] checkpoint is missing required $RUNTIME_MANIFEST" >&2
+  exit 1
 fi
-
 mkdir -p "$ENV_ROOT" "$OUTPUTS_DIR" "$LOGS_DIR" "$SHARDS_DIR"
 # 清掉本 shard 的历史 done 标记(barrier 只认内容含当前 JOB_NAME 的标记,
 # 这里删除只是保持目录干净)
@@ -185,6 +208,164 @@ PY
   python -c "import openai, rich, typer, browserbase, miniswewebagent; print('[dist-eval] import preflight OK')"
 fi
 
+echo '[dist-eval] === resolve WebWright training/runtime contract ==='
+RESOLVED_RUNTIME="$LOGS_DIR/resolved_runtime_shard${NODE_RANK}.json"
+HAS_RUNTIME_MANIFEST=0
+if [[ -f "$RUNTIME_MANIFEST" ]]; then
+  HAS_RUNTIME_MANIFEST=1
+  VLLM_VERSION="$(python -c 'import vllm; print(vllm.__version__)')"
+  RUNTIME_ARGS=(
+    preflight
+    --checkpoint "$EVAL_CKPT"
+    --output "$RESOLVED_RUNTIME"
+    --vllm-version "$VLLM_VERSION"
+  )
+  [[ -n "$MAX_MODEL_LEN" ]] && RUNTIME_ARGS+=( --max-model-len "$MAX_MODEL_LEN" )
+  [[ -n "$MAX_CONTEXT_TOKENS" ]] &&
+    RUNTIME_ARGS+=( --max-context-tokens "$MAX_CONTEXT_TOKENS" )
+  [[ -n "$MAX_OUTPUT_TOKENS" ]] &&
+    RUNTIME_ARGS+=( --max-output-tokens "$MAX_OUTPUT_TOKENS" )
+  [[ -n "$SLIDING_WINDOW_KEEP_TURNS" ]] &&
+    RUNTIME_ARGS+=( --sliding-window-keep-turns "$SLIDING_WINDOW_KEEP_TURNS" )
+  [[ "$ALLOW_TRAINING_CONTRACT_OVERRIDE" == "1" ]] &&
+    RUNTIME_ARGS+=( --allow-training-contract-override )
+
+  PYTHONPATH="$REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
+    python -m miniswewebagent.utils.web_agent_runtime "${RUNTIME_ARGS[@]}" \
+    >"$LOGS_DIR/runtime_preflight_shard${NODE_RANK}.log"
+
+  mapfile -t RUNTIME_VALUES < <(
+    python - "$RESOLVED_RUNTIME" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+runtime = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+inference = runtime["resolved_inference"]
+processor = runtime["processor"]
+values = (
+    runtime["contract_id"],
+    inference["max_model_len"],
+    inference["max_context_tokens"],
+    inference["max_output_tokens"],
+    inference["sliding_window_keep_turns"],
+    runtime["resolved_model_config"]["text_only_image_policy"],
+    json.dumps(runtime["resolved_model_config"]["stop_sequences"], separators=(",", ":")),
+    processor["min_pixels"],
+    processor["max_pixels"],
+    str(Path(runtime["checkpoint_path"]) / runtime["chat_template"]["file"]),
+)
+for value in values:
+    print(value)
+PY
+  )
+  if (( ${#RUNTIME_VALUES[@]} != 10 )); then
+    echo "[dist-eval][error] runtime preflight returned ${#RUNTIME_VALUES[@]} values; expected 10" >&2
+    exit 1
+  fi
+  CONTRACT_ID="${RUNTIME_VALUES[0]}"
+  MAX_MODEL_LEN="${RUNTIME_VALUES[1]}"
+  MAX_CONTEXT_TOKENS="${RUNTIME_VALUES[2]}"
+  MAX_OUTPUT_TOKENS="${RUNTIME_VALUES[3]}"
+  SLIDING_WINDOW_KEEP_TURNS="${RUNTIME_VALUES[4]}"
+  TEXT_ONLY_IMAGE_POLICY="${RUNTIME_VALUES[5]}"
+  STOP_SEQUENCES_JSON="${RUNTIME_VALUES[6]}"
+  MIN_PIXELS="${RUNTIME_VALUES[7]}"
+  MAX_PIXELS="${RUNTIME_VALUES[8]}"
+  CONTRACT_CHAT_TEMPLATE="${RUNTIME_VALUES[9]}"
+  if [[ -n "$CHAT_TEMPLATE" ]] &&
+      [[ "$(realpath -m "$CHAT_TEMPLATE")" != "$(realpath -m "$CONTRACT_CHAT_TEMPLATE")" ]] &&
+      [[ "$ALLOW_TRAINING_CONTRACT_OVERRIDE" != "1" ]]; then
+    echo "[dist-eval][error] CHAT_TEMPLATE conflicts with manifest template $CONTRACT_CHAT_TEMPLATE" >&2
+    exit 1
+  fi
+  CHAT_TEMPLATE="${CHAT_TEMPLATE:-$CONTRACT_CHAT_TEMPLATE}"
+else
+  # Compatibility for the existing LlamaFactory Mode A chain and legacy
+  # already-merged Mode B checkpoints. These checkpoints predate the PhiTrain
+  # runtime manifest, so preserve their previous launcher defaults rather than
+  # silently treating them as WebWright-aligned.
+  echo "[dist-eval][warning] no runtime manifest; using unvalidated manifestless compatibility defaults" >&2
+  echo "[dist-eval][warning] checkpoint must already contain the full vision model" >&2
+  echo "[dist-eval][warning] set REQUIRE_RUNTIME_MANIFEST=1 for PhiTrain WebWright checkpoints" >&2
+  CONTRACT_ID="manifestless_compat"
+  MAX_MODEL_LEN="${MAX_MODEL_LEN:-65536}"
+  MAX_CONTEXT_TOKENS="${MAX_CONTEXT_TOKENS:-48000}"
+  MAX_OUTPUT_TOKENS="${MAX_OUTPUT_TOKENS:-4096}"
+  SLIDING_WINDOW_KEEP_TURNS="${SLIDING_WINDOW_KEEP_TURNS:-10}"
+  TEXT_ONLY_IMAGE_POLICY="none"
+  STOP_SEQUENCES_JSON="[]"
+  if [[ "$CHAT_TEMPLATE_WAS_SET" != "1" ]]; then
+    CHAT_TEMPLATE="$REPO/configs/qwen3_5_train_aligned.jinja"
+  fi
+fi
+
+for numeric_name in \
+  MAX_MODEL_LEN MAX_CONTEXT_TOKENS MAX_OUTPUT_TOKENS \
+  SLIDING_WINDOW_KEEP_TURNS; do
+  numeric_value="${!numeric_name}"
+  [[ "$numeric_value" =~ ^[1-9][0-9]*$ ]] || {
+    echo "[dist-eval][error] $numeric_name must be a positive integer: $numeric_value" >&2
+    exit 1
+  }
+done
+STOP_SEQUENCES_JSON="$(
+  python - "$STOP_SEQUENCES_JSON" <<'PY'
+import json
+import sys
+
+value = json.loads(sys.argv[1])
+if not isinstance(value, list) or not all(
+    isinstance(item, str) and item for item in value
+):
+    raise SystemExit("stop sequences must be a JSON list of non-empty strings")
+print(json.dumps(value, separators=(",", ":")))
+PY
+)"
+VLLM_MM_ARGS=()
+MM_PROCESSOR_DESCRIPTION="<checkpoint defaults>"
+if [[ "$HAS_RUNTIME_MANIFEST" == "1" ]]; then
+  for numeric_name in MIN_PIXELS MAX_PIXELS; do
+    numeric_value="${!numeric_name}"
+    [[ "$numeric_value" =~ ^[1-9][0-9]*$ ]] || {
+      echo "[dist-eval][error] $numeric_name must be a positive integer: $numeric_value" >&2
+      exit 1
+    }
+  done
+  [[ "$TEXT_ONLY_IMAGE_POLICY" == "black_56" ]] || {
+    echo "[dist-eval][error] text-only image policy must be black_56: $TEXT_ONLY_IMAGE_POLICY" >&2
+    exit 1
+  }
+  [[ "$STOP_SEQUENCES_JSON" != "[]" ]] || {
+    echo "[dist-eval][error] manifest stop sequences must not be empty" >&2
+    exit 1
+  }
+  (( MIN_PIXELS <= MAX_PIXELS )) || {
+    echo "[dist-eval][error] MIN_PIXELS exceeds MAX_PIXELS" >&2
+    exit 1
+  }
+  MM_PROCESSOR_KWARGS="{\"min_pixels\":${MIN_PIXELS},\"max_pixels\":${MAX_PIXELS},\"use_fast\":false}"
+  VLLM_MM_ARGS=( --mm-processor-kwargs "$MM_PROCESSOR_KWARGS" )
+  MM_PROCESSOR_DESCRIPTION="$MM_PROCESSOR_KWARGS"
+elif [[ "$TEXT_ONLY_IMAGE_POLICY" != "none" ]]; then
+  echo "[dist-eval][error] manifestless compatibility requires text-only image policy none" >&2
+  exit 1
+fi
+if (( MAX_CONTEXT_TOKENS + MAX_OUTPUT_TOKENS > MAX_MODEL_LEN )); then
+  echo "[dist-eval][error] context budget + output exceeds max model length: $MAX_CONTEXT_TOKENS + $MAX_OUTPUT_TOKENS > $MAX_MODEL_LEN" >&2
+  exit 1
+fi
+[[ -z "$CHAT_TEMPLATE" || -f "$CHAT_TEMPLATE" ]] || {
+  echo "[dist-eval][error] resolved chat template not found: $CHAT_TEMPLATE" >&2
+  exit 1
+}
+echo "[dist-eval] contract=$CONTRACT_ID max_len=$MAX_MODEL_LEN input_budget=$MAX_CONTEXT_TOKENS output=$MAX_OUTPUT_TOKENS"
+echo "[dist-eval] template=$CHAT_TEMPLATE image_policy=$TEXT_ONLY_IMAGE_POLICY stop_sequences=$STOP_SEQUENCES_JSON mm_processor=$MM_PROCESSOR_DESCRIPTION"
+if [[ "$EVAL_CONTRACT_PREFLIGHT_ONLY" == "1" ]]; then
+  echo "[dist-eval] contract preflight complete; exiting before credentials/GPU startup"
+  exit 0
+fi
+
 echo '[dist-eval] === source secrets ==='
 source "$CREDS_FILE"
 if [[ -n "${PHYAGI_API_KEY:-}" ]]; then
@@ -199,42 +380,6 @@ fi
 export TRANSFORMERS_NO_ADVISORY_WARNINGS=1
 export NCCL_DEBUG="${NCCL_DEBUG_OVERRIDE:-WARN}"
 
-# === 自动 vision merge(评中间 checkpoint-N 时缺 vision tower)================
-# 文本 SFT 的中间 ckpt 缺 vision 权重,直接 serve 必挂("visual.* not
-# initialized")。缺 vision.safetensors 时:master 把 ckpt 拷到提交者自己的
-# models/ 下(不动原目录——可能属于别人且易失)再从 HF 缓存的 base 补全;
-# worker 等合并后的目录出现。ckpt 本就完整时零开销。MERGE_VISION=0 关闭。
-if [[ ! -f "$EVAL_CKPT/vision.safetensors" && "${MERGE_VISION:-1}" == "1" ]]; then
-  MERGED_CKPT="$DATA_ROOT/models/evalmerge_$(basename "$(dirname "$EVAL_CKPT")")_$(basename "$EVAL_CKPT")"
-  if [[ "$IS_MASTER" == "1" ]]; then
-    if [[ ! -f "$MERGED_CKPT/vision.safetensors" ]]; then
-      echo "[dist-eval] ckpt lacks vision.safetensors -> copy+merge to $MERGED_CKPT (takes a few min)"
-      rm -rf "$MERGED_CKPT.tmp"
-      mkdir -p "$MERGED_CKPT.tmp"
-      # 只拷根目录的最终模型,跳过 checkpoint-* 中间产物(评 output_dir 根时
-      # 它们能有几百 GB)
-      for f in "$EVAL_CKPT"/*; do
-        case "$(basename "$f")" in checkpoint-*) continue;; esac
-        cp -r --no-preserve=mode,ownership "$f" "$MERGED_CKPT.tmp/"
-      done
-      BASE_MODEL_ID="${BASE_MODEL_ID:-Qwen/Qwen3.5-9B}"
-      HFH="${HF_HOME:-$DATA_ROOT/hf_cache}"
-      BASE_DIR="$(ls -d "$HFH/hub/models--${BASE_MODEL_ID//\//--}/snapshots/"*/ 2>/dev/null | head -1)"
-      [[ -n "$BASE_DIR" ]] || { echo "[dist-eval][error] base snapshot not found under $HFH (need it for vision merge)"; exit 1; }
-      python "$REPO/scripts/merge_vision_from_base.py" --ckpt "$MERGED_CKPT.tmp" --base "$BASE_DIR"
-      [[ -f "$MERGED_CKPT.tmp/vision.safetensors" ]] || { echo "[dist-eval][error] vision merge failed"; exit 1; }
-      mv "$MERGED_CKPT.tmp" "$MERGED_CKPT"
-    else
-      echo "[dist-eval] reusing existing vision-merged copy: $MERGED_CKPT"
-    fi
-  else
-    echo "[dist-eval] [worker $NODE_RANK] waiting for master's vision-merged ckpt: $MERGED_CKPT"
-    for _ in $(seq 1 240); do [[ -f "$MERGED_CKPT/vision.safetensors" ]] && break; sleep 15; done
-    [[ -f "$MERGED_CKPT/vision.safetensors" ]] || { echo "[dist-eval][error] timed out waiting for merged ckpt"; exit 1; }
-  fi
-  EVAL_CKPT="$MERGED_CKPT"
-fi
-
 echo '[dist-eval] === GPU preflight ==='
 nvidia-smi -L
 
@@ -248,8 +393,9 @@ vllm serve "$EVAL_CKPT" \
   --tensor-parallel-size "$TP" \
   --max-model-len "$MAX_MODEL_LEN" \
   --gpu-memory-utilization "$GPU_MEMORY_UTILIZATION" \
+  "${VLLM_MM_ARGS[@]}" \
   --trust-remote-code \
-  "${VLLM_TEMPLATE_ARGS[@]}" ${VLLM_ARGS:-} >"$VLLM_LOG_FILE" 2>&1 &
+  "${VLLM_TEMPLATE_ARGS[@]}" >"$VLLM_LOG_FILE" 2>&1 &
 VLLM_PID=$!
 cleanup() { [[ -n "${VLLM_PID:-}" ]] && kill "$VLLM_PID" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
@@ -285,7 +431,7 @@ fi
 
 echo "[dist-eval] === shard $NODE_RANK/$NNODES generation (resume on) ==="
 cd "$REPO"
-CONFIG_ARGS=( -c mini.yaml -c "$BENCHMARK_CONFIG" )
+CONFIG_ARGS=( -c "$BENCHMARK_CONFIG" )
 if [[ -n "${EXTRA_CONFIGS:-}" ]]; then
   IFS=',' read -r -a _extra_cfgs <<< "$EXTRA_CONFIGS"
   for _cfg in "${_extra_cfgs[@]}"; do
@@ -304,6 +450,8 @@ python -m miniswewebagent.run.benchmarks.om2w \
   -c "model.max_output_tokens=$MAX_OUTPUT_TOKENS" \
   -c "model.max_context_tokens=$MAX_CONTEXT_TOKENS" \
   -c "model.sliding_window_keep_turns=$SLIDING_WINDOW_KEEP_TURNS" \
+  -c "model.text_only_image_policy=$TEXT_ONLY_IMAGE_POLICY" \
+  -c "model.stop_sequences=$STOP_SEQUENCES_JSON" \
   -c "environment.env.WEB_AGENT_POLICY_URL=$ENDPOINT" \
   -c "environment.env.WEB_AGENT_POLICY_MODEL=$MODEL_NAME" \
   -c "environment.env.OPENAI_COMPATIBLE_ENDPOINT=$ENDPOINT" \
