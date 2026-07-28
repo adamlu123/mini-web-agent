@@ -99,6 +99,8 @@ run:
 agent:
   agent_class: default
   prompt_mode: sft_state_debug
+  # ctx2 训练数据的 system 是渲染过的(真实 start_url + /workspace),必须回渲染
+  render_system_template: true
   debug_log: true
   output_path:
   step_limit: 50

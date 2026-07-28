@@ -75,15 +75,18 @@ def _apply_prompt_mode(config: dict[str, Any]) -> None:
         base_instructions = SFT_STATE_DEBUG_INSTRUCTIONS
         # This asset was stored byte-for-byte in the training examples. Its
         # Jinja-looking tokens are examples for the model, not runtime fields.
-        agent_cfg["render_system_template"] = False
+        # Checkpoints whose training data rendered the template (e.g. the ctx2
+        # run2_fp570 webwright bundles) must opt back in with an explicit
+        # `agent.render_system_template: true` in their benchmark config.
+        agent_cfg.setdefault("render_system_template", False)
     elif prompt_mode == "sft_state":
         base_system = SFT_STATE_SYSTEM
         base_instructions = SFT_STATE_INSTRUCTIONS
-        agent_cfg["render_system_template"] = True
+        agent_cfg.setdefault("render_system_template", True)
     else:
         base_system = SFT_SYSTEM
         base_instructions = SFT_INSTRUCTIONS
-        agent_cfg["render_system_template"] = True
+        agent_cfg.setdefault("render_system_template", True)
 
     extra_instructions = str(agent_cfg.get("sft_extra_instructions") or "").strip()
     instructions = base_instructions
