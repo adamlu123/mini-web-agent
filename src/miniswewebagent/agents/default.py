@@ -74,6 +74,14 @@ class AgentConfig(BaseModel):
     # (each with the user block that precedes it). self.messages still records
     # the full history; only the model request is windowed.
     context_window_steps: int = 0
+    # History-content transform for the model request (composable with the
+    # window; self.messages keeps full history):
+    #   "full"           - no transform
+    #   "last_obs"       - older observations keep only the template head with
+    #                      'Command output: (omitted)'; latest obs stays full
+    #   "last_obs_think" - additionally, assistant turns before the last
+    #                      completed step keep only their <think> block
+    history_context_mode: str = "full"
     output_path: Path | None = None
 
 
@@ -1003,6 +1011,34 @@ class DefaultAgent:
             return [messages[0], merged] + messages[block_end:]
         return messages[:2] + messages[cut:]
 
+    _THINK_BLOCK_RE = re.compile(r"<think>\n.*?\n</think>", re.S)
+
+    def _transform_history(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Apply history_context_mode to the model request (mirrors the
+        lastobs / lastobs_think SFT bundle construction byte-for-byte)."""
+        mode = self.config.history_context_mode
+        if mode not in ("last_obs", "last_obs_think"):
+            return messages
+        user_idx = [i for i, m in enumerate(messages)
+                    if m.get("role") == "user" and isinstance(m.get("content"), str)]
+        assistant_idx = [i for i, m in enumerate(messages) if m.get("role") == "assistant"]
+        out = []
+        for i, m in enumerate(messages):
+            role = m.get("role")
+            content = m.get("content")
+            if role == "user" and isinstance(content, str) and i > 1 \
+                    and user_idx and i != user_idx[-1] and "Command output:\n" in content:
+                m = dict(m)
+                m["content"] = content.split("Command output:\n", 1)[0] + "Command output: (omitted)"
+            elif mode == "last_obs_think" and role == "assistant" and isinstance(content, str) \
+                    and assistant_idx and i != assistant_idx[-1]:
+                match = self._THINK_BLOCK_RE.search(content)
+                if match:
+                    m = dict(m)
+                    m["content"] = match.group(0)
+            out.append(m)
+        return out
+
     def step(self) -> list[dict[str, Any]]:
         return self.execute_actions(self.query())
 
@@ -1016,7 +1052,7 @@ class DefaultAgent:
                 )
             )
         step_index = self.n_calls + 1
-        query_messages = self._windowed_messages(self.messages)
+        query_messages = self._transform_history(self._windowed_messages(self.messages))
         self._write_debug_request_artifact(step_index=step_index, messages=query_messages)
         message = self.model.query(query_messages)
         self.n_calls += 1
