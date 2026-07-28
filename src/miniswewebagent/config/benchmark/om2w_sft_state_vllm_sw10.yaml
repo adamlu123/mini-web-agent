@@ -60,7 +60,9 @@ environment:
   credentials_file: /home/luyadong/cred.sh
   task_metadata_filename: task.json
   final_script_name: final_script.py
-  output_truncation_chars: 24000
+  # setting1 定义为不截断 observation(采集时是 24k,eval 侧放开;
+  # 注意超长 obs 是训练分布外输入,且更容易撞 32k 上下文)
+  output_truncation_chars: 100000000
   final_script_preview_chars: 4000
   recent_files_limit: 40
   workspace_alias: /workspace
