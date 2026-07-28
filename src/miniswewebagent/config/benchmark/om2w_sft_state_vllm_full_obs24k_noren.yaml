@@ -1,7 +1,8 @@
-# OM2W eval for setting 1 (sw10): sliding window of the last 10 assistant
-# turns (task message merged with the window-start observation), NO history
-# compaction. Observation truncation stays at the collection-time 24000 chars.
-# Pairs with training bundle run12_fp1015_webwright_st_sw10 (ASSISTANT_MASK_MODE=last).
+# OM2W eval for setting 2 (full24k): full history, NO sliding window, NO
+# history compaction. Observation truncation stays at 24000 chars.
+# Pairs with training bundle run12_fp1015_webwright_st_full24k (ASSISTANT_MASK_MODE=last).
+# NOTE: with no compaction, long episodes will hit the serving context limit
+# and fail there (OpenWebRL-style stop) — intended for this setting.
 # Launch scripts usually override model.endpoint / model.model_name via -c flags.
 
 model:
@@ -54,7 +55,7 @@ model:
 environment:
   environment_class: local_workspace
   start_url:
-  output_dir: outputs/sft_state_vllm_sw10
+  output_dir: outputs/sft_state_vllm_full_obs24k_noren
   command_timeout_seconds: 240
   shell: /bin/bash
   credentials_file: /home/luyadong/cred.sh
@@ -99,8 +100,8 @@ run:
 agent:
   agent_class: default
   prompt_mode: sft_state_debug
-  # ctx2 训练数据的 system 是渲染过的(真实 start_url + /workspace),必须回渲染
-  render_system_template: true
+  # mt40k(noren) 训练数据逐字存裸模板,不渲染
+  render_system_template: false
   debug_log: true
   output_path:
   step_limit: 50
@@ -110,7 +111,7 @@ agent:
   judge_gateway_endpoint: ""
   judge_score_threshold: 3
   summary_every_n_steps: 0  # no compaction in this setting
-  context_window_steps: 10
+  context_window_steps: 0
   # SFT summary targets run ~2.4-3k tokens in full state format; 2048 truncated
   # them mid-<think> and strict sft_state parsing then failed every attempt,
   # silently disabling compaction (unbounded context -> vLLM 400 + OOM).

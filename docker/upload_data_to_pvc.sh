@@ -66,7 +66,7 @@ spec:
                 claimName: ${PVC_CLAIM_NAME}
           containers:
             - name: master
-              image: nvcr.io/nvidia/pytorch:25.08-py3
+              image: ${UPLOAD_IMAGE:-nvcr.io/nvidia/pytorch:25.08-py3}
               command: ["/bin/sh", "-c", "sleep 1d"]
               volumeMounts:
                 - name: data

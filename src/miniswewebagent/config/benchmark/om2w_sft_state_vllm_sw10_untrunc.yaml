@@ -54,13 +54,14 @@ model:
 environment:
   environment_class: local_workspace
   start_url:
-  output_dir: outputs/sft_state_vllm_sw10
+  output_dir: outputs/sft_state_vllm_sw10_untrunc
   command_timeout_seconds: 240
   shell: /bin/bash
   credentials_file: /home/luyadong/cred.sh
   task_metadata_filename: task.json
   final_script_name: final_script.py
-  output_truncation_chars: 24000
+  # G5: observation 真不截断(训练数据从 browser-steps 原始输出恢复)
+  output_truncation_chars: 100000000
   final_script_preview_chars: 4000
   recent_files_limit: 40
   workspace_alias: /workspace

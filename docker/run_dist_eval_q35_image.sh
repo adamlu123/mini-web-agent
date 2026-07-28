@@ -387,7 +387,11 @@ echo "[dist-eval] === vllm serve $MODEL_NAME (tp=$TP, max_len=$MAX_MODEL_LEN) ==
 VLLM_LOG_FILE="$LOGS_DIR/vllm_shard${NODE_RANK}.log"
 VLLM_TEMPLATE_ARGS=()
 [[ -n "$CHAT_TEMPLATE" ]] && VLLM_TEMPLATE_ARGS=( --chat-template "$CHAT_TEMPLATE" )
+# combo(同 pod 先训练后 eval)场景 custom allreduce 会 CUDA invalid argument,
+# 用 VLLM_EXTRA_ARGS="--disable-custom-all-reduce" 关掉
+VLLM_EXTRA=( ${VLLM_EXTRA_ARGS:-} )
 vllm serve "$EVAL_CKPT" \
+  "${VLLM_EXTRA[@]}" \
   --served-model-name "$MODEL_NAME" \
   --host "$HOST" --port "$PORT" \
   --tensor-parallel-size "$TP" \
