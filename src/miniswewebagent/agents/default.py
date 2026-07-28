@@ -1019,15 +1019,17 @@ class DefaultAgent:
         mode = self.config.history_context_mode
         if mode not in ("last_obs", "last_obs_think"):
             return messages
-        user_idx = [i for i, m in enumerate(messages)
-                    if m.get("role") == "user" and isinstance(m.get("content"), str)]
         assistant_idx = [i for i, m in enumerate(messages) if m.get("role") == "assistant"]
+        # Everything after the last assistant is the current observation block
+        # (matches the SFT bundles, where format-error retries are merged into
+        # the current human turn and kept in full).
+        current_block_start = (assistant_idx[-1] + 1) if assistant_idx else len(messages)
         out = []
         for i, m in enumerate(messages):
             role = m.get("role")
             content = m.get("content")
             if role == "user" and isinstance(content, str) and i > 1 \
-                    and user_idx and i != user_idx[-1] and "Command output:\n" in content:
+                    and i < current_block_start and "Command output:\n" in content:
                 m = dict(m)
                 m["content"] = content.split("Command output:\n", 1)[0] + "Command output: (omitted)"
             elif mode == "last_obs_think" and role == "assistant" and isinstance(content, str) \
