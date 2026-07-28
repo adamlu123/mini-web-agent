@@ -7,8 +7,9 @@ description: >-
   training from checkpoint-N (RESUME_FROM_CKPT), checkpointed generation
   (reuse EVAL_RUN_ID), and incremental judging (reuse JUDGE_OUTPUT_DIR). Use
   for train+eval, killed SFT continuation, data-parallel checkpoint eval,
-  retrying failed tasks, judging trajectories without generation, or locating
-  judge results. Data prep / PVC upload / guest submission / monitoring are in
+  retrying failed tasks, judging trajectories without generation, locating
+  judge results, or single-node PhiTrain WebWright train+convert+eval combo
+  jobs that hold one GPU node through all three phases. Data prep / PVC upload / guest submission / monitoring are in
   .claude/skills_backup/web-agent-seq-sft-submit/SKILL.md.
 ---
 
@@ -31,6 +32,11 @@ description: >-
   `<task_id>/steps/*.sh`(按文件名中的数字排序),图片只读数值最大的
   `<task_id>/final_runs/run_<N>/screenshots/*.png`;明确不读
   `final_script_log.txt`。适合 CPU-only 高并发重判已有轨迹。
+- **E. PhiTrain WebWright 一条 job:train → phitrain-cli convert + vision
+  merge → 本 harness eval,同一 GPU 节点全程不释放**(避免每阶段重新排队)。
+  三阶段全部幂等可续:`train/last` 存在跳过训练、`ctx2-<v>-hf-vlm` 的 index
+  存在跳过转换、eval 走同 EVAL_RUN_ID 断点续评。脚本在 aifsdk
+  `yadong/webwright` 分支。
 
 ## 运行协议(提交前用 AskUserQuestion 问清)
 
@@ -127,6 +133,26 @@ metadata 必须带 `submitter`、canonical `workstream`、`priority`,并使用�
 Mode D credential secret 从 `/home/luyadong/cred.sh` 创建;runner 明确用其中
 `OPENAI_GATEWAY_API_KEY` + `OPENAI_GATEWAY_ENDPOINT`,并覆盖该文件内可能存在的
 `OPENAI_API_KEY`,不得改走 direct OpenAI key。
+
+```bash
+# E. PhiTrain WebWright train+convert+eval 一条 job(同节点不释放)
+# 提交器: aifsdk phitrain/recipes/train/sft_qwen3.5/scripts/send_job_ctx2_combo.sh
+# 执行体: aifsdk phitrain/scripts/train_convert_eval_ctx2.sh(上传 phitrain +
+#         slim mini-web-agent 两棵树,挂 webchain secret)
+# 前置: bundle 已在 PVC、本地 WANDB_API_KEY、新 VARIANT 要在两个脚本里注册
+#       (bundle 路径/mask 模式/seq len/model+dataset config/benchmark yaml/eval len)
+VARIANT=mt40k bash recipes/train/sft_qwen3.5/scripts/send_job_ctx2_combo.sh
+# VARIANT=sw10ut 同理;MAX_STEPS/TASK_LEVEL/LIMIT/WORKERS/EVAL_RUN_ID 可覆盖。
+# 对齐要点(踩过的坑):
+# - 单轮 bundle 必须 ASSISTANT_MASK_MODE=last,multi-turn 用 all;
+# - webwright tokenizer 超长整行丢弃,multi-turn bundle 需数据侧按轮尾截;
+# - eval 侧 MAX_CONTEXT_TOKENS=0 关掉模型层 token 驱逐(滑窗只在 agent 层
+#   context_window_steps,与训练数据构造同规则);
+# - benchmark yaml 的 agent.render_system_template 必须匹配训练数据
+#   (渲染过 start_url 的 bundle → true;逐字裸模板 → false);
+# - 40k 组需配套 models/9b-40k.yaml + datasets/webwright-40k.yaml +
+#   TOKENIZE_MAX_SEQ_LEN=40960 + EVAL_MAX_MODEL_LEN=40960。
+```
 
 **首次上全量前先冒烟**(几分钟,验证 RANK 注入/分片/barrier/judge 全链):
 
