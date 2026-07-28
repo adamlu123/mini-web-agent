@@ -73,12 +73,17 @@ def _apply_prompt_mode(config: dict[str, Any]) -> None:
     if prompt_mode == "sft_state_debug":
         base_system = SFT_STATE_DEBUG_SYSTEM
         base_instructions = SFT_STATE_DEBUG_INSTRUCTIONS
+        # This asset was stored byte-for-byte in the training examples. Its
+        # Jinja-looking tokens are examples for the model, not runtime fields.
+        agent_cfg["render_system_template"] = False
     elif prompt_mode == "sft_state":
         base_system = SFT_STATE_SYSTEM
         base_instructions = SFT_STATE_INSTRUCTIONS
+        agent_cfg["render_system_template"] = True
     else:
         base_system = SFT_SYSTEM
         base_instructions = SFT_INSTRUCTIONS
+        agent_cfg["render_system_template"] = True
 
     extra_instructions = str(agent_cfg.get("sft_extra_instructions") or "").strip()
     instructions = base_instructions

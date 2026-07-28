@@ -10,12 +10,17 @@ payload/response serialization bits.
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
+import copy
 import os
+import struct
+import zlib
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import httpx
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from miniswewebagent.models.phyagi_model import (
     DEFAULT_OBSERVATION_TEMPLATE,
@@ -33,9 +38,40 @@ from miniswewebagent.models.phyagi_model import (
 from miniswewebagent.utils.logging import append_runtime_log
 
 
+def _png_chunk(chunk_type: bytes, data: bytes) -> bytes:
+    body = chunk_type + data
+    checksum = binascii.crc32(body) & 0xFFFFFFFF
+    return struct.pack(">I", len(data)) + body + struct.pack(">I", checksum)
+
+
+def _make_black_rgb_png_data_url(width: int, height: int) -> str:
+    """Build a deterministic all-zero RGB PNG without an image dependency."""
+
+    signature = b"\x89PNG\r\n\x1a\n"
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    # PNG filter byte + width RGB triplets for each row.
+    pixels = b"".join(b"\x00" + b"\x00" * (width * 3) for _ in range(height))
+    png = (
+        signature
+        + _png_chunk(b"IHDR", ihdr)
+        + _png_chunk(b"IDAT", zlib.compress(pixels, level=9))
+        + _png_chunk(b"IEND", b"")
+    )
+    return "data:image/png;base64," + base64.b64encode(png).decode("ascii")
+
+
+BLACK_56_PNG_DATA_URL = _make_black_rgb_png_data_url(56, 56)
+
+
 def _serialize_chat_content_part(part: dict[str, Any]) -> dict[str, Any]:
     if part.get("type") == "input_image":
         return {"type": "image_url", "image_url": {"url": part.get("image_url", "")}}
+    if part.get("type") == "image_url":
+        image_url = part.get("image_url", "")
+        return {
+            "type": "image_url",
+            "image_url": image_url if isinstance(image_url, dict) else {"url": image_url},
+        }
     return {"type": "text", "text": part.get("text", "")}
 
 
@@ -137,6 +173,12 @@ class OpenRouterModelConfig(BaseModel):
     # budget, but never fewer than sliding_window_keep_turns assistant turns.
     max_context_tokens: int = 0
     sliding_window_keep_turns: int = 10
+    # Runtime-contract controls for local SFT checkpoints.  ``black_56``
+    # reproduces the training workaround used by legacy_blank_v1: a real
+    # 56x56 all-black RGB image is prefixed to the first user turn only when
+    # the complete request is otherwise text-only.
+    text_only_image_policy: Literal["none", "black_56"] = "none"
+    stop_sequences: list[str] = Field(default_factory=list)
 
     @field_validator(
         "model_name",
@@ -226,10 +268,48 @@ class OpenRouterModel(PhyagiModel):
         return total_chars // 3 + image_count * 2048
 
     def _estimate_request_tokens(self, messages: list[dict[str, Any]]) -> int:
+        messages = self._apply_text_only_image_policy(messages)
         serialized = _serialize_chat_messages(messages, response_mode=self.config.response_mode)
         return self._estimate_tokens(serialized)
 
+    @staticmethod
+    def _has_image_content(messages: list[dict[str, Any]]) -> bool:
+        for message in messages:
+            content = message.get("content", "")
+            if not isinstance(content, list):
+                continue
+            for part in content:
+                if isinstance(part, dict) and part.get("type") in {"input_image", "image_url"}:
+                    return True
+        return False
+
+    def _apply_text_only_image_policy(
+        self, messages: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        if self.config.text_only_image_policy == "none" or self._has_image_content(messages):
+            return messages
+
+        aligned = copy.deepcopy(messages)
+        for message in aligned:
+            if message.get("role") != "user":
+                continue
+            original_content = message.get("content", "")
+            image_part = {
+                "type": "input_image",
+                "image_url": BLACK_56_PNG_DATA_URL,
+            }
+            if isinstance(original_content, list):
+                message["content"] = [image_part, *original_content]
+            else:
+                message["content"] = [
+                    image_part,
+                    {"type": "text", "text": str(original_content)},
+                ]
+            return aligned
+        return messages
+
     def _apply_sliding_window(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        messages = self._apply_text_only_image_policy(messages)
         budget = int(getattr(self.config, "max_context_tokens", 0) or 0)
         if budget <= 0 or self._estimate_request_tokens(messages) <= budget:
             return messages
@@ -272,21 +352,34 @@ class OpenRouterModel(PhyagiModel):
         }
         return head + [notice] + body
 
-    def _build_payload(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
+    def _prepare_request_messages(
+        self, messages: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        # Contract alignment must happen before estimation/sliding.  Both live
+        # and debug serialization call this exact path.
+        messages = self._apply_text_only_image_policy(messages)
         messages = self._apply_sliding_window(messages)
-        return {
+        return messages
+
+    def _request_payload_core(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
+        messages = self._prepare_request_messages(messages)
+        payload: dict[str, Any] = {
             "model": self.config.model_name,
             "messages": _serialize_chat_messages(messages, response_mode=self.config.response_mode),
             "max_tokens": self.config.max_output_tokens,
         }
+        if self.config.stop_sequences:
+            payload["stop"] = list(self.config.stop_sequences)
+        return payload
+
+    def _build_payload(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
+        return self._request_payload_core(messages)
 
     def serialize_request_for_debug(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
         return {
-            "model": self.config.model_name,
+            **self._request_payload_core(messages),
             "endpoint": self.config.openrouter_endpoint,
             "response_mode": self.config.response_mode,
-            "max_tokens": self.config.max_output_tokens,
-            "messages": _serialize_chat_messages(messages, response_mode=self.config.response_mode),
         }
 
     async def _query_async(self, messages: list[dict[str, Any]]) -> dict[str, Any]:

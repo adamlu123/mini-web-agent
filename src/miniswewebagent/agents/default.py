@@ -44,6 +44,7 @@ _BAD_COMPACT_SUMMARIES = {
 class AgentConfig(BaseModel):
     system_template: str
     instance_template: str
+    render_system_template: bool = True
     step_limit: int = 15
     debug_log: bool = True
     attach_instance_template_after_observation: bool = False
@@ -394,6 +395,12 @@ class DefaultAgent:
 
     def _render_template(self, template: str) -> str:
         return Template(template, undefined=StrictUndefined).render(**self.get_template_vars())
+
+    def _system_prompt_content(self) -> str:
+        """Return the system prompt at the configured template boundary."""
+        if not self.config.render_system_template:
+            return self.config.system_template
+        return self._render_template(self.config.system_template)
 
     def _host_workspace_dir(self) -> Path | None:
         """Return the real filesystem workspace path, not the model-facing alias."""
@@ -832,7 +839,7 @@ class DefaultAgent:
         self.n_calls = 0
         self.n_format_errors = 0
         self.add_messages(
-            self.model.format_message(role="system", content=self._render_template(self.config.system_template)),
+            self.model.format_message(role="system", content=self._system_prompt_content()),
             self.model.format_message(role="user", content=self._render_template(self.config.instance_template)),
         )
         if self.extra_template_vars.get("explore_history"):
