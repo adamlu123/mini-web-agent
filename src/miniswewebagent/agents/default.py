@@ -1024,20 +1024,51 @@ class DefaultAgent:
         # (matches the SFT bundles, where format-error retries are merged into
         # the current human turn and kept in full).
         current_block_start = (assistant_idx[-1] + 1) if assistant_idx else len(messages)
+        def _map_text(m: dict[str, Any], fn) -> dict[str, Any]:
+            """Apply fn to the message text, supporting str and parts-list content."""
+            content = m.get("content")
+            if isinstance(content, str):
+                new = fn(content)
+                if new == content:
+                    return m
+                m = dict(m)
+                m["content"] = new
+                return m
+            if isinstance(content, list):
+                parts = []
+                changed = False
+                for part in content:
+                    if isinstance(part, dict) and part.get("type") in ("text", "input_text") \
+                            and isinstance(part.get("text"), str):
+                        new = fn(part["text"])
+                        if new != part["text"]:
+                            part = {**part, "text": new}
+                            changed = True
+                    parts.append(part)
+                if not changed:
+                    return m
+                m = dict(m)
+                m["content"] = parts
+                return m
+            return m
+
+        def _stub(text: str) -> str:
+            if "Command output:\n" in text:
+                return text.split("Command output:\n", 1)[0] + "Command output: (omitted)"
+            return text
+
+        def _think(text: str) -> str:
+            match = self._THINK_BLOCK_RE.search(text)
+            return match.group(0) if match else text
+
         out = []
         for i, m in enumerate(messages):
             role = m.get("role")
-            content = m.get("content")
-            if role == "user" and isinstance(content, str) and i > 1 \
-                    and i < current_block_start and "Command output:\n" in content:
-                m = dict(m)
-                m["content"] = content.split("Command output:\n", 1)[0] + "Command output: (omitted)"
-            elif mode == "last_obs_think" and role == "assistant" and isinstance(content, str) \
+            if role == "user" and i > 1 and i < current_block_start:
+                m = _map_text(m, _stub)
+            elif mode == "last_obs_think" and role == "assistant" \
                     and assistant_idx and i != assistant_idx[-1]:
-                match = self._THINK_BLOCK_RE.search(content)
-                if match:
-                    m = dict(m)
-                    m["content"] = match.group(0)
+                m = _map_text(m, _think)
             out.append(m)
         return out
 
