@@ -1,0 +1,8 @@
+Task: {{ task }}
+{% if task_id %}Task ID: {{ task_id }}
+{% endif %}{% if start_url %}Start URL: {{ start_url }}
+{% endif %}Workspace root: /workspace
+Task metadata: /workspace/task.json
+
+Complete the task through incremental persistent-browser CLI steps. The browser state persists
+across steps, while browser-steps.jsonl and saved screenshots form the cumulative evidence.

@@ -1,0 +1,258 @@
+# SPB-prompt eval for ctx2 full24k checkpoints: frozen SPB system/instance
+# (byte-aligned with the 0723 collection prompt, JSON->XML), obs 24000,
+# no compaction, step_limit 50, full history.
+# OM2W eval config for SPB (persistent-browser CLI) SFT/RL checkpoints served
+# by vLLM, using the unified SFT state format (<think>/<bash>/<done>/<final_response>).
+#
+# Prompt provenance: system/instance templates are byte-aligned with the
+# training bundle
+#   /mnt/pvc/experiments/luyadong/data/webwright_sft/0720/run1_select/
+#     training_bundles/run_1_curated_437_webwright_32k (437/437 identical
+#     systems modulo the per-task start URL). The odd literal line
+#   <<final_response>></<final_response>>
+# is present in ALL training rows and is reproduced verbatim on purpose.
+# Observations were truncated to 1000 chars in training with the harness's
+# native "\n\n... [N characters omitted]" marker -> output_truncation_chars: 1000.
+# The launch script overrides model.endpoint and model.model_name via -c flags.
+
+model:
+  model_class: openai_compatible
+  model_name: sft_ckpt
+  endpoint: http://127.0.0.1:8000/v1/chat/completions
+  api_key: dummy
+  request_timeout_seconds: 240
+  max_output_tokens: 4096
+  response_mode: sft_state
+  attach_observation_screenshot: false
+  observation_template: |
+    Observation:
+    Status: {{ 'ok' if observation.success else 'error' }}
+    Workspace: {{ observation.workspace_dir }}
+    Working directory: {{ observation.cwd }}
+    Return code: {{ observation.returncode }}
+    {% if observation.exception %}Exception:
+    {{ observation.exception }}
+    {% endif %}{% if observation.command_output %}Command output:
+    {{ observation.command_output }}
+    {% endif %}{% if observation.screenshot_path %}New screenshot: {{ observation.screenshot_path }}
+    {% endif %}
+  format_error_template: |
+    Format error:
+
+    {{ error }}
+
+    Respond in exactly this unified SFT state format and nothing else:
+    <think>
+    reasoning
+    </think>
+    <bash>
+    exactly one shell command, or empty when done is true
+    </bash>
+    <done>false</done>
+    <final_response></final_response>
+
+    If the task is fully complete and verified, use:
+    <think>
+    final verification reasoning
+    </think>
+    <bash>
+    </bash>
+    <done>true</done>
+    <final_response>
+    final response
+    </final_response>
+
+environment:
+  environment_class: local_workspace
+  start_url:
+  output_dir: outputs/spb_state_vllm_sft_ckpt
+  command_timeout_seconds: 240
+  shell: /bin/bash
+  credentials_file: /home/luyadong/cred.sh
+  task_metadata_filename: task.json
+  final_script_name: final_script.py
+  # Training observations were capped at 1000 chars (head + omitted marker).
+  output_truncation_chars: 24000  # 本批数据采集口径
+  final_script_preview_chars: 4000
+  recent_files_limit: 40
+  workspace_alias: /workspace
+  prepend_tools_to_pythonpath: true
+  prefer_current_python: true
+  env:
+    PAGER: cat
+    MANPAGER: cat
+    LESS: -R
+    PIP_PROGRESS_BAR: 'off'
+    TQDM_DISABLE: '1'
+    MWA_BROWSER_BACKEND: browserbase
+    MWA_BROWSER_WIDTH: '1280'
+    MWA_BROWSER_HEIGHT: '1800'
+    WEB_AGENT_POLICY_URL: http://127.0.0.1:8000/v1/chat/completions
+    WEB_AGENT_POLICY_MODEL: sft_ckpt
+    OPENAI_COMPATIBLE_ENDPOINT: http://127.0.0.1:8000/v1/chat/completions
+    OPENAI_COMPATIBLE_MODEL: sft_ckpt
+    OPENAI_COMPATIBLE_API_KEY: dummy
+    OPENAI_GATEWAY_ENDPOINT: http://127.0.0.1:8000/v1/chat/completions
+    OPENAI_GATEWAY_MODEL: sft_ckpt
+
+run:
+  tasks_file: src/miniswewebagent/run/benchmarks/om2w_260220.json
+  task_level: all
+  parallel_processes: 1
+  judge_enabled: true
+  judge_model: o4-mini
+  judge_endpoint: http://gateway.phyagi.net/api/responses
+  judge_python: /data/t-yifeili/miniconda3/envs/echo-rl/bin/python
+  judge_script: /data/t-yifeili/mini-web-agent/om2w_judge/run.py
+  judge_runs: 1
+  logs_root: logs
+
+agent:
+  agent_class: default
+  debug_log: true
+  output_path:
+  step_limit: 50
+  require_self_reflection_success: true
+  judge_mode: trajectory
+  trajectory_manifest: browser-steps.jsonl
+  trajectory_judge_result: reflection/judge_result.json
+  trajectory_plan_file: plan.md
+  trajectory_judge_config: judge_config.json
+  judge_model: o4-mini
+  judge_gateway_endpoint: ""
+  judge_score_threshold: 3
+  summary_every_n_steps: 0  # no compaction
+  context_window_steps: 0  # full history
+  # SFT summary targets run long in full state format; 2048 truncated them
+  # mid-<think> in the old flow. Keep 4096.
+  summary_max_output_tokens: 4096
+  # Keep sft_state for the compaction call too (train/eval consistency).
+  summary_response_mode: ""
+  summary_user_prompt: |
+    Summarize the complete incremental task state for a fresh agent context. Include the task,
+    plan.md critical points, current persistent browser session epoch and health, every important
+    browser step and selector finding, saved screenshot evidence, the latest trajectory reflection
+    verdict, remaining work, and the exact next action. Do not issue a command or declare done.
+
+  system_template: |
+    You are a benchmark-oriented web agent operating through a local terminal and a persistent,
+    backend-agnostic browser-session CLI.
+
+    Return exactly one response per turn in this format:
+    <think>
+    <detailed observation, reasoning, and next step>
+    </think>
+    <bash>
+    <exactly one shell command, or empty when declaring done>
+    </bash>
+    <done>false</done>
+    <<final_response>></<final_response>>
+
+    ## Execution model
+
+    - Complete the task incrementally. Each browser command should perform a small group of related
+      Playwright actions against the current live page state.
+    - Do NOT create final_script.py and do NOT attempt an end-to-end replay.
+    - Put exactly one shell command in <bash>. A browser CLI invocation with one heredoc is one
+      command. Never declare done in the same response as a non-empty command.
+    - Do not install packages.
+
+    ## Persistent browser CLI
+
+    Create the persistent session once before the first browser step:
+
+      python -m browser_session create --workspace-dir "/workspace" --start-url "{{ start_url }}"
+
+    Run an incremental step by sending an async Python function body on stdin. `page`, `context`,
+    `browser`, `playwright`, `task`, and `workspace` already exist. `--action` is REQUIRED and must be
+    a concise natural-language description of what the code does:
+
+      python -m browser_session step --workspace-dir "/workspace" --action "Open filters and select nonstop flights" --code-file - <<'PY'
+      await page.get_by_role("button", name="Filters").click()
+      await page.get_by_role("checkbox", name="Nonstop").check()
+      print(await page.locator("body").aria_snapshot())
+      PY
+
+    End-of-step screenshots default to NONE. Save one whenever you think it provides useful visual evidence:
+
+      python -m browser_session step --workspace-dir "/workspace" --action "Apply the exact price range" --screenshot always --code-file - <<'PY'
+      await page.get_by_label("Minimum price").fill("100")
+      await page.get_by_label("Maximum price").fill("300")
+      await page.get_by_role("button", name="Apply").click()
+      PY
+
+    The browser persists across commands; Python variables do not. The CLI reconnects and restores
+    the active tab each time. Do not call browser.close() or context.close() inside step code.
+
+    Prefer recovery in this order:
+      1. inspect the structured error and retry the interaction;
+      2. reacquire the current page from context.pages;
+      3. open a NEW TAB in the same persistent context (`page = await context.new_page()`) and navigate;
+      4. only when `error_kind` is `session`, create a new persistent browser epoch with
+         `python -m browser_session create --workspace-dir "/workspace" --replace --start-url "{{ start_url }}"`.
+
+    Use `python -m browser_session status --workspace-dir "/workspace"` when session health
+    is unclear. Use `python -m browser_session close --workspace-dir "/workspace"` when the
+    task is complete. Replacing or closing a session never deletes prior step or screenshot evidence.
+
+    ## Planning and evidence
+
+    - Write plan.md once with every explicit task constraint as a numbered checklist.
+    - The CLI appends browser-steps.jsonl. Every record contains the natural-language action, code
+      path, URL, session epoch, result, and optional screenshot path.
+    - Screenshots must be raw 1280x1800 viewport captures of the real website. Never use full-page,
+      generated, annotated, composited, or model-authored images.
+    - You are encouraged to save screenshots for critical selected states, confirmations, exact values, and final results.
+    - Use printed ARIA, URL, title, visible labels, and current-run evidence rather than guessing.
+
+    ## Rules
+    - **HARD RULE — screenshots must be raw page captures.** Every PNG you save MUST come directly from `await page.screenshot(path=...)` against a real, unmodified webpage viewport. The following are FAILURES and will cause the judge to mark the run as failure:
+        * any image produced by rendering your own HTML, markdown, summary, comparison table, or recommendation text into a page or canvas before screenshotting;
+        * any image annotated, drawn on, composited, cropped to hide content, or saved from PIL/Pillow/matplotlib/HTML-to-image converters;
+        * any image whose contents are the model's own response, conclusion, recommendation, or summary text rather than the actual website UI.
+    - Use stable selectors and current-run evidence.
+    - If the site exposes a dedicated control for a requirement, you must use that control. Search terms alone do not satisfy a filter, sort, style, or attribute requirement.
+    - Ranking language such as `best-selling`, `most reviewed`, `highest-rated`, `lowest`, and `cheapest` must be grounded in the site's actual metric or control.
+    - If a selected state becomes hidden after a drawer, accordion, modal, or dropdown closes, reopen that control or capture a visible chip/summary before treating the state as verified.
+    - Treat numeric, date, quantity, and unit constraints as exact. Wider buckets or broader defaults are failures unless the site offers no exacter control.
+    - If the task asks for a final datum (code, price, quote, review, winner, benefit list), state that datum explicitly using `Final Response:` in the browser action, in the meantime the browser control code can be left blank. Do not encode it into an image.
+    - For blocker claims (Access Denied, unavailable controls), only stop after repeated evidence from the actual site UI.
+
+
+    ## Trajectory self-reflection
+
+    Author judge_config.json once with these four prompt fields:
+      - image_judge_system_prompt
+      - image_judge_user_prompt
+      - final_verdict_system_prompt
+      - final_verdict_user_prompt
+
+    The image judge must return only `Reasoning: ...` and `Score: <1-5>`. Include the task and all
+    plan.md critical points in its user prompt. The final judge must evaluate every critical point,
+    account for chronological step/session-epoch context, and end with exactly `Status: success` or
+    `Status: failure`. Its user prompt must contain `{action_history_log}` and `{image_reasonings}`.
+    Earlier incorrect states may be superseded by later evidence; evidence from an old session epoch
+    does not automatically prove state in a newer epoch.
+
+    Reflect over ALL screenshots saved by every prior incremental browser step:
+
+      python -m self_reflection --scope trajectory --trajectory-manifest browser-steps.jsonl --config "/workspace/judge_config.json" --workspace-dir "/workspace" --output reflection/judge_result.json
+
+    Per-image judgments are cached. A successful result is invalidated by any later browser step,
+    changed screenshot, plan.md change, or judge_config.json change.
+
+    ## Completion Gate
+    - Set <done>true</done> only after trajectory reflection exits 0 with predicted_label=1 for the current evidence.
+    - If self_reflection fails, diagnose the specific issue (wrong filter value, missing control, missing confirmation, missing screenshot, etc.), use the verdict to continue incrementally, save better evidence, and run
+      reflection again. Never return <done>false</done> with an empty <bash>. Do not rerun reflection until a new browser step has been recorded.
+    - When the verdict passes, set <bash> empty and put the task answer as `Final Response:` in the browser action
+
+  instance_template: |
+    Task: {{ task }}
+    {% if task_id %}Task ID: {{ task_id }}
+    {% endif %}{% if start_url %}Start URL: {{ start_url }}
+    {% endif %}Workspace root: /workspace
+    Task metadata: /workspace/task.json
+
+    Complete the task through incremental persistent-browser CLI steps. The browser state persists
+    across steps, while browser-steps.jsonl and saved screenshots form the cumulative evidence.
