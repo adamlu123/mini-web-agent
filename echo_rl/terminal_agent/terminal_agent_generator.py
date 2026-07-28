@@ -43,6 +43,92 @@ def strip_thinking(text: str) -> str:
     return result.strip()
 
 
+# ---------------------------------------------------------------------------
+# History compaction (SFT sequential-compact alignment). Byte-aligned with the
+# miniswewebagent harness (agents/default.py _compact_history) and the SFT data
+# builder (make_web_agent_sequential_compact_tools_sft.py): every N model calls
+# the running context is summarized and reset to [system, summary-wrapper].
+# DEFAULT_SUMMARY_USER_PROMPT was extracted verbatim from the training data
+# (web_agent_seq_om2w4000_run1.json) — it carries NO trailing newline and is
+# merged onto the last observation user message with "\n\n".
+# ---------------------------------------------------------------------------
+
+DEFAULT_SUMMARY_USER_PROMPT = """You are about to have your working context compacted to save tokens.
+
+Write a concise but COMPLETE summary of everything relevant from the conversation above so that a fresh
+agent with only this summary (plus the original system prompt and task instructions) can continue the
+task without losing progress. Include:
+
+- The original task goal and all critical points / constraints.
+- The workspace directory and key file paths (plan.md, judge_config.json, final_script.py, final_runs/).
+- Which critical points have been satisfied, which are still open, and any known blockers.
+- Key findings from prior exploration (working selectors, URLs, ARIA labels, pitfalls to avoid).
+- The latest final_runs/run_<id>/ state, most recent self_reflection verdict, and the next action to take.
+
+Write the summary as plain prose and bullet lists. Do NOT issue a new bash_command. Do NOT set done=true.
+Put the entire summary in the `thought` field (or equivalent text field) and leave action fields empty."""
+
+_BAD_COMPACT_SUMMARIES = {
+    "",
+    "task complete.",
+    "task complete",
+    "done.",
+    "done",
+    "(empty summary)",
+}
+
+
+def _strip_markup_summary(value: str) -> str:
+    text = str(value or "").strip()
+    text = re.sub(r"<bash\b[^>]*>.*?</bash>", "", text, flags=re.DOTALL | re.IGNORECASE).strip()
+    text = re.sub(r"<python_code\b[^>]*>.*?</python_code>", "", text, flags=re.DOTALL | re.IGNORECASE).strip()
+    text = re.sub(r"</?(?:think|answer|bash|done|final_response|python_code)>", "", text, flags=re.IGNORECASE).strip()
+    return text
+
+
+def _is_valid_compaction_summary(value: str) -> bool:
+    normalized = " ".join(str(value or "").strip().lower().split())
+    if normalized in _BAD_COMPACT_SUMMARIES:
+        return False
+    return len(normalized) >= 40
+
+
+def _clean_compaction_summary(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    # Prefer an explicit <answer>/<final_response> block only when substantive;
+    # SFT compact calls usually put the real summary in <think>.
+    for tag in ("answer", "final_response"):
+        values = re.findall(rf"<{tag}>(.*?)</{tag}>", text, flags=re.DOTALL | re.IGNORECASE)
+        for candidate in reversed(values):
+            cleaned = _strip_markup_summary(candidate)
+            if _is_valid_compaction_summary(cleaned):
+                return cleaned
+    think_values = re.findall(r"<think>(.*?)</think>", text, flags=re.DOTALL | re.IGNORECASE)
+    for thought in reversed(think_values):
+        cleaned = _strip_markup_summary(thought)
+        if _is_valid_compaction_summary(cleaned):
+            return cleaned
+    cleaned = _strip_markup_summary(text)
+    return cleaned if _is_valid_compaction_summary(cleaned) else ""
+
+
+def extract_compaction_summary(raw_text: str) -> str:
+    """Salvage a usable summary from a (possibly truncated) sft_state response.
+
+    Mirrors the harness's _extract_compaction_summary fallback chain: a summary
+    truncated mid-<think> (no closing tags) is still recovered by the final
+    raw-text pass rather than skipping compaction.
+    """
+    text = str(raw_text or "")
+    # A response that opens with <think> but never closes it: strip the tag and
+    # treat the body as the candidate (the harness rescue path does the same).
+    if "<think>" in text and "</think>" not in text:
+        text = text.replace("<think>", "", 1)
+    return _clean_compaction_summary(text)
+
+
 @dataclass
 class TerminalTrajectoryOutput:
     trajectory_id: TrajectoryID
@@ -267,8 +353,24 @@ class TerminalAgentGenerator(GeneratorInterface):
             window_turns = None
         turn_boundaries: list[int] = []
 
+        # History compaction (SFT sequential-compact alignment). When enabled,
+        # replaces the sliding window: the generation context is
+        # `ctx_prompt_ids + completion[ctx_base:]`; a compaction resets
+        # ctx_prompt_ids to [system, summary-wrapper] and ctx_base past all
+        # accumulated turns. `n_calls` counts every model call — actions AND
+        # compaction calls — exactly like the harness's step counter, so the
+        # cadence (10 calls per window, one consumed by the summary) and the
+        # max_turns budget match the eval harness's step_limit semantics.
+        compact_every = int(getattr(self.generator_cfg, "summary_every_n_steps", 0) or 0)
+        ctx_prompt_ids: list[int] = list(interaction.prompt_token_ids)
+        ctx_base = 0
+        n_calls = 0
+
         turn = -1
         for turn in range(self.generator_cfg.max_turns):
+            if compact_every > 0 and n_calls >= self.generator_cfg.max_turns:
+                stop_reason = "max_turns"
+                break
             total_len = len(interaction.token_ids)
             if not self._has_token_budget(interaction, 0):
                 stop_reason = "max_total_tokens"
@@ -279,14 +381,17 @@ class TerminalAgentGenerator(GeneratorInterface):
             active_full = rollout_context_ids if rollout_context_ids is not None else interaction.token_ids
             completion_portion = active_full[prompt_len:]
             turn_boundaries.append(len(completion_portion))
-            generation_context = self._windowed_generation_context(
-                interaction.prompt_token_ids,
-                completion_portion,
-                active_full,
-                turn_boundaries,
-                turn,
-                window_turns,
-            )
+            if compact_every > 0:
+                generation_context = ctx_prompt_ids + completion_portion[ctx_base:]
+            else:
+                generation_context = self._windowed_generation_context(
+                    interaction.prompt_token_ids,
+                    completion_portion,
+                    active_full,
+                    turn_boundaries,
+                    turn,
+                    window_turns,
+                )
 
             current_len = len(generation_context)
             if current_len >= self.generator_cfg.max_context_tokens:
@@ -324,6 +429,7 @@ class TerminalAgentGenerator(GeneratorInterface):
                 clean_ids, _ = self._strip_thinking_from_tokens(token_ids)
                 rollout_context_ids.extend(clean_ids)
 
+            n_calls += 1
             response_text = self.tokenizer.decode(token_ids, skip_special_tokens=True)
             format_warnings, format_violations = check_format_warnings(
                 response_text,
@@ -339,7 +445,15 @@ class TerminalAgentGenerator(GeneratorInterface):
                 turn_traces.append(
                     self._turn_trace(turn, generate_sec, len(token_ids), 0.0, True, False, current_len, format_violations)
                 )
-                await self._add_observation(interaction, "", parse_result.error, rollout_context_ids)
+                last_obs = await self._add_observation(
+                    interaction, "", self._format_parse_error(parse_result.error), rollout_context_ids
+                )
+                if compact_every > 0:
+                    ctx_prompt_ids, ctx_base, n_calls = await self._maybe_compact_context(
+                        interaction, session_id, environment, sampling_params,
+                        ctx_prompt_ids, ctx_base, n_calls, compact_every, last_obs,
+                        rollout_context_ids, prompt_len,
+                    )
                 continue
 
             commands = self._select_commands(parse_result.commands)
@@ -373,14 +487,20 @@ class TerminalAgentGenerator(GeneratorInterface):
             if self.generator_cfg.add_format_warn and format_warnings:
                 warnings_prefix = "WARNINGS:\n" + "\n".join(f"- {w}" for w in format_warnings) + "\n\n"
             if not commands:
-                await self._add_observation(
+                last_obs = await self._add_observation(
                     interaction,
                     warnings_prefix,
                     "No commands provided. Please provide commands to execute or set done.",
                     rollout_context_ids,
                 )
-                continue
-            await self._add_observation(interaction, warnings_prefix, terminal_output, rollout_context_ids)
+            else:
+                last_obs = await self._add_observation(interaction, warnings_prefix, terminal_output, rollout_context_ids)
+            if compact_every > 0:
+                ctx_prompt_ids, ctx_base, n_calls = await self._maybe_compact_context(
+                    interaction, session_id, environment, sampling_params,
+                    ctx_prompt_ids, ctx_base, n_calls, compact_every, last_obs,
+                    rollout_context_ids, prompt_len,
+                )
         else:
             stop_reason = "max_turns"
 
@@ -415,6 +535,10 @@ class TerminalAgentGenerator(GeneratorInterface):
             "turns": turn_traces,
         }
         metrics: dict[str, float | int] = {f"stop_reason/{stop_reason}": 1, "num_agent_turns": num_turns}
+        compactions = interaction.metadata.get("compactions") or []
+        if compactions:
+            metrics["compaction/attempts"] = len(compactions)
+            metrics["compaction/failed"] = sum(1 for c in compactions if not c.get("ok"))
         if verifier_error:
             metrics[f"verifier_error/{verifier_error}"] = 1
         for trace in turn_traces:
@@ -527,13 +651,21 @@ class TerminalAgentGenerator(GeneratorInterface):
         warning_text: str,
         env_text: str,
         rollout_context_ids: list[int] | None,
-    ) -> None:
+    ) -> tuple[str, int] | None:
+        """Append the observation message; returns (final_text, obs_cut).
+
+        ``obs_cut`` is the offset, into the completion portion of the active
+        stream, at which the observation MESSAGE starts (after the assistant
+        turn-end tokens) — compaction slices the context there to re-render the
+        last observation with the summary prompt merged in. Returns None when
+        the token budget is exhausted and no observation was appended.
+        """
         text = warning_text + env_text
         if self.generator_cfg.max_total_tokens is not None:
             overhead = len(self._turn_end_tokens) + 10
             remaining = self.generator_cfg.max_total_tokens - len(interaction.token_ids) - overhead
             if remaining <= 0:
-                return
+                return None
             obs_token_count = len(self.tokenizer.encode(text, add_special_tokens=False))
             if obs_token_count > remaining:
                 ratio = remaining / obs_token_count
@@ -546,6 +678,8 @@ class TerminalAgentGenerator(GeneratorInterface):
         turn_end = self._append_turn_end(interaction)
         if rollout_context_ids is not None:
             rollout_context_ids.extend(turn_end)
+        active_len = len(rollout_context_ids) if rollout_context_ids is not None else len(interaction.token_ids)
+        obs_cut = active_len - len(interaction.prompt_token_ids)
         content_start_offset, warning_end_offset, content_end_offset = self._get_observation_content_spans(
             interaction,
             self._obs_role,
@@ -587,7 +721,121 @@ class TerminalAgentGenerator(GeneratorInterface):
 
         if rollout_context_ids is not None:
             rollout_context_ids.extend(token_ids)
-        return span
+        return text, obs_cut
+
+    def _format_parse_error(self, error: str) -> str:
+        """Hook: subclasses may wrap parser errors in a harness-aligned template."""
+        return error
+
+    @staticmethod
+    def _compaction_task_text(environment: Any) -> str:
+        """Best-effort original-task text for the compaction wrapper."""
+        return str(getattr(getattr(environment, "cfg", None), "task", "") or "")
+
+    def _render_message_ids(self, role: str, text: str, add_generation_prompt: bool) -> list[int]:
+        """Token delta for one message, independent of the interaction state."""
+        base = [{"role": "system", "content": ""}]
+        before = self.tokenizer.apply_chat_template(
+            base, add_generation_prompt=False, tokenize=True, return_dict=False
+        )
+        after = self.tokenizer.apply_chat_template(
+            base + [{"role": role, "content": text}],
+            add_generation_prompt=add_generation_prompt,
+            tokenize=True,
+            return_dict=False,
+        )
+        return list(after[len(before):])
+
+    async def _maybe_compact_context(
+        self,
+        interaction: TerminalInteraction,
+        session_id: str,
+        environment: Any,
+        sampling_params: dict[str, Any],
+        ctx_prompt_ids: list[int],
+        ctx_base: int,
+        n_calls: int,
+        compact_every: int,
+        last_obs: tuple[str, int] | None,
+        rollout_context_ids: list[int] | None,
+        prompt_len: int,
+    ) -> tuple[list[int], int, int]:
+        """SFT-aligned history compaction (mirrors the harness _compact_history).
+
+        Trigger: every `compact_every` model calls. The summary prompt is merged
+        onto the last observation user message with "\\n\\n" (standalone user
+        message when no observation was appended), the summary is generated with
+        `summary_max_output_tokens`, salvaged from <final_response>/<think>/raw,
+        and the generation context resets to [system, summary-wrapper]. The
+        compaction call itself counts as one step (matching the SFT data, where
+        1 of every 10 calls is the summary call). On any failure the context is
+        left untouched — compaction is an optimization, never a crash.
+
+        NOTE: like the sliding window, this only shapes the GENERATION context;
+        the trained sequence on `interaction` stays the linear accumulation of
+        action turns (the summary call is out-of-band and gets no gradient).
+        """
+        if compact_every <= 0 or n_calls <= 0 or n_calls % compact_every != 0:
+            return ctx_prompt_ids, ctx_base, n_calls
+        compacted_after = n_calls
+        # The compaction LLM call counts toward max_turns, like the harness's
+        # step_limit — count it even if the attempt fails below.
+        n_calls += 1
+
+        summary_prompt = str(getattr(self.generator_cfg, "summary_user_prompt", "") or "") or DEFAULT_SUMMARY_USER_PROMPT
+        summary_max_tokens = int(getattr(self.generator_cfg, "summary_max_output_tokens", 0) or 4096)
+        stream = rollout_context_ids if rollout_context_ids is not None else interaction.token_ids
+        completion = stream[prompt_len:]
+        if last_obs is not None and last_obs[0].strip():
+            obs_text, obs_cut = last_obs
+            merged = f"{obs_text.rstrip()}\n\n{summary_prompt}"
+            head = ctx_prompt_ids + completion[ctx_base:obs_cut]
+        else:
+            merged = summary_prompt
+            head = ctx_prompt_ids + completion[ctx_base:]
+        summary_ctx = head + self._render_message_ids(self._obs_role, merged, add_generation_prompt=True)
+
+        max_ctx = self.max_seq_len - summary_max_tokens
+        if len(summary_ctx) >= max_ctx:
+            # Would overflow the engine; keep history rather than risk a 400.
+            interaction.metadata.setdefault("compactions", []).append(
+                {"after_step": compacted_after, "ok": False, "reason": "ctx_overflow"}
+            )
+            return ctx_prompt_ids, ctx_base, n_calls
+        try:
+            token_ids, _ = await self._generate_tokens(
+                summary_ctx,
+                dict(sampling_params),
+                session_id=session_id,
+                seed=interaction.completion_id,
+                max_tokens=summary_max_tokens,
+            )
+        except Exception as exc:  # noqa: BLE001 - never fail the rollout on compaction
+            logger.warning("compaction generate failed: %s", exc)
+            return ctx_prompt_ids, ctx_base, n_calls
+        raw_text = self.tokenizer.decode(token_ids, skip_special_tokens=True)
+        summary = extract_compaction_summary(raw_text)
+        compactions = interaction.metadata.setdefault("compactions", [])
+        if not summary:
+            # Compaction is an optimization: keep history over an empty summary.
+            compactions.append({"after_step": compacted_after, "ok": False})
+            return ctx_prompt_ids, ctx_base, n_calls
+
+        task_text = self._compaction_task_text(environment)
+        wrapper = (
+            "## Compacted History Summary\n"
+            f"Original task: {task_text}\n"
+            f"(context was compacted after step {compacted_after}; earlier turns have been replaced "
+            "by the summary below)\n\n"
+            f"{summary}\n\n## End of Compacted Summary"
+        )
+        system_message = next((m for m in interaction.messages if m.get("role") == "system"), None)
+        wrapper_messages = ([system_message] if system_message else []) + [{"role": "user", "content": wrapper}]
+        new_prompt_ids = self.tokenizer.apply_chat_template(
+            wrapper_messages, add_generation_prompt=True, tokenize=True, return_dict=False
+        )
+        compactions.append({"after_step": compacted_after, "ok": True, "summary_chars": len(summary)})
+        return list(new_prompt_ids), len(completion), n_calls
 
     def _add_message(
         self,

@@ -1037,5 +1037,69 @@
       "assistant_tag": "gpt",
       "observation_tag": "observation"
     }
+  },
+  "web_agent_seq_om2w4000_run23_traj_only": {
+    "file_name": "web_agent_seq_om2w4000_run23_traj_only.json",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "conversations",
+      "system": "system",
+      "images": "images"
+    },
+    "tags": {
+      "role_tag": "from",
+      "content_tag": "value",
+      "user_tag": "human",
+      "assistant_tag": "gpt",
+      "observation_tag": "observation"
+    }
+  },
+  "web_agent_seq_om2w4000_run4_traj_only": {
+    "file_name": "web_agent_seq_om2w4000_run4_traj_only.json",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "conversations",
+      "system": "system",
+      "images": "images"
+    },
+    "tags": {
+      "role_tag": "from",
+      "content_tag": "value",
+      "user_tag": "human",
+      "assistant_tag": "gpt",
+      "observation_tag": "observation"
+    }
+  },
+  "d3gym_science_sft": {
+    "file_name": "d3gym_science_sft.json",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "conversations",
+      "system": "system",
+      "images": "images"
+    },
+    "tags": {
+      "role_tag": "from",
+      "content_tag": "value",
+      "user_tag": "human",
+      "assistant_tag": "gpt",
+      "observation_tag": "observation"
+    }
+  },
+  "web_agent_seq_om2w4000_run1r0_plus_run234traj_plus_d3science_portable": {
+    "file_name": "web_agent_seq_om2w4000_run1r0_plus_run234traj_plus_d3science_portable.json",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "conversations",
+      "system": "system",
+      "images": "images"
+    },
+    "tags": {
+      "role_tag": "from",
+      "content_tag": "value",
+      "user_tag": "human",
+      "assistant_tag": "gpt",
+      "observation_tag": "observation"
+    }
   }
 }

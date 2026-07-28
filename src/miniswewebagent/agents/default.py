@@ -13,6 +13,12 @@ from pydantic import BaseModel
 
 from miniswewebagent import Environment, Model, __version__
 from miniswewebagent.exceptions import FormatError, InterruptAgentFlow, LimitsExceeded
+from miniswewebagent.utils.browser_evidence import (
+    DEFAULT_BROWSER_STEPS_FILE,
+    load_browser_steps,
+    optional_file_digest,
+    trajectory_evidence_digest,
+)
 from miniswewebagent.utils.serialize import recursive_merge
 
 
@@ -54,10 +60,19 @@ class AgentConfig(BaseModel):
     judge_model: str = "o4-mini"
     judge_gateway_endpoint: str = ""
     judge_score_threshold: int = 3
+    trajectory_manifest: str = DEFAULT_BROWSER_STEPS_FILE
+    trajectory_judge_result: str = "reflection/judge_result.json"
+    trajectory_plan_file: str = "plan.md"
+    trajectory_judge_config: str = "judge_config.json"
     summary_every_n_steps: int = 0
     summary_user_prompt: str = DEFAULT_SUMMARY_USER_PROMPT
     summary_max_output_tokens: int = 0
     summary_response_mode: str = ""
+    # >0: query with a sliding window instead of the full history. The window
+    # keeps system + the initial task message + the last N assistant turns
+    # (each with the user block that precedes it). self.messages still records
+    # the full history; only the model request is windowed.
+    context_window_steps: int = 0
     output_path: Path | None = None
 
 
@@ -450,7 +465,86 @@ class DefaultAgent:
         mode = (self.config.judge_mode or "tool").strip().lower()
         if mode == "om2w":
             return self._om2w_gate_error()
+        if mode == "trajectory":
+            return self._trajectory_gate_error()
         return self._tool_gate_error()
+
+    def _trajectory_gate_error(self) -> str | None:
+        """Require a fresh successful reflection over every incremental browser step."""
+        # Resolve the REAL workspace path: with workspace_alias set, template
+        # vars carry the alias (e.g. /workspace) which does not exist on host.
+        workspace = self._host_workspace_dir()
+        if workspace is None:
+            workspace_value = self.get_template_vars().get("workspace_dir")
+            if not workspace_value:
+                return (
+                    "Completion blocked: judge_mode=trajectory requires a workspace_dir. "
+                    "Do not set done=true."
+                )
+            workspace = Path(workspace_value).resolve()
+        rows = load_browser_steps(workspace, self.config.trajectory_manifest)
+        if not rows:
+            return (
+                "Completion blocked: no incremental browser steps are recorded in "
+                f"{workspace / self.config.trajectory_manifest}. Use the persistent browser-session "
+                "CLI before setting done=true."
+            )
+        judge_path = Path(self.config.trajectory_judge_result)
+        if not judge_path.is_absolute():
+            judge_path = workspace / judge_path
+        if not judge_path.is_file():
+            return (
+                f"Completion blocked: {judge_path} does not exist. Run self_reflection with "
+                f"--scope trajectory --trajectory-manifest {self.config.trajectory_manifest} "
+                f"--output {self.config.trajectory_judge_result}, then retry done=true only after "
+                "predicted_label == 1."
+            )
+        try:
+            judge_data = json.loads(judge_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            return f"Completion blocked: could not parse {judge_path}: {exc}. Re-run reflection."
+        if judge_data.get("scope") != "trajectory":
+            return (
+                f"Completion blocked: {judge_path} is not a trajectory-scoped reflection. "
+                "Re-run self_reflection with --scope trajectory."
+            )
+        predicted_label = judge_data.get("predicted_label")
+        if predicted_label != 1:
+            return (
+                f"Completion blocked: trajectory reflection predicted_label={predicted_label!r}; "
+                "inspect its feedback, continue with incremental browser steps, and reflect again."
+            )
+        current_digest = trajectory_evidence_digest(workspace, rows)
+        if judge_data.get("evidence_digest") != current_digest:
+            return (
+                "Completion blocked: trajectory reflection is stale because browser steps or "
+                "screenshots changed after it ran. Reflect over the current trajectory again."
+            )
+        covered = max((int(row.get("browser_step") or 0) for row in rows), default=0)
+        if int(judge_data.get("covered_through_browser_step") or 0) != covered:
+            return (
+                f"Completion blocked: reflection covers browser step "
+                f"{judge_data.get('covered_through_browser_step')}, but the trajectory now reaches "
+                f"step {covered}. Reflect again."
+            )
+        plan_path = Path(self.config.trajectory_plan_file)
+        if not plan_path.is_absolute():
+            plan_path = workspace / plan_path
+        if not plan_path.is_file():
+            return f"Completion blocked: required trajectory plan does not exist at {plan_path}."
+        if judge_data.get("plan_digest", "") != optional_file_digest(plan_path):
+            return "Completion blocked: plan.md changed after reflection. Reflect again."
+        judge_config_path = Path(self.config.trajectory_judge_config)
+        if not judge_config_path.is_absolute():
+            judge_config_path = workspace / judge_config_path
+        if not judge_config_path.is_file():
+            return (
+                "Completion blocked: required trajectory judge config does not exist at "
+                f"{judge_config_path}."
+            )
+        if judge_data.get("judge_config_digest", "") != optional_file_digest(judge_config_path):
+            return "Completion blocked: judge_config.json changed after reflection. Reflect again."
+        return None
 
     def _tool_gate_error(self) -> str | None:
         """Require final_runs/run_<latest>/judge_result.json with predicted_label == 1."""
@@ -868,6 +962,40 @@ class DefaultAgent:
                 self.save(self.config.output_path)
         return self.messages[-1].get("extra", {})
 
+    def _windowed_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Sliding-window view of the history for the model request.
+
+        With context_window_steps=N > 0: keep messages[0] (system) and
+        messages[1] (initial task), drop everything between them and the user
+        block preceding the N-th assistant message from the end. The window
+        therefore holds the last N assistant turns plus their surrounding user
+        messages (including the current pending observation). Short histories
+        are returned unchanged.
+        """
+        n_steps = self.config.context_window_steps
+        if n_steps <= 0:
+            return messages
+        assistant_idx = [i for i, m in enumerate(messages) if m.get("role") == "assistant"]
+        if len(assistant_idx) <= n_steps:
+            return messages
+        cut = assistant_idx[-n_steps]
+        while cut > 2 and messages[cut - 1].get("role") == "user":
+            cut -= 1
+        if cut <= 2:
+            return messages
+        # Merge the task message with the user block at the window start into a
+        # single user message ("\n\n"-joined) so the request has no consecutive
+        # user turns — matching how the SFT data merges consecutive human turns.
+        block_end = cut
+        while block_end < len(messages) and messages[block_end].get("role") == "user":
+            block_end += 1
+        parts = [messages[1].get("content")] + [m.get("content") for m in messages[cut:block_end]]
+        if all(isinstance(p, str) for p in parts):
+            merged = dict(messages[1])
+            merged["content"] = "\n\n".join(p.strip() for p in parts)
+            return [messages[0], merged] + messages[block_end:]
+        return messages[:2] + messages[cut:]
+
     def step(self) -> list[dict[str, Any]]:
         return self.execute_actions(self.query())
 
@@ -881,8 +1009,9 @@ class DefaultAgent:
                 )
             )
         step_index = self.n_calls + 1
-        self._write_debug_request_artifact(step_index=step_index, messages=self.messages)
-        message = self.model.query(self.messages)
+        query_messages = self._windowed_messages(self.messages)
+        self._write_debug_request_artifact(step_index=step_index, messages=query_messages)
+        message = self.model.query(query_messages)
         self.n_calls += 1
         self.add_messages(message)
         return message

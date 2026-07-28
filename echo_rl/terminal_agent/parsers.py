@@ -265,7 +265,77 @@ class PlaywrightCodeParser:
         return ParseResult(thinking=thinking, commands=commands, is_done=is_done, answer=answer)
 
 
-def get_parser(parser_name: str) -> "HFHermesParser | Qwen35XMLParser | XMLParser | BashAnswerParser | PlaywrightCodeParser":
+class SftStateParser:
+    """Parser for the SFT *state* format (prompt modes 'sft_state' /
+    'sft_state_debug'; mirrors miniswewebagent parse_sft_state_output):
+
+        <think>...</think>
+        <bash>exactly one shell command, or empty when done is true</bash>
+        <done>true|false</done>
+        <final_response>final answer when done, else empty</final_response>
+
+    Harness semantics preserved: <done> and <final_response> are required every
+    turn (last occurrence wins when repeated); done=true must leave <bash>
+    empty and surfaces <final_response> as the answer; done=false must carry a
+    non-empty <bash>. Error strings intentionally read like the eval harness's
+    so the format feedback the model sees stays in-distribution."""
+
+    format_tags = ["bash", "done"]
+    _BASH_RE = re.compile(r"<bash>\n?(.*?)\n?</bash>", re.DOTALL | re.IGNORECASE)
+    _DONE_RE = re.compile(r"<done>(.*?)</done>", re.DOTALL | re.IGNORECASE)
+    _FINAL_RESPONSE_RE = re.compile(r"<final_response>(.*?)</final_response>", re.DOTALL | re.IGNORECASE)
+
+    @staticmethod
+    def _strip_cdata(value: str) -> str:
+        stripped = value.strip()
+        if stripped.startswith("<![CDATA[") and stripped.endswith("]]>"):
+            return stripped[len("<![CDATA[") : -len("]]>")].strip()
+        return stripped
+
+    def parse_response(self, response: str | None, extract_answer_tags_for_done: bool = False) -> ParseResult:
+        del extract_answer_tags_for_done
+        if not response:
+            return ParseResult(thinking="", error="Empty response")
+        think_match = re.search(r"<think>(.*?)</think>", response, re.DOTALL)
+        thinking = think_match.group(1).strip() if think_match else ""
+        done_values = self._DONE_RE.findall(response)
+        if not done_values:
+            return ParseResult(thinking=thinking, error="Unable to parse SFT state output: missing <done>.")
+        final_values = self._FINAL_RESPONSE_RE.findall(response)
+        if not final_values:
+            return ParseResult(thinking=thinking, error="Unable to parse SFT state output: missing <final_response>.")
+        done_text = self._strip_cdata(done_values[-1]).lower()
+        if done_text in ("true", "1", "yes"):
+            is_done = True
+        elif done_text in ("false", "0", "no"):
+            is_done = False
+        else:
+            return ParseResult(
+                thinking=thinking,
+                error=f"Unable to parse boolean value from <done>{done_values[-1].strip()!r}</done>.",
+            )
+        bash_values = self._BASH_RE.findall(response)
+        bash_command = self._strip_cdata(bash_values[-1]) if bash_values else ""
+        answer = self._strip_cdata(final_values[-1])
+        if is_done and bash_command:
+            return ParseResult(
+                thinking=thinking,
+                error="SFT state output with <done>true</done> must leave <bash> empty.",
+            )
+        if not is_done and not bash_command:
+            return ParseResult(
+                thinking=thinking,
+                error="SFT state output with <done>false</done> must contain one <bash> command.",
+            )
+        commands = []
+        if bash_command:
+            commands.append(ParsedCommand(name="bash", arguments={"command": bash_command}, raw=bash_command))
+        return ParseResult(thinking=thinking, commands=commands, is_done=is_done, answer=answer)
+
+
+def get_parser(
+    parser_name: str,
+) -> "HFHermesParser | Qwen35XMLParser | XMLParser | BashAnswerParser | PlaywrightCodeParser | SftStateParser":
     if parser_name == "hermes":
         return HFHermesParser()
     if parser_name == "xml":
@@ -276,6 +346,9 @@ def get_parser(parser_name: str) -> "HFHermesParser | Qwen35XMLParser | XMLParse
         return BashAnswerParser()
     if parser_name == "playwright_code":
         return PlaywrightCodeParser()
+    if parser_name == "sft_state":
+        return SftStateParser()
     raise ValueError(
-        f"Unknown parser_name {parser_name!r}. Must be 'hermes', 'xml', 'qwen35', 'bash', or 'playwright_code'."
+        f"Unknown parser_name {parser_name!r}. Must be 'hermes', 'xml', 'qwen35', 'bash', "
+        "'playwright_code', or 'sft_state'."
     )

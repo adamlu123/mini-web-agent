@@ -1,0 +1,38 @@
+{#-
+  Train-aligned chat template for checkpoints SFT'd with LlamaFactory
+  `template: qwen3_5` + `mask_history: false` + `enable_thinking: true`.
+
+  Differences vs the stock Qwen3.5 template:
+    1. History assistant turns are rendered VERBATIM — the <think>...</think>
+       blocks are KEPT, exactly as LlamaFactory renders them during training.
+       (The stock template strips <think> from every non-final assistant turn.)
+    2. The generation prompt is just "<|im_start|>assistant\n" with NO trailing
+       "<think>" — training targets begin with "<think>\n", so the model emits
+       the opening tag itself.
+
+  Rendering per message (matches LlamaFactory qwen3_5 StringFormatters):
+    <|im_start|>{role}\n{content}<|im_end|>\n
+  Images render as <|vision_start|><|image_pad|><|vision_end|> at the position
+  of the image part (LlamaFactory's qwen3_vl mm_plugin puts the same tokens at
+  the <image> placeholder position).
+-#}
+{%- for message in messages -%}
+    {{- '<|im_start|>' + message['role'] + '\n' -}}
+    {%- if message['content'] is string -%}
+        {{- message['content'] -}}
+    {%- else -%}
+        {%- for part in message['content'] -%}
+            {%- if part['type'] == 'image' or part['type'] == 'image_url' -%}
+                {{- '<|vision_start|><|image_pad|><|vision_end|>' -}}
+            {%- elif part['type'] == 'video' or part['type'] == 'video_url' -%}
+                {{- '<|vision_start|><|video_pad|><|vision_end|>' -}}
+            {%- elif part['type'] == 'text' -%}
+                {{- part['text'] -}}
+            {%- endif -%}
+        {%- endfor -%}
+    {%- endif -%}
+    {{- '<|im_end|>\n' -}}
+{%- endfor -%}
+{%- if add_generation_prompt -%}
+    {{- '<|im_start|>assistant\n' -}}
+{%- endif -%}

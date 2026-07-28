@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import os
 import sys
 from pathlib import Path
@@ -8,24 +9,36 @@ from typing import Any
 
 from .base import RewardResult
 
+_JUDGE_MODE = "WebJudge_Online_Mind2Web_eval"
+
 
 class OSWJudgeReward:
-    """Reward backed by the upstream Online-Mind2Web web judge.
+    """Reward backed by the AUTHORITATIVE eval script
+    ``scripts/eval_with_original_om2w.py`` (mini-web-agent repo).
 
-    Loads ``om2w_judge`` from the mini-web-agent repo at runtime, so we don't
-    duplicate the prompts here. The judge produces a binary success/failure
-    label per rollout; we expose it as ``reward = 1.0`` for success, else
-    ``0.0``. Override ``success_reward``/``failure_reward`` to shape it.
+    The script's per-task pipeline is reused function-for-function so RL
+    rewards match eval scores exactly:
 
-    The judge model is called via ``om2w_judge.utils.OpenaiEngine``. The
-    phyagi gateway keys / endpoint that this used to route through are dead
-    (April 2026), and ``OpenaiEngine`` discards ``endpoint_target_uri``
-    anyway, so we just talk to ``api.openai.com`` directly with an
-    ``sk-...`` key. API key resolution order: explicit ``api_key`` arg →
-    ``OPENAI_API_BACKUP_KEY`` env (the working ``sk-proj-...`` that ships
-    in the host's environment, intentionally checked first because the
-    legacy ``OPENAI_API_KEY`` in shared cred.sh files is a stale phyagi
-    token that 401s on api.openai.com) → ``OPENAI_API_KEY``.
+      - ``resolve_latest_run_dir``: highest ``final_runs/run_<N>``; a rollout
+        with NO final run scores 0 without calling the judge (same as eval).
+      - ``load_actions(log, plain_text=True)`` + ``bound_action_history``:
+        every non-empty line of the run's final_script_log.txt except the
+        "final response/answer:" line, bounded to 500 lines / 60k chars.
+      - ``load_screenshots``: every png in the run's screenshots/ dir,
+        final_execution_<N> numeric-first ordering.
+      - ``robust_webjudge_online_mind2web_eval``: upstream OM2W judge prompts
+        with per-image parse retries; judges even with zero screenshots.
+      - ``extract_predication(response, "WebJudge_Online_Mind2Web_eval")``.
+
+    Transport: the judge model is called via om2w_judge_sandbox's
+    ``OpenaiEngine`` because it supports routing through the phyagi gateway
+    (``endpoint_target_uri``); it exposes the same ``generate`` interface
+    (o-series -> max_completion_tokens) as the engine the script constructs,
+    so ONLY the transport differs, never the judge semantics.
+
+    Key resolution mirrors the eval harness's _resolve_judge_api_key: with a
+    gateway endpoint prefer OM2W_JUDGE_API_KEY / PHYAGI_API_KEY /
+    OPENAI_GATEWAY_API_KEY, else the direct-OpenAI keys.
     """
 
     def __init__(
@@ -44,11 +57,21 @@ class OSWJudgeReward:
         self.judge_gateway_endpoint = judge_gateway_endpoint or os.environ.get(
             "OPENAI_GATEWAY_ENDPOINT", ""
         )
-        self.api_key = (
-            api_key
-            or os.environ.get("OPENAI_API_BACKUP_KEY")
-            or os.environ.get("OPENAI_API_KEY")
-        )
+        if api_key:
+            self.api_key = api_key
+        elif self.judge_gateway_endpoint:
+            self.api_key = (
+                os.environ.get("OM2W_JUDGE_API_KEY")
+                or os.environ.get("PHYAGI_API_KEY")
+                or os.environ.get("OPENAI_GATEWAY_API_KEY")
+                or os.environ.get("OPENAI_API_KEY")
+            )
+        else:
+            self.api_key = (
+                os.environ.get("OM2W_JUDGE_API_KEY")
+                or os.environ.get("OPENAI_API_BACKUP_KEY")
+                or os.environ.get("OPENAI_API_KEY")
+            )
         self.score_threshold = int(score_threshold)
         self.mini_web_agent_root = (
             mini_web_agent_root or os.environ.get("MINI_WEB_AGENT_ROOT")
@@ -57,20 +80,37 @@ class OSWJudgeReward:
         self.success_reward = float(success_reward)
         self.failure_reward = float(failure_reward)
         self.max_new_tokens = int(max_new_tokens)
+        self._eval_mod = None
+        self._engine_cls = None
 
     def _import_judge(self):
+        if self._eval_mod is not None:
+            return self._eval_mod, self._engine_cls
         root = Path(self.mini_web_agent_root).expanduser().resolve()
         if not root.is_dir():
             raise RuntimeError(
                 f"mini_web_agent_root does not exist: {root}. Set MINI_WEB_AGENT_ROOT or pass "
                 "mini_web_agent_root in the reward config."
             )
-        if str(root) not in sys.path:
-            sys.path.insert(0, str(root))
-        from om2w_judge.methods.webjudge_online_mind2web import WebJudge_Online_Mind2Web_eval  # type: ignore
-        from om2w_judge.utils import OpenaiEngine, extract_predication  # type: ignore
+        # The eval script hardcodes /home/luyadong paths and relies on flat
+        # `from methods import ...` / `from utils import ...` imports inside
+        # om2w_judge — put THIS checkout's root and om2w_judge dir on sys.path
+        # first so everything resolves against the uploaded tree.
+        for p in (str(root), str(root / "om2w_judge")):
+            if p not in sys.path:
+                sys.path.insert(0, p)
+        script = root / "scripts" / "eval_with_original_om2w.py"
+        if not script.is_file():
+            raise RuntimeError(f"authoritative eval script not found: {script}")
+        spec = importlib.util.spec_from_file_location("eval_with_original_om2w", script)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["eval_with_original_om2w"] = module
+        spec.loader.exec_module(module)  # type: ignore[union-attr]
+        from om2w_judge_sandbox.utils import OpenaiEngine  # type: ignore
 
-        return WebJudge_Online_Mind2Web_eval, OpenaiEngine, extract_predication
+        self._eval_mod = module
+        self._engine_cls = OpenaiEngine
+        return module, OpenaiEngine
 
     async def score(
         self,
@@ -84,17 +124,8 @@ class OSWJudgeReward:
         extra: dict[str, Any] | None = None,
     ) -> RewardResult:
         del start_url, thoughts  # unused; included to satisfy BaseRewardFn
-        existing = [p for p in screenshot_paths if p and Path(p).exists()]
-        if not existing:
-            return RewardResult(
-                reward=self.failure_reward,
-                correct=False,
-                error="no_screenshots",
-                metadata={"judge_model": self.judge_model},
-            )
-
         try:
-            WebJudge, OpenaiEngine, extract_predication = self._import_judge()
+            mod, engine_cls = self._import_judge()
         except Exception as exc:
             return RewardResult(
                 reward=self.failure_reward,
@@ -103,21 +134,53 @@ class OSWJudgeReward:
                 metadata={"judge_model": self.judge_model},
             )
 
-        actions_for_judge = list(actions)
-        if final_response:
-            actions_for_judge.append(f"Final response: {final_response}")
+        task_dir = str((extra or {}).get("task_dir") or "")
+        judge_actions: list[str]
+        judge_shots: list[str]
+        run_dir_str = ""
+        if task_dir:
+            # SFT-aligned rollouts: derive inputs exactly like the eval script.
+            run_dir = mod.resolve_latest_run_dir(Path(task_dir))
+            if run_dir is None:
+                # Mirror auto_eval: no final_runs artifacts -> predicted_label 0
+                # without calling the judge at all.
+                return RewardResult(
+                    reward=self.failure_reward,
+                    correct=False,
+                    error=None,
+                    metadata={
+                        "judge_model": self.judge_model,
+                        "predicted_label": 0,
+                        "response": "No final_runs/run_* artifacts were available.",
+                        "action_history_source": "final_script_log",
+                    },
+                )
+            run_dir_str = str(run_dir)
+            judge_actions = mod.bound_action_history(
+                mod.load_actions(run_dir / "final_script_log.txt", plain_text=True)
+            )
+            judge_shots = mod.load_screenshots(run_dir / "screenshots")
+        else:
+            # Legacy (non-SFT) path: caller-provided inputs, final response
+            # appended like the pre-script reward did.
+            judge_actions = list(actions)
+            if final_response:
+                judge_actions.append(f"Final response: {final_response}")
+            judge_shots = [p for p in screenshot_paths if p and Path(p).exists()]
 
         def _run_judge() -> tuple[int | None, str, list[Any], str]:
-            engine = OpenaiEngine(
+            engine = engine_cls(
                 model=self.judge_model,
                 api_key=self.api_key,
                 endpoint_target_uri=self.judge_gateway_endpoint,
             )
             messages, _text, _system_msg, record, key_points = asyncio.run(
-                WebJudge(task, actions_for_judge, existing, engine, self.score_threshold)
+                mod.robust_webjudge_online_mind2web_eval(
+                    task, judge_actions, judge_shots, engine, self.score_threshold
+                )
             )
             response_text = engine.generate(messages, max_new_tokens=self.max_new_tokens)[0]
-            predicted_label = extract_predication(response_text, "WebJudge_Online_Mind2Web_eval")
+            predicted_label = mod.extract_predication(response_text, _JUDGE_MODE)
             return predicted_label, response_text, list(record or []), str(key_points or "")
 
         try:
@@ -142,5 +205,8 @@ class OSWJudgeReward:
                 "key_points": key_points,
                 "image_judge_record": record,
                 "score_threshold": self.score_threshold,
+                "final_run_dir": run_dir_str,
+                "num_judge_actions": len(judge_actions),
+                "num_judge_screenshots": len(judge_shots),
             },
         )

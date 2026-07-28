@@ -75,7 +75,7 @@ trap cleanup_staging EXIT
 
 mkdir -p "$UPLOAD_DIR"
 # configs/ 里有训练对齐 chat template,必须带上
-for relpath in src scripts docker om2w_judge echo_rl configs; do
+for relpath in src scripts docker om2w_judge om2w_judge_sandbox echo_rl configs; do
   cp -a "$MINI_WEB_AGENT_DIR/$relpath" "$UPLOAD_DIR/"
 done
 for relpath in pyproject.toml README.md LICENSE; do
@@ -95,6 +95,10 @@ EXTRA_ENV="${EXTRA_ENV},TP=${TP},MAX_MODEL_LEN=${MAX_MODEL_LEN},MAX_OUTPUT_TOKEN
 EXTRA_ENV="${EXTRA_ENV},MAX_CONTEXT_TOKENS=${MAX_CONTEXT_TOKENS},SLIDING_WINDOW_KEEP_TURNS=${SLIDING_WINDOW_KEEP_TURNS}"
 EXTRA_ENV="${EXTRA_ENV},GPU_MEMORY_UTILIZATION=${GPU_MEMORY_UTILIZATION}"
 [[ -n "${CHAT_TEMPLATE:-}" ]]  && EXTRA_ENV="${EXTRA_ENV},CHAT_TEMPLATE=${CHAT_TEMPLATE}"
+[[ -n "${CHAT_TEMPLATE_NAME:-}" ]] && EXTRA_ENV="${EXTRA_ENV},CHAT_TEMPLATE_NAME=${CHAT_TEMPLATE_NAME}"
+[[ -n "${MERGE_VISION:-}" ]]   && EXTRA_ENV="${EXTRA_ENV},MERGE_VISION=${MERGE_VISION}"
+[[ -n "${ORIGINAL_JUDGE:-}" ]] && EXTRA_ENV="${EXTRA_ENV},ORIGINAL_JUDGE=${ORIGINAL_JUDGE}"
+[[ -n "${PERSISTENT_JUDGE:-}" ]] && EXTRA_ENV="${EXTRA_ENV},PERSISTENT_JUDGE=${PERSISTENT_JUDGE}"
 [[ -n "$JUDGE_ENDPOINT" ]] && EXTRA_ENV="${EXTRA_ENV},JUDGE_ENDPOINT=${JUDGE_ENDPOINT}"
 [[ -n "${EXTRA_CONFIGS:-}" ]]  && EXTRA_ENV="${EXTRA_ENV},EXTRA_CONFIGS=${EXTRA_CONFIGS}"
 

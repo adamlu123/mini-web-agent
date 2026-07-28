@@ -1,0 +1,35 @@
+{#-
+  Same as qwen3_5_train_aligned.jinja, but the generation prompt PRE-FILLS
+  "<think>\n" after "<|im_start|>assistant\n".
+
+  Why: the D3 science SFT targets begin with "<think>\n", so an SFT'd model emits
+  the opening tag itself. A BASE model (e.g. Qwen3.5-4B) does NOT — it starts
+  writing reasoning without the opening "<think>". Pre-filling "<think>\n" here
+  forces the assistant turn to open inside the think block, matching the trained
+  format. The model's completion is then "<reasoning> </think> <bash> ... </bash>
+  <done>true</done>"; the leading "<think>\n" lives in the prompt (not echoed in
+  the response), so downstream extraction is unaffected.
+
+  Rendering per message (matches LlamaFactory qwen3_5 StringFormatters):
+    <|im_start|>{role}\n{content}<|im_end|>\n
+-#}
+{%- for message in messages -%}
+    {{- '<|im_start|>' + message['role'] + '\n' -}}
+    {%- if message['content'] is string -%}
+        {{- message['content'] -}}
+    {%- else -%}
+        {%- for part in message['content'] -%}
+            {%- if part['type'] == 'image' or part['type'] == 'image_url' -%}
+                {{- '<|vision_start|><|image_pad|><|vision_end|>' -}}
+            {%- elif part['type'] == 'video' or part['type'] == 'video_url' -%}
+                {{- '<|vision_start|><|video_pad|><|vision_end|>' -}}
+            {%- elif part['type'] == 'text' -%}
+                {{- part['text'] -}}
+            {%- endif -%}
+        {%- endfor -%}
+    {%- endif -%}
+    {{- '<|im_end|>\n' -}}
+{%- endfor -%}
+{%- if add_generation_prompt -%}
+    {{- '<|im_start|>assistant\n<think>\n' -}}
+{%- endif -%}

@@ -110,7 +110,9 @@ def resolve_latest_run_dir(task_dir: Path) -> Path | None:
 
 
 def load_actions(log_path: Path, plain_text: bool = False) -> list[str]:
-    if not log_path.exists():
+    # is_file(): some pathological trajectories create final_script_log.txt as a
+    # directory, which would crash read_text and kill the whole judge worker.
+    if not log_path.is_file():
         return []
     raw = log_path.read_text(encoding="utf-8", errors="replace")
     # Some final_script_log.txt files store the whole trajectory on one line

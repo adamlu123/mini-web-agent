@@ -59,12 +59,22 @@ class TerminalAgentGeneratorConfig(GeneratorConfig):
     # are included in the generation context. The full trajectory is still
     # recorded for loss/masking. None (or <=0) keeps the full history.
     history_window_turns: Optional[int] = None
+    # History compaction (SFT sequential-compact alignment): every N model
+    # calls (the compaction call itself counts as one, matching the SFT data's
+    # 10-calls-per-window cadence and the harness's step_limit accounting) the
+    # running context is summarized and the GENERATION context resets to
+    # [system, summary-wrapper]. 0 disables. When enabled it supersedes
+    # history_window_turns — set that to null.
+    summary_every_n_steps: int = 0
+    summary_max_output_tokens: int = 4096
+    # Empty -> DEFAULT_SUMMARY_USER_PROMPT (byte-aligned with the SFT data).
+    summary_user_prompt: str = ""
     max_tokens_per_generation: int = 2048
     max_terminal_output_chars: int = 6000
     terminal_output_truncation: str = "start_end"
     max_commands_per_turn: int = 1
     command_selection: Literal["first", "last", "all"] = "first"
-    parser_name: Literal["xml", "hermes", "qwen35", "bash", "playwright_code"] = "xml"
+    parser_name: Literal["xml", "hermes", "qwen35", "bash", "playwright_code", "sft_state"] = "xml"
     length_penalty_coef: float = 0.0
     length_penalty_threshold: int = 20000
     correct_threshold: float = 0.5

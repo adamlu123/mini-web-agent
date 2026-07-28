@@ -155,7 +155,7 @@ PY
 
 EXTRA_CONFIGS=(
   "run.judge_python=python"
-  "run.judge_script=$REPO/om2w_judge/run.py"
+  "run.judge_script=$REPO/om2w_judge_sandbox/run.py"
   "run.logs_root=$LOG_ROOT"
   "environment.credentials_file=$CREDS_FILE"
 )
@@ -165,5 +165,5 @@ export EXTRA_CONFIGS="$EXTRA_CONFIGS_CSV"
 echo '[mini-harness] === launch historical harness ==='
 exec bash "$REPO/scripts/mini_harness_eval_sft_vllm.sh" \
   --judge-python python \
-  --judge-script "$REPO/om2w_judge/run.py" \
+  --judge-script "$REPO/om2w_judge_sandbox/run.py" \
   --judge-num-proc "$JUDGE_NUM_PROC"

@@ -33,6 +33,90 @@ from .web_environment import WebAgentEnvironment, WebAgentEnvironmentConfig
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# SFT-state alignment (prompt modes "sft_state"/"sft_state_debug"): both the
+# observation and the parse-error feedback are rendered EXACTLY like the
+# miniswewebagent eval harness (observation_template / format_error_template in
+# config/benchmark/om2w_sft_state_debug_vllm_sft_ckpt.yaml), which is also what
+# the SFT training data contains. Observations are user turns with no trailing
+# newline (verified against web_agent_seq_om2w4000_run1.json).
+# ---------------------------------------------------------------------------
+
+SFT_STATE_FORMAT_ERROR_TEMPLATE = """Format error:
+
+{error}
+
+Respond in exactly this unified SFT state format and nothing else:
+<think>
+reasoning
+</think>
+<bash>
+exactly one shell command, or empty when done is true
+</bash>
+<done>false</done>
+<final_response></final_response>
+
+If the task is fully complete and verified, use:
+<think>
+final verification reasoning
+</think>
+<bash>
+</bash>
+<done>true</done>
+<final_response>
+final response
+</final_response>"""
+
+
+def _truncate_harness_style(text: str, limit: int) -> str:
+    """miniswewebagent LocalWorkspace._truncate: head + omitted-count marker."""
+    if len(text) <= limit:
+        return text
+    omitted = len(text) - limit
+    return f"{text[:limit]}\n\n... [{omitted} characters omitted]"
+
+
+def render_sft_state_observation(
+    *,
+    returncode: int,
+    output: str,
+    exception: str,
+    workspace_dir: str,
+    workspace_alias: str,
+    final_script_exists: bool,
+    output_truncation_chars: int,
+) -> str:
+    """Render the harness observation_template for one executed command.
+
+    Field-for-field mirror of LocalWorkspace._capture_observation + the yaml
+    observation_template: real workspace paths are aliased to /workspace,
+    success requires rc==0 AND no exception, command output is head-truncated
+    with the harness marker, and final_script.py is reported once it exists.
+    """
+    def display(value: str) -> str:
+        return value.replace(workspace_dir, workspace_alias) if workspace_dir else value
+
+    success = returncode == 0 and not exception
+    lines = [
+        "Observation:",
+        f"Status: {'ok' if success else 'error'}",
+        f"Workspace: {workspace_alias}",
+        f"Working directory: {workspace_alias}",
+        f"Return code: {returncode}",
+    ]
+    if exception:
+        lines.append(f"Exception:\n{display(exception)}")
+    command_output = _truncate_harness_style(display(output), output_truncation_chars)
+    if command_output:
+        lines.append(f"Command output:\n{command_output}")
+    if final_script_exists:
+        lines.append(f"final_script.py: {workspace_alias}/final_script.py")
+    # The SFT data's observation turns carry no trailing newline (the natural
+    # trailing newline INSIDE command output is preserved; only the message
+    # end is stripped) — verified against web_agent_seq_om2w4000_run1.json.
+    return "\n".join(lines).rstrip("\n")
+
+
 @dataclass
 class _WebProviderResult:
     env: WebAgentEnvironment
@@ -112,6 +196,78 @@ class WebAgentGenerator(TerminalAgentGenerator):
         if self._policy_model_name and "policy_model_name" not in env_overrides:
             env_overrides["policy_model_name"] = self._policy_model_name
         self._env_overrides = env_overrides
+        # SFT-state alignment: harness-style observations + format-error
+        # feedback, and observations as USER turns (the SFT data has user
+        # observation turns; choose_obs_role would pick "tool" on the generic
+        # qwen jinja, which the ckpt never saw).
+        self._sft_state_aligned = str(getattr(generator_cfg, "prompt_mode", "")) in ("sft_state", "sft_state_debug")
+        if self._sft_state_aligned:
+            self._obs_role = "user"
+
+    def _format_parse_error(self, error: str) -> str:
+        if not self._sft_state_aligned:
+            return super()._format_parse_error(error)
+        return SFT_STATE_FORMAT_ERROR_TEMPLATE.format(error=error)
+
+    async def _execute_commands(self, environment, commands: list) -> str:
+        if not self._sft_state_aligned:
+            return await super()._execute_commands(environment, commands)
+        # sft_state emits exactly one <bash> command per turn (the parser
+        # guarantees it); render its result like the eval harness observation.
+        outputs = []
+        workspace_dir = ""
+        try:
+            workspace_dir = str(environment.workspace)
+        except Exception:  # noqa: BLE001 - stub envs may have no workspace yet
+            pass
+        for parsed_cmd in commands:
+            if parsed_cmd.error or parsed_cmd.name != "bash":
+                outputs.append(self._format_parse_error(parsed_cmd.error or f"Unknown tool '{parsed_cmd.name}'."))
+                continue
+            cmd = parsed_cmd.arguments.get("command", "")
+            timeout = float(parsed_cmd.arguments.get("timeout", 240))
+            exception_info = ""
+            returncode = 0
+            raw_output = ""
+            try:
+                result = await environment.exec(cmd, timeout=timeout)
+                returncode = result.return_code
+                raw_output = result.stdout or ""
+                if result.stderr:
+                    raw_output = f"{raw_output}\n{result.stderr}" if raw_output else result.stderr
+                if returncode == 124:
+                    # The harness surfaces timeouts as an exception, not output.
+                    exception_info = (
+                        "An error occurred while executing the command: "
+                        f"Command '{cmd}' timed out after {int(timeout)} seconds"
+                    )
+            except (RuntimeError, TimeoutError, asyncio.TimeoutError):
+                returncode = -1
+                exception_info = (
+                    "An error occurred while executing the command: "
+                    f"Command '{cmd}' timed out after {int(timeout)} seconds"
+                )
+            except Exception as exc:  # noqa: BLE001 - mirror the harness catch-all
+                returncode = -1
+                exception_info = f"An error occurred while executing the command: {exc}"
+            final_script_exists = False
+            if workspace_dir:
+                try:
+                    final_script_exists = (Path(workspace_dir) / "final_script.py").exists()
+                except OSError:
+                    pass
+            outputs.append(
+                render_sft_state_observation(
+                    returncode=returncode,
+                    output=raw_output,
+                    exception=exception_info,
+                    workspace_dir=workspace_dir,
+                    workspace_alias="/workspace",
+                    final_script_exists=final_script_exists,
+                    output_truncation_chars=int(self.generator_cfg.max_terminal_output_chars),
+                )
+            )
+        return "\n\n".join(outputs)
 
     @staticmethod
     def _resolve_policy_endpoint(inference_engine_client, generator_cfg) -> tuple[str, str]:
@@ -304,9 +460,24 @@ class WebAgentGenerator(TerminalAgentGenerator):
         if environment is None:
             return RewardResult(reward=0.0, correct=False, error="no_environment")
         meta = env_extra.get("task_meta") or {}
-        actions = environment.actions_history()
-        screenshots = environment.screenshot_paths()
-        final_response = str(interaction.metadata.get("final_response", "") or "")
+        extra: dict[str, Any] = {"task_id": str(meta.get("task_id") or "")}
+        if self._sft_state_aligned:
+            # AUTHORITATIVE judge alignment: pass the rollout workspace as
+            # task_dir and let osw_judge derive actions/screenshots with the
+            # very functions of scripts/eval_with_original_om2w.py (latest
+            # final_runs/run_<N>, plain-text bounded action log, run-dir pngs,
+            # no final-response append, 0 without judging when no run exists).
+            try:
+                extra["task_dir"] = str(environment.workspace)
+            except Exception:  # noqa: BLE001 - stub envs may lack a workspace
+                pass
+            actions: list[str] = []
+            screenshots: list[str] = []
+            final_response = ""
+        else:
+            actions = environment.actions_history()
+            screenshots = environment.screenshot_paths()
+            final_response = str(interaction.metadata.get("final_response", "") or "")
         return await self._reward_fn.score(
             task=str(meta.get("task") or ""),
             start_url=str(meta.get("start_url") or ""),
@@ -314,5 +485,5 @@ class WebAgentGenerator(TerminalAgentGenerator):
             thoughts=[],  # the qwen35 parser strips <think> blocks already
             screenshot_paths=screenshots,
             final_response=final_response,
-            extra={"task_id": str(meta.get("task_id") or "")},
+            extra=extra,
         )

@@ -475,6 +475,24 @@ def format_web_task_prompt(
             {"role": "system", "content": SFT_SYSTEM},
             {"role": "user", "content": format_sft_first_user(task, task_id, start_url)},
         ]
+    # "sft_state" / "sft_state_debug" modes: the unified SFT *state* format
+    # (<think>/<bash>/<done>/<final_response>), same first-turn layout the eval
+    # harness (miniswewebagent prompt_mode sft_state/_debug) reconstructs.
+    if mode in ("sft_state", "sft_state_debug"):
+        if parser_name != "sft_state":
+            raise ValueError(
+                f"prompt mode {mode!r} requires parser_name='sft_state', got {parser_name!r}"
+            )
+        system = SFT_STATE_DEBUG_SYSTEM if mode == "sft_state_debug" else SFT_STATE_SYSTEM
+        instructions = SFT_STATE_DEBUG_INSTRUCTIONS if mode == "sft_state_debug" else SFT_STATE_INSTRUCTIONS
+        return [
+            {"role": "system", "content": system},
+            {
+                "role": "user",
+                "content": SFT_FIRST_USER_HEADER.format(task=task, task_id=task_id, start_url=start_url)
+                + instructions,
+            },
+        ]
     if mode == "playwright_debug":
         if parser_name != "playwright_code":
             raise ValueError(
@@ -486,7 +504,8 @@ def format_web_task_prompt(
         ]
     if parser_name not in ("qwen35", "hermes"):
         raise ValueError(
-            f"web_agent only supports qwen35, hermes, playwright_code (playwright_debug mode), and bash (sft mode) parsers, got {parser_name!r}"
+            "web_agent only supports qwen35, hermes, playwright_code (playwright_debug mode), "
+            f"bash (sft mode), and sft_state (sft_state/sft_state_debug modes) parsers, got {parser_name!r}"
         )
     if mode not in _INSTRUCTION_PREFIX_REGISTRY:
         raise ValueError(

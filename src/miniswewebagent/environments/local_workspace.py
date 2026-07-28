@@ -29,6 +29,11 @@ class LocalWorkspaceEnvironmentConfig(BaseModel):
     workspace_alias: str = ""
     prepend_tools_to_pythonpath: bool = False
     prefer_current_python: bool = False
+    # Symlinks created inside the workspace at prepare() time, mapping a
+    # workspace-relative path (parent dirs auto-created) to an absolute target,
+    # e.g. {"benchmark/datasets": "/data/ScienceAgentBench/benchmark/datasets"}.
+    # Lets benchmark data be exposed read-shared without copying per task.
+    seed_symlinks: dict[str, str] = Field(default_factory=dict)
 
 
 class LocalWorkspaceEnvironment:
@@ -168,6 +173,12 @@ class LocalWorkspaceEnvironment:
         self._logs_dir().mkdir(parents=True, exist_ok=True)
         self._screenshots_dir().mkdir(parents=True, exist_ok=True)
         (workspace_dir / ".tmp").mkdir(parents=True, exist_ok=True)
+        for rel_path, target in self.config.seed_symlinks.items():
+            link = workspace_dir / rel_path
+            if link.exists() or link.is_symlink():
+                continue
+            link.parent.mkdir(parents=True, exist_ok=True)
+            link.symlink_to(Path(target).expanduser().resolve())
         self._task_metadata_path().write_text(json.dumps(kwargs, indent=2), encoding="utf-8")
 
     def execute(self, action: dict[str, Any], cwd: str = "") -> dict[str, Any]:
@@ -177,9 +188,13 @@ class LocalWorkspaceEnvironment:
         ).strip()
         self._persist_step_command(command)
         resolved_cwd = self._resolve_cwd(cwd)
+        screenshots_before = {
+            path.resolve(): path.stat().st_mtime_ns for path in self._recent_screenshots()
+        }
 
         command_env = os.environ | self._credential_env | self.config.env | {
             "WORKSPACE_DIR": str(self._workspace_dir()),
+            "MWA_AGENT_STEP": str(self._step_index),
             "OM2W_TASK_JSON": str(self._task_metadata_path()),
             "FINAL_SCRIPT_PATH": str(self._final_script_path()),
             "TMPDIR": str(self._workspace_dir() / ".tmp"),
@@ -226,6 +241,7 @@ class LocalWorkspaceEnvironment:
             returncode=returncode,
             exception_info=exception_info,
             log_path=log_path,
+            screenshots_before=screenshots_before,
         )
         return {
             "output": output,
@@ -243,10 +259,18 @@ class LocalWorkspaceEnvironment:
         returncode: int,
         exception_info: str,
         log_path: Path | None,
+        screenshots_before: dict[Path, int] | None = None,
     ) -> dict[str, Any]:
         final_script_path = self._final_script_path()
         recent_screenshot_paths = self._recent_screenshots()
-        latest_screenshot = recent_screenshot_paths[0] if recent_screenshot_paths else None
+        before = screenshots_before or {}
+        step_screenshot_paths = []
+        for path in recent_screenshot_paths:
+            resolved = path.resolve()
+            previous_mtime = before.get(resolved)
+            if previous_mtime is None or path.stat().st_mtime_ns != previous_mtime:
+                step_screenshot_paths.append(path)
+        latest_screenshot = step_screenshot_paths[0] if step_screenshot_paths else None
         final_script_preview = ""
         if final_script_path.exists():
             final_script_preview = self._truncate(
@@ -259,6 +283,7 @@ class LocalWorkspaceEnvironment:
         display_output = self._display_text(output)
         display_exception = self._display_text(exception_info)
         display_final_script = self._display_text(final_script_preview)
+        new_screenshots = [str(path.relative_to(workspace_dir)) for path in step_screenshot_paths]
         return {
             "success": returncode == 0 and not exception_info,
             "exception": display_exception,
@@ -278,6 +303,7 @@ class LocalWorkspaceEnvironment:
             "final_script_exists": final_script_path.exists(),
             "final_script_preview": display_final_script,
             "screenshot_path": self._display_path(latest_screenshot) if latest_screenshot is not None else "",
+            "new_screenshots": new_screenshots,
             "recent_screenshots": recent_screenshots,
             "workspace_files": self._recent_workspace_files(),
         }

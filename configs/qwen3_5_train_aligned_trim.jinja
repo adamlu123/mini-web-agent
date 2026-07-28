@@ -1,0 +1,36 @@
+{#-
+  Train-aligned chat template for checkpoints SFT'd with aifsdk phitrain's
+  "Qwen3.5-no-auto-think" tokenizer template (WebWright/SPB recipes).
+
+  Semantics mirrored from that training template:
+    1. Every message content is |trim-ed (phitrain trims; LlamaFactory does not
+       — this is the only behavioral difference vs qwen3_5_train_aligned.jinja).
+    2. History assistant turns are rendered VERBATIM — <think> blocks KEPT.
+    3. The generation prompt is just "<|im_start|>assistant\n" with NO trailing
+       "<think>" — training targets begin with "<think>\n".
+  Images render as <|vision_start|><|image_pad|><|vision_end|> at the position
+  of the image part.
+-#}
+{%- macro render_content(content) -%}
+    {%- if content is string -%}
+        {{- content -}}
+    {%- else -%}
+        {%- for part in content -%}
+            {%- if part['type'] == 'image' or part['type'] == 'image_url' -%}
+                {{- '<|vision_start|><|image_pad|><|vision_end|>' -}}
+            {%- elif part['type'] == 'video' or part['type'] == 'video_url' -%}
+                {{- '<|vision_start|><|video_pad|><|vision_end|>' -}}
+            {%- elif part['type'] == 'text' -%}
+                {{- part['text'] -}}
+            {%- endif -%}
+        {%- endfor -%}
+    {%- endif -%}
+{%- endmacro -%}
+{%- for message in messages -%}
+    {{- '<|im_start|>' + message['role'] + '\n' -}}
+    {{- render_content(message['content']) | trim -}}
+    {{- '<|im_end|>\n' -}}
+{%- endfor -%}
+{%- if add_generation_prompt -%}
+    {{- '<|im_start|>assistant\n' -}}
+{%- endif -%}

@@ -25,6 +25,10 @@ MINI_WEB_AGENT_DIR="${MINI_WEB_AGENT_DIR:-/data/t-yifeili/mini-web-agent}"
 SKYRL_DIR="${SKYRL_DIR:-/data/t-yifeili/SkyRL}"
 IMAGE="${IMAGE:-aifrontiers.azurecr.io/nvidia25.11-pytorch2.10.0-te2.13-deepspeed0.18.9-fa2main-vllm0.18.0:20260415}"
 GPUS="${GPUS:-8}"
+# Multi-node ray cluster (rank0 = head + trainer, others = ray workers).
+# The CONFIG's trainer.placement / inference_engine.num_engines must match
+# NODES (e.g. policy_num_nodes: N, num_engines: N*8).
+NODES="${NODES:-1}"
 # Config path is relative to SkyRL/ (echo_configs lives inside the uploaded SkyRL).
 CONFIG="${CONFIG:-echo_configs/qwen35_9b_web_agent_easy_8gpu.yaml}"
 
@@ -48,7 +52,7 @@ export PRIORITY="${PRIORITY:-p0}"
 export PRIORITY_CLASS_NAME="${PRIORITY_CLASS_NAME:-high}"
 export PROJECT_NAME="${PROJECT_NAME:-cua}"
 
-echo "[submit_train_q35_image] GPUS=$GPUS IMAGE=$IMAGE CONFIG=$CONFIG"
+echo "[submit_train_q35_image] NODES=$NODES GPUS=$GPUS IMAGE=$IMAGE CONFIG=$CONFIG"
 echo "[submit_train_q35_image] PRIORITY=$PRIORITY CLASS=$PRIORITY_CLASS_NAME PROJECT=$PROJECT_NAME WANDB_HOST=$WANDB_HOST"
 
 # Tiny --cmd: just exec the uploaded driver. Creds come from the two secret
@@ -57,7 +61,7 @@ echo "[submit_train_q35_image] PRIORITY=$PRIORITY CLASS=$PRIORITY_CLASS_NAME PRO
 bash "$SUBMIT" \
     --upload "$MINI_WEB_AGENT_DIR" "$SKYRL_DIR" \
     --image "$IMAGE" \
-    --node 1 --gpu-per-node "$GPUS" \
+    --node "$NODES" --gpu-per-node "$GPUS" \
     --cpu 64 --memory 512Gi --shm 64Gi \
     --secret-volume echo-rl-creds:/run/secrets/echo-rl-creds \
     --secret-volume echo-rl-openai:/run/secrets/echo-rl-openai \

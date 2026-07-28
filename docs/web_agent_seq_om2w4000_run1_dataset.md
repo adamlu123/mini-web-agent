@@ -62,7 +62,9 @@
 
 **判 0 的口径（坑）**：这批 `judge_result.json` 的 `predicted_label` 在 failure 时存的是 **null 而非 0**（解析未落 0），过滤/统计必须用 `final_response` 里的 `Status: failure` 文本重新解析（全量 4861 个 null 中 4860 个是 failure，1 个 response 未写 Status）。**生成的 SFT 数据里已规范化**：负例样本的 `predicted_label` 字段统一写 0（该字段仅溯源用，训练只读 conversations/system/images）；合并版中 `predicted_label` 分布 = image 1000 个 1 + final 各 1000 个 1/0。
 
-## 4. 统计（Qwen3.5-9B tokenizer；tokens = system+全部轮次文本，不含 vision token；output = gpt 轮）
+## 4. 统计（Qwen3.5-9B tokenizer；tokens = system+全部轮次文本，不含 vision token）
+
+> **口径注意**：§4.2 表中的 "output tokens" 是**每条 example 内全部 gpt 轮的加总**（trajectory_session 平均 8.3 轮），不是单轮输出。单轮分布见 §4.3——全部符合采集配置 `max_output_tokens: 4096`。
 
 > 本节统计基于基础版 7774 条；负例是短的两轮判定样本（与正例同形态），对整体分布影响很小，未重算。
 
@@ -81,17 +83,27 @@
 
 | 指标 | avg | p50 | p75 | p90 | p99 | max |
 |---|---|---|---|---|---|---|
-| 总 tokens | 14,660 | 15,628 | 23,740 | 30,294 | 44,276 | 74,168 |
-| output tokens | 4,374 | 4,134 | 7,729 | 9,508 | 13,344 | 23,693 |
+| example 总 tokens（全轮加总） | 14,660 | 15,628 | 23,740 | 30,294 | 44,276 | 74,168 |
+| example output tokens（gpt 轮加总） | 4,374 | 4,134 | 7,729 | 9,508 | 13,344 | 23,693 |
 
 主体 trajectory_session 5222 条：
 
 | 指标 | avg | p50 | p75 | p90 | p99 | max |
 |---|---|---|---|---|---|---|
-| 总 tokens | 21,280 | 21,056 | 26,760 | 32,927 | 46,757 | 74,168 |
-| output tokens | 6,351 | 6,820 | 8,638 | 10,166 | 13,876 | 23,693 |
+| example 总 tokens（全轮加总） | 21,280 | 21,056 | 26,760 | 32,927 | 46,757 | 74,168 |
+| example output tokens（gpt 轮加总） | 6,351 | 6,820 | 8,638 | 10,166 | 13,876 | 23,693 |
 
 按 example 的 gpt 轮数：全体 avg 5.9 / max 19；trajectory_session avg 8.3 / max 19。
+
+### 4.3 单轮 gpt 输出 token（合并版全量 47,060 轮实测）
+
+| 轮类型 | 数量 | avg | p99 | max | 名义 >4096 |
+|---|---|---|---|---|---|
+| 轨迹动作轮 | 39,778 | 620 | 2,501 | 3,892 | 0 |
+| 轨迹 summary 轮 | 3,730 | 2,277 | 3,381 | 4,215 | 2（0.1%） |
+| image_qa / self_reflection 各类 | 3,552 | 85–703 | — | ≤3,303 | 0 |
+
+单轮输出严格受采集配置 `max_output_tokens: 4096` 约束。仅有的 2 条名义超限（max 4,215）是 **Qwen tokenizer 与 gpt-5.4 自家 tokenizer 的计数差异**（限额按 OpenAI 侧 tokenizer 执行，同文本 Qwen 计数偏高几个百分点），并非真超限——恰好卡在上限附近的 summary 轮正是被 4096 截断的证据。
 
 ## 5. 训练注意事项
 

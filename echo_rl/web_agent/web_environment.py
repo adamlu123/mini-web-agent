@@ -23,6 +23,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -442,32 +444,121 @@ class WebAgentEnvironment:
             if step.turn >= 1
         ]
 
+    def executed_commands(self) -> list[str]:
+        """Raw executed commands, workspace paths aliased back to /workspace.
+
+        Judge-facing action history for SFT-aligned runs: the eval harness's
+        export_online_mind2web_artifacts ends up feeding the judge the raw bash
+        command of each assistant turn (via the trajectory.json _action_text
+        fallback — debug_steps only carry python_code, empty in sft_state), so
+        the RL reward must see the same, not the summarized form."""
+        ws = str(self._workspace) if self._workspace is not None else ""
+        commands: list[str] = []
+        for step in self._steps:
+            if step.turn >= 1 and step.command:
+                commands.append(step.command.replace(ws, "/workspace") if ws else step.command)
+        return commands
+
+    # ------------------------------------------------------------------
+    # Judge-input mirrors of om2w_judge_sandbox/run.py (the judge the dist
+    # eval harness actually runs): action history prefers the latest REAL
+    # final run's final_script_log.txt "step N action:" lines, screenshots are
+    # that run dir's final_execution_*.png in numeric order.
+    # ------------------------------------------------------------------
+
+    _FINAL_SCRIPT_ACTION_RE = re.compile(r"^\s*step\s+\d+(?:\s+action)?\s*:\s*.+\s*$", re.IGNORECASE)
+    _FINAL_RUN_DIR_RE = re.compile(r"run_(\d+)")
+
+    def _resolve_judge_final_run_dir(self) -> Path | None:
+        """Mirror of resolve_latest_final_run_dir: highest run_<id> that has
+        real artifacts (non-empty log AND >=1 final_execution png), falling
+        back to the highest run dir with either artifact present."""
+        if self._workspace is None:
+            return None
+        final_runs_dir = self._workspace / "final_runs"
+        if not final_runs_dir.is_dir():
+            return None
+        candidates: list[tuple[int, str, Path]] = []
+        for path in final_runs_dir.iterdir():
+            if not path.is_dir():
+                continue
+            match = self._FINAL_RUN_DIR_RE.fullmatch(path.name)
+            if not match:
+                continue
+            log_path = path / "final_script_log.txt"
+            screenshots_dir = path / "screenshots"
+            if not log_path.exists() and not screenshots_dir.is_dir():
+                continue
+            candidates.append((int(match.group(1)), path.name, path))
+        if not candidates:
+            return None
+        candidates.sort(key=lambda item: (item[0], item[1]))
+
+        def _has_real_artifacts(run_path: Path) -> bool:
+            log_path = run_path / "final_script_log.txt"
+            log_ok = log_path.is_file() and log_path.stat().st_size > 0
+            screenshots_dir = run_path / "screenshots"
+            screenshots_ok = screenshots_dir.is_dir() and any(
+                re.fullmatch(r"final_execution_.*\.png", name) for name in os.listdir(screenshots_dir)
+            )
+            return log_ok and screenshots_ok
+
+        for _, _, candidate_path in reversed(candidates):
+            if _has_real_artifacts(candidate_path):
+                return candidate_path
+        return candidates[-1][2]
+
+    def judge_action_history(self) -> tuple[list[str], bool]:
+        """(actions, from_final_script_log) for the sandbox judge.
+
+        Mirrors om2w_judge_sandbox/run.py: prefer "step N action:" lines from
+        the resolved final run's final_script_log.txt (raw, no aliasing — the
+        harness feeds them verbatim); the caller appends "Final response: ..."
+        ONLY in that branch, exactly like run.py. Fallback: raw executed bash
+        commands (the result.json action_history equivalent)."""
+        run_dir = self._resolve_judge_final_run_dir()
+        log_path = (run_dir / "final_script_log.txt") if run_dir is not None else (
+            (self._workspace / "final_script_log.txt") if self._workspace is not None else None
+        )
+        if log_path is not None and log_path.exists():
+            actions = [
+                line.strip()
+                for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+                if line.strip() and self._FINAL_SCRIPT_ACTION_RE.match(line.strip())
+            ]
+            if actions:
+                return actions, True
+        return self.executed_commands(), False
+
     def screenshot_paths(self) -> list[str]:
         if self.cfg.sft_mode:
             return self._sft_screenshot_paths()
         return [step.screenshot_path for step in self._steps if step.screenshot_path]
 
+    @staticmethod
+    def _final_execution_sort_key(filename: str) -> tuple:
+        match = re.search(r"final_execution_(\d+)", filename)
+        if match:
+            return (0, int(match.group(1)), filename)
+        return (1, filename)
+
     def _sft_screenshot_paths(self) -> list[str]:
-        """Screenshots the AGENT wrote to disk (what the original SFT harness
-        judged). Prefer the latest `final_runs/run_<id>/screenshots/*.png` (the
-        model's final verified run); fall back to any *.png under the workspace
-        ordered by mtime so a model that never reached the final-run stage still
-        gets scored on whatever evidence it produced."""
+        """Mirror of om2w_judge_sandbox _load_sandbox_screenshot_paths: the
+        resolved final run dir's (fallback: workspace root) screenshots/
+        final_execution_*.png in numeric order. No looser fallback — the eval
+        judge scores a rollout without such screenshots as failure, so the RL
+        reward must too."""
         if self._workspace is None:
             return []
-        ws = self._workspace
-        run_dirs = sorted(
-            ws.glob("final_runs/run_*/screenshots"),
-            key=lambda p: (p.parent.stat().st_mtime if p.exists() else 0.0),
+        artifact_dir = self._resolve_judge_final_run_dir() or self._workspace
+        screenshots_dir = artifact_dir / "screenshots"
+        if not screenshots_dir.is_dir():
+            return []
+        names = sorted(
+            [n for n in os.listdir(screenshots_dir) if re.fullmatch(r"final_execution_.*\.png", n)],
+            key=self._final_execution_sort_key,
         )
-        for run_ss in reversed(run_dirs):
-            pngs = sorted(run_ss.glob("*.png"))
-            if pngs:
-                return [str(p) for p in pngs]
-        # Fallback: every PNG the agent saved anywhere under the workspace.
-        all_pngs = [p for p in ws.rglob("*.png") if p.is_file()]
-        all_pngs.sort(key=lambda p: p.stat().st_mtime)
-        return [str(p) for p in all_pngs]
+        return [str(screenshots_dir / n) for n in names]
 
     def _write_sft_workspace_assets(self) -> None:
         """Provision the SFT harness artifacts the trained model expects:

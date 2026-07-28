@@ -88,6 +88,8 @@ TASKS_FILE="${TASKS_FILE:-$REPO/src/miniswewebagent/run/benchmarks/om2w_260220.j
 # 训练对齐的 chat template(qwen3_5 think 对齐,docs/qwen3_5_think_alignment.md)。
 # ckpt 自带的 chat_template.jinja 与它不同,不能省。置空则用 ckpt 自带模板。
 CHAT_TEMPLATE="${CHAT_TEMPLATE-$REPO/configs/qwen3_5_train_aligned.jinja}"
+# CHAT_TEMPLATE_NAME:相对 $REPO/configs 的模板文件名(跨机路径无关的指定方式)
+[[ -n "${CHAT_TEMPLATE_NAME:-}" ]] && CHAT_TEMPLATE="$REPO/configs/$CHAT_TEMPLATE_NAME"
 HOST=127.0.0.1
 PORT="${PORT:-8000}"
 ENDPOINT="http://${HOST}:${PORT}/v1/chat/completions"
@@ -382,25 +384,64 @@ if (( GENERATION_FAILURES > 0 )); then
   echo "[dist-eval][warn] generation left $GENERATION_FAILURES retryable task failure(s)"
 fi
 
-echo "[dist-eval] === [master] native harness judge over full output dir ==="
-JUDGE_ENDPOINT_ARGS=()
-[[ -n "$JUDGE_ENDPOINT" ]] && JUDGE_ENDPOINT_ARGS=( --judge-endpoint "$JUDGE_ENDPOINT" )
 JUDGE_RC=0
-python -m miniswewebagent.run.benchmarks.om2w \
-  "${CONFIG_ARGS[@]}" \
-  -c "run.logs_root=$LOGS_DIR" \
-  -c "environment.credentials_file=$CREDS_FILE" \
-  --task-level "$TASK_LEVEL" \
-  --limit "$LIMIT" \
-  --judge-only \
-  --batch-name "$EVAL_RUN_ID" \
-  --judge-runs "$JUDGE_RUNS" \
-  --judge-num-proc "$JUDGE_NUM_PROC" \
-  --judge-python python \
-  --judge-script "$REPO/om2w_judge/run.py" \
-  "${JUDGE_ENDPOINT_ARGS[@]}" \
-  --output-dir "$OUTPUTS_DIR" || JUDGE_RC=$?
-echo "[dist-eval] judge rc=$JUDGE_RC ; final summary: $LOGS_DIR/$EVAL_RUN_ID/run_summary_judge.json"
+if [[ "${PERSISTENT_JUDGE:-0}" == "1" ]]; then
+  # SPB(persistent-browser CLI)轨迹判分:动作史=browser-steps.jsonl 的 action,
+  # 截图=workspace/screenshots/ 根目录 PNG。走 om2w_judge.utils.OpenaiEngine,
+  # JUDGE_ENDPOINT 非空则经 gateway(用 OPENAI_GATEWAY_API_KEY/PHYAGI_API_KEY)。
+  echo "[dist-eval] === [master] persistent-CLI OM2W judge (eval_persistent_cli_with_original_om2w.py) ==="
+  PERS_OUT="$RUN_ROOT/outputs_eval_persistent"
+  # --expected_tasks 0:关闭数量硬校验(分片缺任务时照判,缺失反映在 summary 里)
+  python "$REPO/scripts/eval_persistent_cli_with_original_om2w.py" \
+    --trajectories_dir "$OUTPUTS_DIR" \
+    --output_path "$PERS_OUT" \
+    --model "$JUDGE_MODEL" \
+    --score_threshold "$JUDGE_SCORE_THRESHOLD" \
+    --num_worker "$JUDGE_NUM_PROC" \
+    --expected_tasks 0 \
+    --endpoint_target_uri "${JUDGE_ENDPOINT:-}" || JUDGE_RC=$?
+  echo "[dist-eval] persistent judge rc=$JUDGE_RC ; summary: $PERS_OUT/eval_summary.json"
+elif [[ "${ORIGINAL_JUDGE:-0}" == "1" ]]; then
+  # 原版 judge:scripts/eval_with_original_om2w.py(plain_text 全量动作日志)。
+  # 仓库版 OpenaiEngine 恒直连 api.openai.com,须用 cred.sh 的 OPENAI_API_KEY
+  # 且不能让 gateway 变量/BACKUP_KEY 干扰。
+  echo "[dist-eval] === [master] original OM2W judge (eval_with_original_om2w.py) ==="
+  : "${OPENAI_API_KEY:?ORIGINAL_JUDGE=1 needs OPENAI_API_KEY from cred.sh}"
+  ORIG_SUMMARY="$LOGS_DIR/$EVAL_RUN_ID/run_summary_original_judge.json"
+  env -u OPENAI_GATEWAY_ENDPOINT -u OPENAI_GATEWAY_API_KEY -u OPENAI_API_BACKUP_KEY \
+    python "$REPO/scripts/eval_with_original_om2w.py" \
+    --trajectories_dir "$OUTPUTS_DIR" \
+    --output_path "$RUN_ROOT/outputs_eval_original" \
+    --tasks_file "$TASKS_FILE" \
+    --model "$JUDGE_MODEL" \
+    --api_key "$OPENAI_API_KEY" \
+    --endpoint_target_uri "" \
+    --score_threshold "$JUDGE_SCORE_THRESHOLD" \
+    --task_level "$TASK_LEVEL" \
+    --limit "$LIMIT" \
+    --num_worker "$JUDGE_NUM_PROC" \
+    --summary_path "$ORIG_SUMMARY" || JUDGE_RC=$?
+  echo "[dist-eval] original judge rc=$JUDGE_RC ; final summary: $ORIG_SUMMARY"
+else
+  echo "[dist-eval] === [master] native harness judge over full output dir ==="
+  JUDGE_ENDPOINT_ARGS=()
+  [[ -n "$JUDGE_ENDPOINT" ]] && JUDGE_ENDPOINT_ARGS=( --judge-endpoint "$JUDGE_ENDPOINT" )
+  python -m miniswewebagent.run.benchmarks.om2w \
+    "${CONFIG_ARGS[@]}" \
+    -c "run.logs_root=$LOGS_DIR" \
+    -c "environment.credentials_file=$CREDS_FILE" \
+    --task-level "$TASK_LEVEL" \
+    --limit "$LIMIT" \
+    --judge-only \
+    --batch-name "$EVAL_RUN_ID" \
+    --judge-runs "$JUDGE_RUNS" \
+    --judge-num-proc "$JUDGE_NUM_PROC" \
+    --judge-python python \
+    --judge-script "$REPO/om2w_judge_sandbox/run.py" \
+    "${JUDGE_ENDPOINT_ARGS[@]}" \
+    --output-dir "$OUTPUTS_DIR" || JUDGE_RC=$?
+  echo "[dist-eval] judge rc=$JUDGE_RC ; final summary: $LOGS_DIR/$EVAL_RUN_ID/run_summary_judge.json"
+fi
 
 FINAL_RC=$JUDGE_RC
 (( GENERATION_FAILURES > 0 )) && FINAL_RC=1

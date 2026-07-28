@@ -374,6 +374,22 @@ def run_one(
             result["close_exception"] = str(exc)
             if run_exception is None:
                 run_exception = exc
+        # A persistent browser is agent-controlled during the run, but the
+        # harness owns final safety cleanup so crashes and step-limit exits do
+        # not leave cloud sessions or detached Chromium processes behind.
+        try:
+            persistent_session = resolved_output_dir / ".browser-session.json"
+            if persistent_session.is_file():
+                from miniswewebagent.tools.browser_session import close_persistent_session
+
+                cleanup = close_persistent_session(resolved_output_dir)
+                if cleanup.get("state") != "missing":
+                    console.print(
+                        "Persistent browser cleanup: "
+                        f"state={cleanup.get('state')} status={cleanup.get('release_status', '')}"
+                    )
+        except Exception as exc:
+            console.print(f"[yellow]Persistent browser cleanup failed: {exc}[/yellow]")
         # Release any cloud browser sessions recorded by open_browser_session,
         # in case an agent step aborted before reaching `await browser.close()`.
         try:

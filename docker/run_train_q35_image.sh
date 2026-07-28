@@ -49,6 +49,14 @@ set -e
 echo "[boot] q35-image TRAIN pod $JOB_NAME on $(hostname)"
 echo "[boot] TRAIN_CONFIG=${TRAIN_CONFIG:?TRAIN_CONFIG not set}"
 
+# Multi-node (NODES>1 at submit): volcano's pytorch plugin injects
+# MASTER_ADDR / RANK / WORLD_SIZE into every pod; all pods run this same
+# driver. rank0 = ray head + trainer, others = ray workers that block until
+# the master task completes (volcano policy TaskCompleted -> CompleteJob).
+NNODES="${WORLD_SIZE:-1}"
+NODE_RANK="${RANK:-0}"
+echo "[boot] NNODES=$NNODES NODE_RANK=$NODE_RANK MASTER_ADDR=${MASTER_ADDR:-<unset>}"
+
 CODE_ROOT=$PVC_MOUNT/$USER_ALIAS/code
 UPLOAD_ROOT=$PVC_MOUNT/$USER_ALIAS/runs/$JOB_NAME
 OUTPUT_DIR=$PVC_MOUNT/$USER_ALIAS/outputs/$JOB_NAME
@@ -60,13 +68,23 @@ if ! command -v rsync >/dev/null 2>&1; then
   echo '[boot] installing rsync (one-time per pod)...'
   apt-get update -qq && apt-get install -y -qq rsync
 fi
-rsync -a --delete --no-perms --no-owner --no-group --no-times \
-    "$UPLOAD_ROOT/SkyRL/"          "$CODE_ROOT/SkyRL/"
-rsync -a --delete --no-perms --no-owner --no-group --no-times \
-    "$UPLOAD_ROOT/mini-web-agent/" "$CODE_ROOT/mini-web-agent/"
+# Only rank0 rsyncs (32 pods racing --delete into the same PVC dir corrupts
+# the tree); the rest wait for the per-job marker.
+SYNC_MARKER="$UPLOAD_ROOT/.code_synced_${JOB_NAME}"
+if [ "$NODE_RANK" = "0" ]; then
+  rsync -a --delete --no-perms --no-owner --no-group --no-times \
+      "$UPLOAD_ROOT/SkyRL/"          "$CODE_ROOT/SkyRL/"
+  rsync -a --delete --no-perms --no-owner --no-group --no-times \
+      "$UPLOAD_ROOT/mini-web-agent/" "$CODE_ROOT/mini-web-agent/"
+  date > "$SYNC_MARKER"
+else
+  echo '[boot] worker: waiting for rank0 code sync marker...'
+  for i in $(seq 1 180); do [ -f "$SYNC_MARKER" ] && break; sleep 10; done
+  [ -f "$SYNC_MARKER" ] || { echo '[boot] ERROR: code sync marker never appeared'; exit 1; }
+fi
 
 REQ="$CODE_ROOT/mini-web-agent/docker/requirements.txt"
-MISSING="$ENV_ROOT/requirements.missing.txt"
+MISSING="$ENV_ROOT/requirements.missing.rank${NODE_RANK}.txt"
 
 echo '[boot] === resolve missing deps (keep everything the image already bakes) ==='
 echo "[boot] python -> $(command -v python) ; $(python -V 2>&1)"
@@ -192,12 +210,17 @@ echo '[boot] === install playwright chromium (not baked in this image) ==='
 playwright install --with-deps chromium || playwright install chromium || \
     echo '[boot] WARN: playwright browser install failed (ok if using browserbase)'
 
-echo '[boot] === source creds + route OSW judge to api.openai.com ==='
+echo '[boot] === source creds + route OSW judge ==='
 source /run/secrets/echo-rl-creds/cred.sh
 unset OPENAI_GATEWAY_API_KEY
-# The phyagi gateway key in cred.sh is dead; use the working sk-proj key from the
-# echo-rl-openai secret and route the OSW judge straight to api.openai.com.
-if [ -f /run/secrets/echo-rl-openai/OPENAI_API_KEY ]; then
+if [ -f /run/secrets/echo-rl-openai/PHYAGI_API_KEY ]; then
+  # 2026-07-13: the sk-proj key ran out of quota (insufficient_quota zeroed a
+  # whole training step); judge now routes through the phyagi gateway with the
+  # PHYAGI key, exactly like the dist eval harness (sandbox judge engine).
+  export PHYAGI_API_KEY="$(cat /run/secrets/echo-rl-openai/PHYAGI_API_KEY)"
+  export OPENAI_GATEWAY_ENDPOINT="${OPENAI_GATEWAY_ENDPOINT:-http://gateway.phyagi.net/api/responses}"
+  echo "[boot] PHYAGI_API_KEY set; judge -> $OPENAI_GATEWAY_ENDPOINT"
+elif [ -f /run/secrets/echo-rl-openai/OPENAI_API_KEY ]; then
   export OPENAI_API_KEY="$(cat /run/secrets/echo-rl-openai/OPENAI_API_KEY)"
   export OPENAI_GATEWAY_ENDPOINT=''
   echo '[boot] OPENAI_API_KEY set from echo-rl-openai secret; judge -> api.openai.com'
@@ -229,6 +252,47 @@ print("torch", torch.__version__, "| vllm", vllm.__version__,
       "| omegaconf", omegaconf.__version__)
 print("imports + vllm_router + omegaconf oc.env + skyrl ray-import: ALL OK")
 PY
+
+if [ "$NNODES" -gt 1 ]; then
+  # Per-node plasma store must fit the pod's /dev/shm (same sizing rule as
+  # skyrl initialize_ray); ray start fixes it per node, and initialize_ray
+  # skips object_store_memory when RAY_ADDRESS is set.
+  OBJ_STORE_BYTES="${SKYRL_OBJECT_STORE_MEMORY_BYTES:-$((50 * 1024 * 1024 * 1024))}"
+  RAY_PORT=6379
+  if [ "$NODE_RANK" != "0" ]; then
+    echo "[boot] === ray worker: joining ${MASTER_ADDR}:${RAY_PORT} ==="
+    # Retry until the head is up; --block holds the worker for the job's
+    # lifetime (master task completion ends the volcano job and reaps us).
+    until ray start --address="${MASTER_ADDR}:${RAY_PORT}" \
+        --object-store-memory="$OBJ_STORE_BYTES" --block; do
+      echo '[boot] ray head not ready yet; retrying in 15s...'
+      sleep 15
+    done
+    echo '[boot] ray worker exited (head gone); done'
+    exit 0
+  fi
+  echo "[boot] === ray head: starting on port ${RAY_PORT} ==="
+  ray start --head --port="$RAY_PORT" --object-store-memory="$OBJ_STORE_BYTES" \
+      --dashboard-host=0.0.0.0
+  export RAY_ADDRESS="127.0.0.1:${RAY_PORT}"
+  echo "[boot] === waiting for all $NNODES ray nodes to register ==="
+  python - "$NNODES" <<'PY'
+import sys, time
+import ray
+
+expected = int(sys.argv[1])
+ray.init(address="auto")
+for _ in range(120):  # up to 20 min for stragglers still pip-installing
+    alive = [n for n in ray.nodes() if n.get("Alive")]
+    print(f"[boot] ray nodes alive: {len(alive)}/{expected}", flush=True)
+    if len(alive) >= expected:
+        break
+    time.sleep(10)
+else:
+    raise SystemExit(f"only {len(alive)}/{expected} ray nodes joined")
+ray.shutdown()
+PY
+fi
 
 echo "[boot] === launching training: $TRAIN_CONFIG (no time cap) ==="
 cd "$CODE_ROOT/SkyRL"
