@@ -9,7 +9,7 @@
 #   /mnt/pvc/experiments/luyadong/data/webwright_sft/0720/run1_select/
 #     training_bundles/run_1_curated_437_webwright_32k (437/437 identical
 #     systems modulo the per-task start URL). The odd literal line
-#   <<final_response>></<final_response>>
+#   <final_response></final_response>
 # is present in ALL training rows and is reproduced verbatim on purpose.
 # Observations were truncated to 1000 chars in training with the harness's
 # native "\n\n... [N characters omitted]" marker -> output_truncation_chars: 1000.
@@ -146,7 +146,7 @@ agent:
     <exactly one shell command, or empty when declaring done>
     </bash>
     <done>false</done>
-    <<final_response>></<final_response>>
+    <final_response></final_response>
 
     ## Execution model
 

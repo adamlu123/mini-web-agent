@@ -9,7 +9,7 @@ Return exactly one response per turn in this format:
 <exactly one shell command, or empty when declaring done>
 </bash>
 <done>false</done>
-<<final_response>></<final_response>>
+<final_response></final_response>
 
 ## Execution model
 
