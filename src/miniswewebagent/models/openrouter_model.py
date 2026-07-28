@@ -10,6 +10,7 @@ payload/response serialization bits.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -39,14 +40,27 @@ def _serialize_chat_content_part(part: dict[str, Any]) -> dict[str, Any]:
     return {"type": "text", "text": part.get("text", "")}
 
 
-def _serialize_chat_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _message_content_for_chat(message: dict[str, Any], *, response_mode: str) -> Any:
+    if message.get("role") == "assistant" and response_mode == "json_schema":
+        extra = message.get("extra")
+        raw_response = extra.get("raw_response") if isinstance(extra, dict) else None
+        if isinstance(raw_response, dict):
+            return json.dumps(raw_response, ensure_ascii=False, separators=(",", ":"))
+    return message.get("content", "")
+
+
+def _serialize_chat_messages(
+    messages: list[dict[str, Any]],
+    *,
+    response_mode: str = "",
+) -> list[dict[str, Any]]:
     """Convert harness messages to OpenAI chat-completions format."""
     serialized: list[dict[str, Any]] = []
     for message in messages:
         role = message["role"]
         if role == "exit":
             continue
-        content = message.get("content", "")
+        content = _message_content_for_chat(message, response_mode=response_mode)
         if isinstance(content, str):
             serialized.append({"role": role, "content": content})
             continue
@@ -97,6 +111,8 @@ class OpenRouterModelConfig(BaseModel):
     response_mode: str = "xml"
     format_error_template: str = DEFAULT_XML_FORMAT_ERROR_TEMPLATE
     attach_observation_screenshot: bool = True
+    max_context_tokens: int = 0
+    sliding_window_keep_turns: int = 10
 
     @field_validator(
         "model_name",
@@ -168,10 +184,97 @@ class OpenRouterModel(PhyagiModel):
         )
 
     def _build_payload(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
+        messages = self._apply_sliding_window(messages)
         return {
             "model": self.config.model_name,
-            "messages": _serialize_chat_messages(messages),
+            "messages": _serialize_chat_messages(
+                messages,
+                response_mode=self.config.response_mode,
+            ),
             "max_tokens": self.config.max_output_tokens,
+        }
+
+    @staticmethod
+    def _estimate_tokens(messages: list[dict[str, Any]]) -> int:
+        total_chars = 0
+        image_count = 0
+        for message in messages:
+            content = message.get("content", "")
+            if isinstance(content, list):
+                image_count += sum(
+                    part.get("type") in {"input_image", "image_url"}
+                    for part in content
+                    if isinstance(part, dict)
+                )
+                content = "".join(
+                    str(part.get("text", ""))
+                    for part in content
+                    if isinstance(part, dict)
+                )
+            total_chars += len(str(content))
+        return total_chars // 3 + image_count * 2048
+
+    def _estimate_request_tokens(self, messages: list[dict[str, Any]]) -> int:
+        serialized = _serialize_chat_messages(
+            messages,
+            response_mode=self.config.response_mode,
+        )
+        return self._estimate_tokens(serialized)
+
+    def _apply_sliding_window(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        budget = self.config.max_context_tokens
+        if budget <= 0 or self._estimate_request_tokens(messages) <= budget:
+            return messages
+
+        keep_turns = max(1, self.config.sliding_window_keep_turns)
+        head_end = 0
+        seen_user = False
+        for index, message in enumerate(messages):
+            role = message.get("role")
+            if role == "system" and not seen_user:
+                head_end = index + 1
+                continue
+            if role == "user" and not seen_user:
+                seen_user = True
+                head_end = index + 1
+                continue
+            break
+
+        head = list(messages[:head_end])
+        body = list(messages[head_end:])
+        dropped = 0
+        while body and self._estimate_request_tokens(head + body) > budget:
+            assistant_positions = [
+                index for index, message in enumerate(body) if message.get("role") == "assistant"
+            ]
+            if len(assistant_positions) <= keep_turns:
+                break
+            cut = assistant_positions[1]
+            dropped += cut
+            body = body[cut:]
+
+        if not dropped:
+            return messages
+        notice = {
+            "role": "user",
+            "content": (
+                f"[Context truncated: {dropped} earlier message(s) omitted to fit the "
+                "context window; the most recent turns are retained.]"
+            ),
+        }
+        return head + [notice] + body
+
+    def serialize_request_for_debug(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
+        windowed_messages = self._apply_sliding_window(messages)
+        return {
+            "model": self.config.model_name,
+            "endpoint": self.config.openrouter_endpoint,
+            "response_mode": self.config.response_mode,
+            "max_tokens": self.config.max_output_tokens,
+            "messages": _serialize_chat_messages(
+                windowed_messages,
+                response_mode=self.config.response_mode,
+            ),
         }
 
     async def _query_async(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
@@ -269,6 +372,7 @@ class OpenRouterModel(PhyagiModel):
                 "done": bool(parsed.get("done", False)),
                 "final_response": parsed.get("final_response", ""),
                 "raw_response": parsed,
+                "raw_text": raw_text,
                 "usage": self._usage_snapshot(),
             },
         )

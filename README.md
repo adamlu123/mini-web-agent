@@ -77,6 +77,28 @@ mini-web-om2w --tasks-file /path/to/tasks.json --batch-name om2w-run \
 
 Use `--retry-failed` with `--resume` to replace task directories whose `result.json` records `run_exception`.
 
+### Qwen3.5 inference with vLLM
+
+The vLLM integration is inference-only; it does not require LlamaFactory or training code. Install
+vLLM in the selected Python environment, then run:
+
+```bash
+PY=python TP=4 TASK_LEVEL=easy LIMIT=5 \
+  bash scripts/run_vllm_qwen35_om2w.sh
+```
+
+The launcher serves `Qwen/Qwen3.5-9B` as `qwen35_9b_base`, waits for
+`/v1/models`, and runs OM2W with:
+
+```bash
+-c best_default_judge_json_agnostic.yaml -c model_vllm_9b_base.yaml
+```
+
+Set `START_VLLM=0 ENDPOINT=http://host:port/v1/chat/completions` to use an existing
+OpenAI-compatible server. `MAX_MODEL_LEN`, `MAX_OUTPUT_TOKENS`, and
+`MAX_CONTEXT_TOKENS` should describe the same server context budget; the launcher reserves
+1,024 tokens for chat-template overhead by default.
+
 ## Trace viewer
 
 To inspect runs under `outputs/default` in a browser:
