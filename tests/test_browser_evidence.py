@@ -59,3 +59,21 @@ def test_trajectory_evidence_preserves_actions_epochs_and_image_order(tmp_path: 
     second.write_bytes(b"changed-image")
     after = trajectory_evidence_digest(tmp_path, rows)
     assert before != after
+
+
+def test_load_browser_steps_preserves_unicode_line_separator(tmp_path: Path) -> None:
+    append_jsonl(
+        tmp_path / "browser-steps.jsonl",
+        {
+            "browser_step": 1,
+            "agent_step": 2,
+            "action": "Inspect the page",
+            "python_output": "first section\u2028second section",
+            "success": True,
+        },
+    )
+
+    rows = load_browser_steps(tmp_path)
+
+    assert len(rows) == 1
+    assert rows[0]["python_output"] == "first section\u2028second section"
