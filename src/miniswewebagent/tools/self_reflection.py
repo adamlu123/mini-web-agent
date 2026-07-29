@@ -870,8 +870,14 @@ async def run_self_reflection_async(
     )
 
     user_content: list[dict[str, Any]] = [text_part(final_user_text)]
-    for path_str in image_paths:
-        user_content.append(_high_detail_image_part_from_path(Path(path_str)))
+    if len(image_paths) <= 50:
+        for path_str in image_paths:
+            user_content.append(_high_detail_image_part_from_path(Path(path_str)))
+    else:
+        print(
+            f"[self_reflection] skipping {len(image_paths)} final-stage images and using image reasonings only to stay within gateway limits",
+            file=sys.stderr,
+        )
 
     final_response = await asyncio.to_thread(
         _call_gateway,
