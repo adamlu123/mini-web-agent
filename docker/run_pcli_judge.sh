@@ -12,6 +12,7 @@ ln -sfn "$REPO" /home/luyadong/sandbox/mini-web-agent
 . /run/secrets/webchain-sampling/cred.sh
 
 cd "$REPO"
+pip install --quiet backoff 2>/dev/null || pip install backoff
 python scripts/eval_persistent_cli_steps_with_original_om2w.py \
   --trajectories_dir "$TRAJ_DIR" \
   --output_path "$OUT_DIR" \
