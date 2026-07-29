@@ -236,6 +236,7 @@ class DefaultAgent:
     def __init__(self, model: Model, env: Environment, *, config_class: type = AgentConfig, **kwargs):
         self.config = config_class(**kwargs)
         self.messages: list[dict[str, Any]] = []
+        self.compacted_sessions: list[list[dict[str, Any]]] = []
         self.model = model
         self.env = env
         self.extra_template_vars: dict[str, Any] = {}
@@ -845,6 +846,9 @@ class DefaultAgent:
             ),
             extra={"interrupt_type": "HistoryCompactionSummary"},
         )
+        # Archive the full pre-compaction session (persistent-browser repo layout:
+        # chronological sessions = compacted_sessions + [messages]).
+        self.compacted_sessions.append(copy.deepcopy(self.messages))
         self.messages = [system_message, summary_message]
 
     def _extract_compaction_summary(self, response: dict[str, Any]) -> str:
@@ -1147,6 +1151,10 @@ class DefaultAgent:
                     "format_errors": self.n_format_errors,
                 },
                 "messages": [_sanitize_message_for_disk(message) for message in self.messages],
+                "compacted_sessions": [
+                    [_sanitize_message_for_disk(message) for message in session]
+                    for session in self.compacted_sessions
+                ],
                 "trajectory_format": "mini-swe-webagent-0.1",
             },
             self.model.serialize(),
