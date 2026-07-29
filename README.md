@@ -60,6 +60,45 @@ mini-web-om2w --tasks-file /Users/lu/Documents/sandbox/Online-Mind2Web/om2w_2602
 
 The legacy `mini-web-batch` command still works and now points at the same benchmark runner under `src/miniswewebagent/run/benchmarks/`.
 
+For resumable or distributed evaluation, give every invocation the same output directory and batch name:
+
+```bash
+mini-web-om2w --tasks-file /path/to/tasks.json --task-level easy+medium \
+  --num-shards 2 --shard-index 0 --batch-name om2w-run --resume \
+  --output-dir outputs/om2w-run
+```
+
+Run the other shard with `--shard-index 1`, then judge the combined output without generating tasks:
+
+```bash
+mini-web-om2w --tasks-file /path/to/tasks.json --batch-name om2w-run \
+  --judge-only --output-dir outputs/om2w-run
+```
+
+Use `--retry-failed` with `--resume` to replace task directories whose `result.json` records `run_exception`.
+
+### Qwen3.5 inference with vLLM
+
+The vLLM integration is inference-only; it does not require LlamaFactory or training code. Install
+vLLM in the selected Python environment, then run:
+
+```bash
+PY=python TP=4 TASK_LEVEL=easy LIMIT=5 \
+  bash scripts/run_vllm_qwen35_om2w.sh
+```
+
+The launcher serves `Qwen/Qwen3.5-9B` as `qwen35_9b_base`, waits for
+`/v1/models`, and runs OM2W with:
+
+```bash
+-c best_default_judge_json_agnostic.yaml -c model_vllm_9b_base.yaml
+```
+
+Set `START_VLLM=0 ENDPOINT=http://host:port/v1/chat/completions` to use an existing
+OpenAI-compatible server. `MAX_MODEL_LEN`, `MAX_OUTPUT_TOKENS`, and
+`MAX_CONTEXT_TOKENS` should describe the same server context budget; the launcher reserves
+1,024 tokens for chat-template overhead by default.
+
 ## Trace viewer
 
 To inspect runs under `outputs/default` in a browser:

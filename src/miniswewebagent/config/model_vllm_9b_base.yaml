@@ -1,0 +1,24 @@
+# Qwen3.5-9B inference overrides for a local OpenAI-compatible vLLM server.
+# Stack this on a complete agent config, for example:
+#   -c best_default_judge_json_agnostic.yaml -c model_vllm_9b_base.yaml
+
+model:
+  model_class: vllm
+  model_name: qwen35_9b_base
+  endpoint: http://127.0.0.1:8000/v1/chat/completions
+  api_key: dummy
+  request_timeout_seconds: 240
+  max_output_tokens: 12000
+  response_mode: json_schema
+  attach_observation_screenshot: false
+  # Matches the launcher defaults: 36,864 total - 12,000 output - 1,024 reserve.
+  max_context_tokens: 23840
+  sliding_window_keep_turns: 10
+
+environment:
+  env:
+    WEB_AGENT_POLICY_URL: http://127.0.0.1:8000/v1/chat/completions
+    WEB_AGENT_POLICY_MODEL: qwen35_9b_base
+    OPENAI_COMPATIBLE_ENDPOINT: http://127.0.0.1:8000/v1/chat/completions
+    OPENAI_COMPATIBLE_MODEL: qwen35_9b_base
+    OPENAI_COMPATIBLE_API_KEY: dummy
