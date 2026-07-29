@@ -50,6 +50,11 @@ from eval_with_original_om2w import (  # noqa: E402
 
 MODE = "WebJudge_Online_Mind2Web_eval"
 DEFAULT_TASKS_DIR = REPO_ROOT / "outputs/default/260717_persistent_cli_full/w150"
+DEFAULT_TASK_SOURCE = "task.json.task"
+DEFAULT_ACTION_HISTORY_SOURCE = "browser-steps.jsonl.action"
+DEFAULT_ACTION_HISTORY_CONTRACT = "every non-empty browser-steps.jsonl.action in file order"
+DEFAULT_SCREENSHOT_SOURCE = "screenshots/*.png"
+DEFAULT_SCREENSHOT_CONTRACT = "every root-level screenshots/*.png in browser-step order"
 _TRAILING_NUMBER_RE = re.compile(r"(\d+)(?!.*\d)")
 
 
@@ -107,22 +112,17 @@ def load_action_history(path: Path) -> list[str]:
     if not path.exists():
         return actions
 
-    for line_number, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        if not raw_line.strip():
-            continue
-        try:
-            row = json.loads(raw_line)
-        except json.JSONDecodeError as exc:
-            # Half-written lines happen when a run is killed mid-write
-            # (e.g. OOMKill); drop the line instead of failing the whole judge.
-            print(
-                f"[warn] {path}:{line_number}: skipping invalid JSONL line: {exc}",
-                file=sys.stderr,
-            )
-            continue
-        action = str(row.get("action") or "").strip()
-        if action:
-            actions.append(action)
+    with path.open(encoding="utf-8") as handle:
+        for line_number, raw_line in enumerate(handle, 1):
+            if not raw_line.strip():
+                continue
+            try:
+                row = json.loads(raw_line)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"{path}:{line_number}: invalid JSON: {exc}") from exc
+            action = str(row.get("action") or "").strip()
+            if action:
+                actions.append(action)
     return actions
 
 
@@ -174,15 +174,16 @@ def _read_result_rows(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     rows: list[dict[str, Any]] = []
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        if not raw_line.strip():
-            continue
-        try:
-            row = json.loads(raw_line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(row, dict):
-            rows.append(row)
+    with path.open(encoding="utf-8") as handle:
+        for raw_line in handle:
+            if not raw_line.strip():
+                continue
+            try:
+                row = json.loads(raw_line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(row, dict):
+                rows.append(row)
     return rows
 
 
@@ -250,9 +251,13 @@ def evaluate_subset(
                     "mode": MODE,
                     "task_dir": artifact.task_dir,
                     "action_history": artifact.action_history,
-                    "action_history_source": "browser-steps.jsonl.action",
+                    "action_history_source": getattr(
+                        args, "action_history_source", DEFAULT_ACTION_HISTORY_SOURCE
+                    ),
                     "screenshot_paths": artifact.screenshot_paths,
-                    "screenshot_source": "screenshots/*.png",
+                    "screenshot_source": getattr(
+                        args, "screenshot_source", DEFAULT_SCREENSHOT_SOURCE
+                    ),
                     "image_judge_record": image_record,
                     "key_points": key_points,
                     "input_text": input_text,
@@ -289,9 +294,13 @@ def evaluate_subset(
                     "mode": MODE,
                     "task_dir": artifact.task_dir,
                     "action_history": artifact.action_history,
-                    "action_history_source": "browser-steps.jsonl.action",
+                    "action_history_source": getattr(
+                        args, "action_history_source", DEFAULT_ACTION_HISTORY_SOURCE
+                    ),
                     "screenshot_paths": artifact.screenshot_paths,
-                    "screenshot_source": "screenshots/*.png",
+                    "screenshot_source": getattr(
+                        args, "screenshot_source", DEFAULT_SCREENSHOT_SOURCE
+                    ),
                     "task_attempts": task_attempt,
                     "evaluation_error": f"{type(exc).__name__}: {exc}",
                     "evaluation_traceback": traceback.format_exc(),
@@ -318,9 +327,13 @@ def build_manifest(args: argparse.Namespace, artifacts: list[TaskArtifacts], wor
         "endpoint_mode": "gateway" if args.endpoint_target_uri else "openai",
         "trajectories_dir": str(Path(args.trajectories_dir).resolve()),
         "artifact_contract": {
-            "task": "task.json.task",
-            "action_history": "every non-empty browser-steps.jsonl.action in file order",
-            "screenshots": "every root-level screenshots/*.png in browser-step order",
+            "task": getattr(args, "task_source", DEFAULT_TASK_SOURCE),
+            "action_history": getattr(
+                args, "action_history_contract", DEFAULT_ACTION_HISTORY_CONTRACT
+            ),
+            "screenshots": getattr(
+                args, "screenshot_contract", DEFAULT_SCREENSHOT_CONTRACT
+            ),
         },
         "n_tasks": len(artifacts),
         "n_actions": sum(item.action_count for item in artifacts),
@@ -446,9 +459,10 @@ def parallel_eval(args: argparse.Namespace) -> None:
     print(json.dumps(summary, indent=2), flush=True)
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(description: str | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description=(
+        description=description
+        or (
             "Run upstream WebJudge_Online_Mind2Web_eval over persistent-browser "
             "browser-steps.jsonl actions and root screenshots."
         )
@@ -467,6 +481,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--task_max_attempts", type=int, default=8)
     parser.add_argument("--default_max_output_tokens", type=int, default=8192)
     parser.add_argument("--expected_tasks", type=int, default=300)
+    parser.add_argument(
+        "--result_action_history_mode",
+        "--result-action-history-mode",
+        choices=("raw", "last-arrow"),
+        default=None,
+        help=(
+            "For compatible evaluator variants, load result.json action_history "
+            "unchanged or trim each entry after its final '->'."
+        ),
+    )
     parser.add_argument("--api_key", default="")
     parser.add_argument(
         "--endpoint_target_uri",
