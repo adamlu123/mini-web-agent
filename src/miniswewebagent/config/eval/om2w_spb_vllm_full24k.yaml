@@ -51,17 +51,6 @@ model:
     <done>false</done>
     <final_response></final_response>
 
-    If the task is fully complete and verified, use:
-    <think>
-    final verification reasoning
-    </think>
-    <bash>
-    </bash>
-    <done>true</done>
-    <final_response>
-    final response
-    </final_response>
-
 environment:
   environment_class: local_workspace
   start_url:

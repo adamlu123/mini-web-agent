@@ -307,11 +307,48 @@ class DefaultAgent:
     def _render_template(self, template: str) -> str:
         return Template(template, undefined=StrictUndefined).render(**self.get_template_vars())
 
-    def _plan_md_message(self) -> dict[str, Any] | None:
+    def _host_workspace_dir(self) -> Path | None:
+        """Return the real filesystem workspace path, not the model-facing alias."""
+        try:
+            serialized = self.env.serialize()
+        except Exception:  # noqa: BLE001 - fall back to template vars for nonstandard envs
+            serialized = {}
+        env_info = serialized.get("environment", {}) if isinstance(serialized, dict) else {}
+        if isinstance(env_info, dict):
+            workspace_dir = env_info.get("workspace_dir")
+            if workspace_dir:
+                return Path(str(workspace_dir))
+
         workspace_dir = self.get_template_vars().get("workspace_dir")
         if not workspace_dir:
             return None
-        plan_path = Path(workspace_dir) / "plan.md"
+        return Path(str(workspace_dir))
+
+    def _agent_workspace_dir(self) -> str:
+        """Return the workspace path as the model sees it (alias when configured)."""
+        workspace_dir = self.get_template_vars().get("workspace_dir")
+        if workspace_dir:
+            return str(workspace_dir)
+        host_workspace_dir = self._host_workspace_dir()
+        return str(host_workspace_dir) if host_workspace_dir is not None else ""
+
+    def _agent_path(self, path: Path) -> str:
+        host_workspace_dir = self._host_workspace_dir()
+        agent_workspace_dir = self._agent_workspace_dir().rstrip("/")
+        if host_workspace_dir is not None and agent_workspace_dir:
+            try:
+                relative_path = path.resolve().relative_to(host_workspace_dir.resolve())
+            except (OSError, ValueError):
+                pass
+            else:
+                return str(Path(agent_workspace_dir) / relative_path)
+        return str(path)
+
+    def _plan_md_message(self) -> dict[str, Any] | None:
+        workspace_dir = self._host_workspace_dir()
+        if workspace_dir is None:
+            return None
+        plan_path = workspace_dir / "plan.md"
         if not plan_path.exists() or not plan_path.is_file():
             return None
         plan_text = plan_path.read_text(encoding="utf-8").strip()
@@ -332,13 +369,13 @@ class DefaultAgent:
 
     def _trajectory_gate_error(self) -> str | None:
         """Require a fresh successful reflection over every incremental browser step."""
-        workspace_value = self.get_template_vars().get("workspace_dir")
-        if not workspace_value:
+        workspace = self._host_workspace_dir()
+        if workspace is None:
             return (
                 "Completion blocked: judge_mode=trajectory requires a workspace_dir. "
                 "Do not set done=true."
             )
-        workspace = Path(workspace_value).resolve()
+        workspace = workspace.resolve()
         rows = load_browser_steps(workspace, self.config.trajectory_manifest)
         if not rows:
             return (
@@ -405,13 +442,14 @@ class DefaultAgent:
 
     def _tool_gate_error(self) -> str | None:
         """Require final_runs/run_<latest>/judge_result.json with predicted_label == 1."""
-        workspace_dir = self.get_template_vars().get("workspace_dir")
-        if not workspace_dir:
+        workspace_dir = self._host_workspace_dir()
+        agent_workspace_dir = self._agent_workspace_dir()
+        if workspace_dir is None:
             return (
                 "Completion blocked: require_self_reflection_success is enabled but no workspace_dir is "
                 "available. Cannot locate final_runs/run_<id>/judge_result.json. Do not set done=true."
             )
-        final_runs_dir = Path(workspace_dir) / "final_runs"
+        final_runs_dir = workspace_dir / "final_runs"
         if not final_runs_dir.is_dir():
             return (
                 "Completion blocked: no final_runs/ directory exists yet. You must run final_script.py "
@@ -419,7 +457,7 @@ class DefaultAgent:
                 "`python -m miniswewebagent.tools.self_reflection --config judge_config.json "
                 "--workspace-dir \"{0}\" --output final_runs/run_<id>/judge_result.json` with "
                 "predicted_label == 1 before setting done=true."
-            ).format(workspace_dir)
+            ).format(agent_workspace_dir or str(workspace_dir))
         run_dirs: list[tuple[int, Path]] = []
         for entry in final_runs_dir.iterdir():
             if not entry.is_dir() or not entry.name.startswith("run_"):
@@ -439,11 +477,13 @@ class DefaultAgent:
         run_dirs.sort(key=lambda item: item[0])
         latest_run_id, latest_run_dir = run_dirs[-1]
         judge_path = latest_run_dir / "judge_result.json"
+        judge_path_for_agent = self._agent_path(judge_path)
         if not judge_path.is_file():
             return (
-                f"Completion blocked: {judge_path} does not exist. Run "
+                f"Completion blocked: {judge_path_for_agent} does not exist. Run "
                 f"`python -m miniswewebagent.tools.self_reflection --config judge_config.json "
-                f"--workspace-dir \"{workspace_dir}\" --output {judge_path}` against the latest run "
+                f"--workspace-dir \"{agent_workspace_dir or str(workspace_dir)}\" "
+                f"--output {judge_path_for_agent}` against the latest run "
                 f"(run_{latest_run_id}) and only set done=true after it exits 0 with "
                 f"predicted_label == 1."
             )
@@ -451,13 +491,13 @@ class DefaultAgent:
             judge_data = json.loads(judge_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             return (
-                f"Completion blocked: could not parse {judge_path}: {exc}. Re-run self_reflection "
+                f"Completion blocked: could not parse {judge_path_for_agent}: {exc}. Re-run self_reflection "
                 f"against run_{latest_run_id} and only set done=true after predicted_label == 1."
             )
         predicted_label = judge_data.get("predicted_label")
         if predicted_label != 1:
             return (
-                f"Completion blocked: {judge_path} has predicted_label={predicted_label!r} "
+                f"Completion blocked: {judge_path_for_agent} has predicted_label={predicted_label!r} "
                 f"(expected 1). Diagnose the failure from judge_result.json, fix final_script.py, "
                 f"re-run it in a new final_runs/run_{latest_run_id + 1}/ folder, and re-run "
                 f"self_reflection. Only set done=true after self_reflection exits 0 with "
@@ -473,13 +513,13 @@ class DefaultAgent:
         ``screenshots/final_execution_<N>*.png``, then calls the upstream judge.
         The verdict is cached in ``final_runs/run_<id>/om2w_judge_result.json``.
         """
-        workspace_dir = self.get_template_vars().get("workspace_dir")
-        if not workspace_dir:
+        workspace_dir = self._host_workspace_dir()
+        if workspace_dir is None:
             return (
                 "Completion blocked: judge_mode=om2w but no workspace_dir available. "
                 "Cannot locate final_runs/run_<id>/ artifacts."
             )
-        final_runs_dir = Path(workspace_dir) / "final_runs"
+        final_runs_dir = workspace_dir / "final_runs"
         if not final_runs_dir.is_dir():
             return (
                 "Completion blocked: no final_runs/ directory exists yet. Run final_script.py "
