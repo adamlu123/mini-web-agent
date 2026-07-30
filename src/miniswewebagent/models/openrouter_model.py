@@ -39,7 +39,30 @@ def _serialize_chat_content_part(part: dict[str, Any]) -> dict[str, Any]:
     return {"type": "text", "text": part.get("text", "")}
 
 
-def _serialize_chat_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _sft_state_assistant_content(message: dict[str, Any]) -> str | None:
+    """Rebuild an assistant turn in the unified SFT state format.
+
+    The harness stores only the parsed thought as message content; SFT
+    checkpoints expect their own past turns verbatim, so replay the tags.
+    """
+    raw_response = (message.get("extra") or {}).get("raw_response")
+    if not isinstance(raw_response, dict):
+        return None
+    thought = str(raw_response.get("thought") or "").strip()
+    bash_command = str(raw_response.get("bash_command") or raw_response.get("python_code") or "").strip()
+    done = "true" if bool(raw_response.get("done", False)) else "false"
+    final_response = str(raw_response.get("final_response") or "").strip()
+    return (
+        f"<think>\n{thought}\n</think>\n"
+        f"<bash>\n{bash_command}\n</bash>\n"
+        f"<done>{done}</done>\n"
+        f"<final_response>\n{final_response}\n</final_response>"
+    )
+
+
+def _serialize_chat_messages(
+    messages: list[dict[str, Any]], *, response_mode: str = ""
+) -> list[dict[str, Any]]:
     """Convert harness messages to OpenAI chat-completions format."""
     serialized: list[dict[str, Any]] = []
     for message in messages:
@@ -47,6 +70,8 @@ def _serialize_chat_messages(messages: list[dict[str, Any]]) -> list[dict[str, A
         if role == "exit":
             continue
         content = message.get("content", "")
+        if role == "assistant" and response_mode == "sft_state":
+            content = _sft_state_assistant_content(message) or content
         if isinstance(content, str):
             serialized.append({"role": role, "content": content})
             continue
@@ -170,7 +195,7 @@ class OpenRouterModel(PhyagiModel):
     def _build_payload(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
         return {
             "model": self.config.model_name,
-            "messages": _serialize_chat_messages(messages),
+            "messages": _serialize_chat_messages(messages, response_mode=self.config.response_mode),
             "max_tokens": self.config.max_output_tokens,
         }
 

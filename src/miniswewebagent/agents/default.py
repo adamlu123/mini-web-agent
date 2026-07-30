@@ -57,6 +57,13 @@ class AgentConfig(BaseModel):
     trajectory_judge_config: str = "judge_config.json"
     summary_every_n_steps: int = 0
     summary_user_prompt: str = DEFAULT_SUMMARY_USER_PROMPT
+    # Context construction for the model request (0 / "full" = unchanged).
+    # Kept byte-aligned with how the SFT bundles were built, so eval matches
+    # training: context_window_steps=N keeps only the last N assistant turns;
+    # history_context_mode stubs out ("last_obs") or think-only-trims
+    # ("last_obs_think") everything before the current observation block.
+    context_window_steps: int = 0
+    history_context_mode: str = "full"
     output_path: Path | None = None
 
 
@@ -665,6 +672,110 @@ class DefaultAgent:
     def step(self) -> list[dict[str, Any]]:
         return self.execute_actions(self.query())
 
+    def _windowed_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Sliding-window view of the history for the model request.
+
+        With context_window_steps=N > 0: keep messages[0] (system) and
+        messages[1] (initial task), drop everything between them and the user
+        block preceding the N-th assistant message from the end. The window
+        therefore holds the last N assistant turns plus their surrounding user
+        messages (including the current pending observation). Short histories
+        are returned unchanged.
+        """
+        n_steps = self.config.context_window_steps
+        if n_steps <= 0:
+            return messages
+        assistant_idx = [i for i, m in enumerate(messages) if m.get("role") == "assistant"]
+        if len(assistant_idx) <= n_steps:
+            return messages
+        cut = assistant_idx[-n_steps]
+        while cut > 2 and messages[cut - 1].get("role") == "user":
+            cut -= 1
+        if cut <= 2:
+            return messages
+        # Merge the task message with the user block at the window start into a
+        # single user message ("\n\n"-joined) so the request has no consecutive
+        # user turns — matching how the SFT data merges consecutive human turns.
+        block_end = cut
+        while block_end < len(messages) and messages[block_end].get("role") == "user":
+            block_end += 1
+        parts = [messages[1].get("content")] + [m.get("content") for m in messages[cut:block_end]]
+        if all(isinstance(p, str) for p in parts):
+            merged = dict(messages[1])
+            merged["content"] = "\n\n".join(p.strip() for p in parts)
+            return [messages[0], merged] + messages[block_end:]
+        return messages[:2] + messages[cut:]
+
+    _THINK_BLOCK_RE = re.compile(r"<think>\n.*?\n</think>", re.S)
+
+    def _transform_history(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Apply history_context_mode to the model request (mirrors the
+        lastobs / lastobs_think SFT bundle construction byte-for-byte).
+
+        NOTE: under response_mode="sft_state" the think-only trim applied to
+        past assistant turns is inert — the model layer rebuilds those turns
+        from extra.raw_response (see _sft_state_assistant_content), so
+        "last_obs_think" sends the same assistant turns as "last_obs". This
+        matches the upstream rl_yifei_clean behaviour the SPB scores came from.
+        """
+        mode = self.config.history_context_mode
+        if mode not in ("last_obs", "last_obs_think"):
+            return messages
+        assistant_idx = [i for i, m in enumerate(messages) if m.get("role") == "assistant"]
+        # Everything after the last assistant is the current observation block
+        # (matches the SFT bundles, where format-error retries are merged into
+        # the current human turn and kept in full).
+        current_block_start = (assistant_idx[-1] + 1) if assistant_idx else len(messages)
+
+        def _map_text(m: dict[str, Any], fn) -> dict[str, Any]:
+            """Apply fn to the message text, supporting str and parts-list content."""
+            content = m.get("content")
+            if isinstance(content, str):
+                new = fn(content)
+                if new == content:
+                    return m
+                return {**m, "content": new}
+            if isinstance(content, list):
+                parts = []
+                changed = False
+                for part in content:
+                    if (
+                        isinstance(part, dict)
+                        and part.get("type") in ("text", "input_text")
+                        and isinstance(part.get("text"), str)
+                    ):
+                        new = fn(part["text"])
+                        if new != part["text"]:
+                            part = {**part, "text": new}
+                            changed = True
+                    parts.append(part)
+                return {**m, "content": parts} if changed else m
+            return m
+
+        def _stub(text: str) -> str:
+            if "Command output:\n" in text:
+                return text.split("Command output:\n", 1)[0] + "Command output: (omitted)"
+            return text
+
+        def _think(text: str) -> str:
+            match = self._THINK_BLOCK_RE.search(text)
+            return match.group(0) if match else text
+
+        out = []
+        for i, m in enumerate(messages):
+            role = m.get("role")
+            if role == "user" and 1 < i < current_block_start:
+                m = _map_text(m, _stub)
+            elif (
+                mode == "last_obs_think"
+                and role == "assistant"
+                and assistant_idx
+                and i != assistant_idx[-1]
+            ):
+                m = _map_text(m, _think)
+            out.append(m)
+        return out
+
     def query(self) -> dict[str, Any]:
         if 0 < self.config.step_limit <= self.n_calls:
             raise LimitsExceeded(
@@ -674,7 +785,7 @@ class DefaultAgent:
                     extra={"exit_status": "LimitsExceeded", "submission": ""},
                 )
             )
-        message = self.model.query(self.messages)
+        message = self.model.query(self._transform_history(self._windowed_messages(self.messages)))
         self.n_calls += 1
         self.add_messages(message)
         return message
