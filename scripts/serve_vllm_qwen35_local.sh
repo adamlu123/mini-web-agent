@@ -11,6 +11,7 @@
 #     removed); fall back to vLLM's native sampler.
 set -euo pipefail
 
+REPO="${REPO:-/home/luyadong/sandbox/mini-web-agent}"
 CKPT="${CKPT:-/data/yadonglu/hf/Qwen3.5-4B}"
 SERVED_NAME="${SERVED_NAME:-sft_ckpt}"
 PORT="${PORT:-8000}"
@@ -29,6 +30,20 @@ VLLM_BIN="${VLLM_BIN:-/data/yadonglu/venvs/phitrain/bin/vllm}"
 # PREFIX_CACHING=--no-enable-prefix-caching to opt back out.
 PREFIX_CACHING="${PREFIX_CACHING:---enable-prefix-caching}"
 
+# Train-aligned chat template (PIPELINE_SPB.md 2.2 step 3). WITHOUT this vLLM
+# falls back to the checkpoint's stock Qwen3.5 template, which
+#   1. STRIPS <think>...</think> from every history assistant turn -- defeating
+#      the sft_state history replay in models/openrouter_model.py, and
+#   2. prefills "<think>\n" into the generation prompt, so the model's output
+#      starts after the opening tag.
+# Both are train/eval mismatches for checkpoints SFT'd with the phitrain
+# template. The branch also ships _prefill_think and _trim variants; pick the
+# one matching how the checkpoint was tokenized, or set CHAT_TEMPLATE= (empty)
+# to use whatever ships with the checkpoint.
+CHAT_TEMPLATE="${CHAT_TEMPLATE:-$REPO/src/miniswewebagent/config/eval/qwen3_5_train_aligned.jinja}"
+template_arg=()
+[ -n "$CHAT_TEMPLATE" ] && template_arg=(--chat-template "$CHAT_TEMPLATE")
+
 export CUDA_VISIBLE_DEVICES="$GPUS"
 export FLASHINFER_DISABLE_VERSION_CHECK=1
 export VLLM_USE_FLASHINFER_SAMPLER=0
@@ -38,4 +53,5 @@ exec "$VLLM_BIN" serve "$CKPT" \
   --max-model-len "$MAX_MODEL_LEN" \
   --port "$PORT" \
   --tensor-parallel-size "$TP" \
+  "${template_arg[@]}" \
   $PREFIX_CACHING
