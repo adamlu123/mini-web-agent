@@ -117,6 +117,11 @@ class OpenRouterModelConfig(BaseModel):
     openrouter_app_title: str = "mini-web-agent"
     max_output_tokens: int = 4000
     request_timeout_seconds: int = 120
+    # Benchmarks want reproducible decoding, so default to greedy. Set to null
+    # to omit the field and fall back to whatever the server defaults to.
+    temperature: float | None = 0.0
+    top_p: float | None = None
+    seed: int | None = None
     error_log_path: Path | None = None
     observation_template: str = DEFAULT_OBSERVATION_TEMPLATE
     response_mode: str = "xml"
@@ -193,11 +198,16 @@ class OpenRouterModel(PhyagiModel):
         )
 
     def _build_payload(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "model": self.config.model_name,
             "messages": _serialize_chat_messages(messages, response_mode=self.config.response_mode),
             "max_tokens": self.config.max_output_tokens,
         }
+        for key in ("temperature", "top_p", "seed"):
+            value = getattr(self.config, key, None)
+            if value is not None:
+                payload[key] = value
+        return payload
 
     async def _query_async(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
         headers = {
