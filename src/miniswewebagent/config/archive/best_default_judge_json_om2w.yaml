@@ -9,7 +9,7 @@
 #
 # Usage:
 #   python -m miniswewebagent.run.mini \
-#     -c best_default_judge_json.yaml \
+#     -c generation/best_default_judge_json.yaml \
 #     --task-id <id> --tasks-file /path/to/tasks.json
 
 model:

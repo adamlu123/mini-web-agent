@@ -9,7 +9,7 @@
 #
 # Usage:
 #   python -m miniswewebagent.run.mini \
-#     -c best_default_judge_json_oracle.yaml \
+#     -c archive/best_default_judge_json_oracle.yaml \
 #     --task-id <id> --tasks-file /path/to/tasks.json
 
 model:

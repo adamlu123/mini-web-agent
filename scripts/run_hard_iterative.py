@@ -34,7 +34,7 @@ from miniswewebagent.utils.om2w_tasks import load_om2w_task  # noqa: E402
 TASKS_FILE = REPO_ROOT / "src" / "miniswewebagent" / "run" / "benchmarks" / "om2w_260220.json"
 BASE_CONFIGS = [
     "mini.yaml",
-    "iterative.yaml",
+    "archive/iterative.yaml",
 ]
 
 

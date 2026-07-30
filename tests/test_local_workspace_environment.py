@@ -117,7 +117,7 @@ def test_run_one_supports_workspace_harness_config(tmp_path: Path) -> None:
             start_url="https://example.com",
             output_dir=tmp_path / "artifacts",
             config_spec=[
-                "benchmark/om2w_hard_local_workspace.yaml",
+                "archive/benchmark/om2w_hard_local_workspace.yaml",
                 "model.openai_gateway_api_key=dummy",
                 f"model.openai_gateway_endpoint=http://127.0.0.1:{server.server_port}",
                 "run.judge_enabled=false",

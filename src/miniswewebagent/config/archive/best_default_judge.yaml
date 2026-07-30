@@ -11,7 +11,7 @@
 #
 # Usage:
 #   python -m miniswewebagent.run.mini \
-#     -c best_default_judge.yaml \
+#     -c archive/best_default_judge.yaml \
 #     --task-id <id> --tasks-file /path/to/tasks.json
 
 model:

@@ -8,7 +8,7 @@
 #
 # Usage (standalone):
 #   python -m miniswewebagent.run.iterative \
-#     -c iterative_strict.yaml \
+#     -c archive/iterative_strict.yaml \
 #     --task-id <id> --tasks-file /path/to/tasks.json
 
 model:

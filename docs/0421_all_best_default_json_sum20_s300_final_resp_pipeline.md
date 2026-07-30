@@ -4,7 +4,7 @@ This report describes end-to-end what was executed when the run with output
 directory
 `outputs/default/0421_all_best_default_json_sum20_s300_final_resp` was launched
 from config
-[src/miniswewebagent/config/best_default_judge_json.yaml](../src/miniswewebagent/config/best_default_judge_json.yaml).
+[src/miniswewebagent/config/generation/best_default_judge_json.yaml](../src/miniswewebagent/config/generation/best_default_judge_json.yaml).
 It covers the launch command, the config's effect on agent behavior, the
 per-task runtime loop, the artifacts produced per task, and the separate
 offline WebJudge evaluation that scores the resulting directory.
@@ -23,7 +23,7 @@ Taken verbatim from [scripts/run_command.sh](../scripts/run_command.sh#L56-L60):
 ```bash
 source /home/luyadong/cred.sh
 /home/luyadong/.venv/bin/python -m miniswewebagent.run.benchmarks.om2w \
-    -c best_default_judge_json.yaml \
+    -c generation/best_default_judge_json.yaml \
     --workers 300 \
     --task-level all \
     --output-dir /home/luyadong/sandbox/mini-web-agent/outputs/default/0421_all_best_default_json_sum20_s300_final_resp

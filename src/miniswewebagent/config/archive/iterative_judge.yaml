@@ -3,7 +3,7 @@
 # Usage (standalone — no other base config needed):
 #   python -m miniswewebagent.run.iterative \
 #     -c mini.yaml \
-#     -c iterative.yaml \
+#     -c archive/iterative.yaml \
 #     --task-id <id> --tasks-file /path/to/tasks.json
 #
 # mini.yaml contributes model connection settings (model_class, model_name,

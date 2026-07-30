@@ -12,7 +12,7 @@ from rich.console import Console
 
 from miniswewebagent.run.mini import DEFAULT_CONFIG, run_one
 
-DEFAULT_PROBE_CONFIG = "benchmark/om2w_probe_subagent.yaml"
+DEFAULT_PROBE_CONFIG = "archive/benchmark/om2w_probe_subagent.yaml"
 DEFAULT_PROBE_CONFIGS = [DEFAULT_CONFIG, DEFAULT_PROBE_CONFIG]
 _MAX_SLUG_LENGTH = 48
 

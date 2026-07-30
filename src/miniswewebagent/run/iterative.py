@@ -2,13 +2,14 @@
 
 Usage:
     python -m miniswewebagent.run.iterative \\
-        -c benchmark/om2w_hard_local_workspace_image_qa_flog_run_folders.yaml \\
-        -c iterative.yaml \\
+        -c archive/benchmark/om2w_hard_local_workspace_image_qa_flog_run_folders.yaml \\
+        -c archive/iterative.yaml \\
         --task-id <id> \\
         --tasks-file /path/to/tasks.json
 
 The -c flags are merged left-to-right (same as mini.py).  The last config should
-be (or include) iterative.yaml, which contributes the ``iterative`` section.
+be (or include) ``archive/iterative.yaml``, which contributes the ``iterative``
+section.
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ from miniswewebagent.utils.om2w_eval import export_online_mind2web_artifacts
 from miniswewebagent.utils.om2w_tasks import load_om2w_task
 from miniswewebagent.utils.serialize import UNSET, recursive_merge
 
-DEFAULT_CONFIG = "iterative.yaml"
+DEFAULT_CONFIG = "archive/iterative.yaml"
 
 app = typer.Typer(no_args_is_help=True)
 console = Console(highlight=False)

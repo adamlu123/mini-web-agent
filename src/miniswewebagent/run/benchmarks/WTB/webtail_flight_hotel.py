@@ -21,7 +21,7 @@ console = Console(highlight=False)
 TaskFamily = Literal["all", "flight", "hotel"]
 
 DEFAULT_TASKS_FILE = Path(__file__).with_name("webtail_flight_hotel.json")
-DEFAULT_BENCHMARK_CONFIG = "benchmark/webtaibench_xml.yaml"
+DEFAULT_BENCHMARK_CONFIG = "archive/benchmark/webtaibench_xml.yaml"
 DEFAULT_WEBTAIL_CONFIGS = [
     DEFAULT_CONFIG,
     DEFAULT_BENCHMARK_CONFIG,

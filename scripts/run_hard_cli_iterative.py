@@ -1,7 +1,7 @@
 """Parallel batch runner for iterative agent (CLI variant) across all hard tasks.
 
 Identical to run_hard_iterative.py but uses the CLI-flavored config
-best_iterative_judge_v2_cli.yaml stacked on mini.yaml.
+archive/best_iterative_judge_v2_cli.yaml stacked on mini.yaml.
 
 Usage:
     cd /home/luyadong/sandbox/mini-web-agent
@@ -30,7 +30,7 @@ from miniswewebagent.run.iterative import run_one  # noqa: E402
 TASKS_FILE = REPO_ROOT / "src" / "miniswewebagent" / "run" / "benchmarks" / "om2w_260220.json"
 BASE_CONFIGS = [
     "mini.yaml",
-    "best_iterative_judge_v2_cli.yaml",
+    "archive/best_iterative_judge_v2_cli.yaml",
 ]
 
 

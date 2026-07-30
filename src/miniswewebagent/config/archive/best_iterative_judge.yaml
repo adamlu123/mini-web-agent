@@ -2,7 +2,7 @@
 #
 # Usage (standalone — no other base config needed):
 #   python -m miniswewebagent.run.iterative \
-#     -c best_iterative_judge.yaml \
+#     -c archive/best_iterative_judge.yaml \
 #     --task-id <id> --tasks-file /path/to/tasks.json
 #
 # mini.yaml contributes model connection settings (model_class, model_name,

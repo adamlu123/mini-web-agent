@@ -27,7 +27,7 @@
 # Usage:
 #   source /home/luyadong/cred.sh
 #   python -m miniswewebagent.run.mini \
-#     -c best_default_judge_json_openrouter_qwen36_cli_multi.yaml \
+#     -c archive/best_default_judge_json_openrouter_qwen36_cli_multi.yaml \
 #     --task-id <id>
 
 model:

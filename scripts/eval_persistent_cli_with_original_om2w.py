@@ -1,7 +1,7 @@
 """Evaluate persistent-browser trajectories with Online-Mind2Web WebJudge.
 
 This adapter is for runs produced by
-``best_default_judge_json_persistent_cli.yaml``.  For every task directory it
+``generation/best_default_judge_json_persistent_cli.yaml``.  For every task directory it
 uses:
 
 * ``task.json["task"]`` as the task description;

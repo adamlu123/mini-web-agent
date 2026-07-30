@@ -7,7 +7,7 @@
 #
 # Usage (standalone — no other base config needed):
 #   python -m miniswewebagent.run.iterative \
-#     -c best_iterative_judge_v2_cli.yaml \
+#     -c archive/best_iterative_judge_v2_cli.yaml \
 #     --task-id <id> --tasks-file /path/to/tasks.json
 
 model:

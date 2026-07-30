@@ -13,7 +13,7 @@ Difference from ``iterative.py``:
   on judge success or ``max_rounds`` exhaustion.
 
 Use by setting ``iterative.runner_class: strict`` in the config, or by
-passing ``-c iterative_strict.yaml`` to ``miniswewebagent.run.iterative``.
+passing ``-c archive/iterative_strict.yaml`` to ``miniswewebagent.run.iterative``.
 """
 
 from __future__ import annotations

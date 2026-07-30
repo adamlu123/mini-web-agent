@@ -46,7 +46,7 @@ The agent's contract per turn is a single JSON object:
 
 ```mermaid
 flowchart TD
-    Cfg["best_default_judge_json.yaml"] --> Runner["om2w runner<br/>300 workers · all task levels"]
+    Cfg["generation/best_default_judge_json.yaml"] --> Runner["om2w runner<br/>300 workers · all task levels"]
     Runner --> Task["per task (parallel)"]
 
     subgraph Task[" "]

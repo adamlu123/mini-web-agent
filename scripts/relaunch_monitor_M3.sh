@@ -86,7 +86,7 @@ PY
     (
         cd "$REPO" && \
         /home/luyadong/.venv/bin/python -m miniswewebagent.run.benchmarks.om2w \
-            -c best_default_judge_json.yaml \
+            -c generation/best_default_judge_json.yaml \
             --workers 30 \
             --output-dir "$RELAUNCH_DIR" \
             "${args[@]}"

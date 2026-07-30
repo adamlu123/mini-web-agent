@@ -23,7 +23,7 @@
 #
 # Usage:
 #   mini-web \
-#     -c best_default_judge_json_agnostic.yaml \
+#     -c generation/best_default_judge_json_agnostic.yaml \
 #     --task-id <id> --tasks-file /path/to/tasks.json \
 #     -o /path/to/output_dir
 
