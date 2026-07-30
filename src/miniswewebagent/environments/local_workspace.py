@@ -25,6 +25,10 @@ class LocalWorkspaceEnvironmentConfig(BaseModel):
     output_truncation_chars: int = 12000
     final_script_preview_chars: int = 4000
     recent_files_limit: int = 40
+    # Stable stand-in for the per-task workspace path shown to the model (e.g.
+    # "/workspace"). Commands have the alias rewritten to the real directory
+    # before execution; observations have the real directory rewritten back.
+    workspace_alias: str = ""
 
 
 class LocalWorkspaceEnvironment:
@@ -91,6 +95,21 @@ class LocalWorkspaceEnvironment:
 
     def _history_path(self) -> Path:
         return self._workspace_dir() / "command_history.sh"
+
+    def _executable_command(self, command: str) -> str:
+        alias = self.config.workspace_alias.strip().rstrip("/")
+        if not alias:
+            return command
+        return command.replace(alias, str(self._workspace_dir()))
+
+    def _display_text(self, value: str) -> str:
+        alias = self.config.workspace_alias.strip().rstrip("/")
+        if not alias:
+            return value
+        return value.replace(str(self._workspace_dir()), alias)
+
+    def _display_path(self, path: Path | str) -> str:
+        return self._display_text(str(path))
 
     def _truncate(self, text: str, limit: int) -> str:
         if len(text) <= limit:
@@ -168,7 +187,7 @@ class LocalWorkspaceEnvironment:
 
         try:
             result = subprocess.run(
-                command,
+                self._executable_command(command),
                 shell=True,
                 executable=self.config.shell,
                 text=True,
@@ -239,23 +258,23 @@ class LocalWorkspaceEnvironment:
         new_screenshots = [str(path.relative_to(workspace_dir)) for path in step_screenshot_paths]
         return {
             "success": returncode == 0 and not exception_info,
-            "exception": exception_info,
+            "exception": self._display_text(exception_info),
             "command": command,
             "returncode": returncode,
-            "workspace_dir": str(workspace_dir),
-            "cwd": str(cwd),
+            "workspace_dir": self._display_path(workspace_dir),
+            "cwd": self._display_path(cwd),
             "url": self.config.start_url or "",
             "title": "",
             "aria_snapshot": "",
             "console_output": "",
             "recent_console": "",
-            "command_output": self._truncate(output, self.config.output_truncation_chars),
-            "log_path": str(log_path) if log_path is not None else "",
-            "task_metadata_path": str(self._task_metadata_path()),
-            "final_script_path": str(final_script_path) if final_script_path.exists() else "",
+            "command_output": self._truncate(self._display_text(output), self.config.output_truncation_chars),
+            "log_path": self._display_path(log_path) if log_path is not None else "",
+            "task_metadata_path": self._display_path(self._task_metadata_path()),
+            "final_script_path": self._display_path(final_script_path) if final_script_path.exists() else "",
             "final_script_exists": final_script_path.exists(),
-            "final_script_preview": final_script_preview,
-            "screenshot_path": str(latest_screenshot) if latest_screenshot is not None else "",
+            "final_script_preview": self._display_text(final_script_preview),
+            "screenshot_path": self._display_path(latest_screenshot) if latest_screenshot is not None else "",
             "new_screenshots": new_screenshots,
             "recent_screenshots": recent_screenshots,
             "workspace_files": self._recent_workspace_files(),
@@ -264,10 +283,10 @@ class LocalWorkspaceEnvironment:
     def get_template_vars(self, **kwargs) -> dict[str, Any]:
         return {
             "start_url": self.config.start_url or "",
-            "output_dir": str(self._workspace_dir()),
-            "workspace_dir": str(self._workspace_dir()),
-            "task_metadata_path": str(self._task_metadata_path()),
-            "final_script_path": str(self._final_script_path()),
+            "output_dir": self._display_path(self._workspace_dir()),
+            "workspace_dir": self._display_path(self._workspace_dir()),
+            "task_metadata_path": self._display_path(self._task_metadata_path()),
+            "final_script_path": self._display_path(self._final_script_path()),
             **kwargs,
         }
 
