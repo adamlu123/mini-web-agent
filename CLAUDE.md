@@ -78,18 +78,21 @@ subdirectories must be included in the spec (e.g. `-c generation/…`).
 Evaluation only — no training code lives here. Serve a converted HF checkpoint with
 vLLM, then point the normal `om2w` batch runner at it.
 
+Two scripts do this; both are parameterized by env vars (see their headers).
+
 ```bash
-# 1. serve the checkpoint (any OpenAI-compatible server works)
-vllm serve /path/to/ctx2-<variant>-hf-vlm --tp 8 --max-model-len 32768
+# 1. serve the checkpoint  (own tmux window -- see the pane-index gotcha below)
+CKPT=/path/to/ctx2-<variant>-hf-vlm GPUS=0 TP=1 bash scripts/serve_vllm_qwen35.sh
 
 # 2. run the benchmark against it
-python -m miniswewebagent.run.benchmarks.om2w \
-  -c eval/om2w_spb_vllm_sw10.yaml \
-  -c model.endpoint=http://127.0.0.1:8000/v1 \
-  -c model.model_name=sft_ckpt \
-  --tasks-file src/miniswewebagent/run/benchmarks/om2w_260220.json \
-  --output-dir "$OUT"
+CFG=eval/om2w_spb_vllm_sw10.yaml OUT=outputs/qwen35_4b_sw10 WORKERS=8 \
+  bash scripts/run_om2w_vllm.sh
 ```
+
+`serve_vllm_qwen35.sh` carries the two flashinfer workarounds this host needs and
+enables prefix caching (opt-in for hybrid models like Qwen3.5 — see the note in
+the script). `run_om2w_vllm.sh` puts the venv on `PATH`, which the agent needs to
+resolve `python -m browser_session`.
 
 Configs (`src/miniswewebagent/config/eval/`) differ only in how history is fed to the
 model; all use `model_class: openai_compatible`, `response_mode: sft_state`,
@@ -192,4 +195,17 @@ Runtime notes for this host: the runner venv needs `openai`, `pillow`, and `back
 beyond `pyproject.toml` (`openai` is imported by `phyagi_model.py` but is not declared as
 a dependency). Serving Qwen3.5 via the shared `phitrain` venv needs
 `FLASHINFER_DISABLE_VERSION_CHECK=1` and `VLLM_USE_FLASHINFER_SAMPLER=0` — flashinfer's
-sampling kernel does not compile against the installed CUB.
+sampling kernel does not compile against the installed CUB. Both are baked into
+`scripts/serve_vllm_qwen35.sh`.
+
+Gotchas learned the hard way:
+
+- **Give the vLLM server its own tmux window**, not a pane in a shared one. `tmux
+  kill-pane -t <window>.<n>` reshuffles indices, and it is easy to kill the server
+  while aiming at a finished run's pane.
+- **`pkill -f 'miniswewebagent.run.benchmarks.om2w'` matches your own shell**, which
+  is running a command containing that string — it kills the shell before the rest of
+  the line executes. Use a pattern that cannot match itself, e.g. `benchmarks[.]om2w`.
+- **Do not release Browserbase sessions project-wide during cleanup.** The project ID
+  in `cred.sh` is shared; a blanket `REQUEST_RELEASE` over every RUNNING session will
+  terminate colleagues' live runs. Filter to sessions your own run created.
