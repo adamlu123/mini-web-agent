@@ -113,6 +113,18 @@ model; all use `model_class: openai_compatible`, `response_mode: sft_state`,
 normalized, so `:8000`, `/v1`, and `/v1/chat/completions` all work; the API key
 defaults to `dummy`. Env fallbacks: `OPENAI_COMPATIBLE_{ENDPOINT,MODEL,API_KEY}`.
 
+Sampling: `model.temperature` defaults to **0.0** (greedy) for every
+chat-completions backend (`openai_compatible`, `vllm`, `openrouter`), so eval runs
+are reproducible. `model.top_p` and `model.seed` default to null and are omitted
+from the payload unless set; setting `temperature: null` likewise omits it and
+falls back to the server default (vLLM uses 1.0 when the checkpoint ships no
+`generation_config.json`).
+
+Non-default ports: the `eval/om2w_spb_vllm_*.yaml` configs hardcode
+`127.0.0.1:8000` in `environment.env`. `scripts/run_om2w_vllm_local.sh` takes
+`EXTRA_CFG` (space-separated dotted `-c` overrides) to repoint them, e.g. when
+sharding one benchmark across two servers.
+
 Notes / limitations:
 - **`last_obs_think` currently behaves the same as `last_obs`.** The think-only trim
   rewrites message *content*, but under `sft_state` the model layer rebuilds assistant

@@ -30,10 +30,20 @@ extra=()
 [ -n "${LIMIT:-}" ] && extra+=(--limit "$LIMIT")
 [ -n "${TASK_LEVEL:-}" ] && extra+=(--task-level "$TASK_LEVEL")
 
+# Extra dotted config overrides, space separated, e.g.
+#   EXTRA_CFG="environment.env.OPENAI_COMPATIBLE_ENDPOINT=http://127.0.0.1:8002/v1/chat/completions"
+# Needed when serving on a non-default port, since the eval configs hardcode
+# :8000 in environment.env.
+cfg_overrides=()
+for override in ${EXTRA_CFG:-}; do
+  cfg_overrides+=(-c "$override")
+done
+
 exec "$VENV_BIN/python" -m miniswewebagent.run.benchmarks.om2w \
   -c "$CFG" \
   -c "model.endpoint=$ENDPOINT" \
   -c "model.model_name=$MODEL_NAME" \
+  "${cfg_overrides[@]}" \
   --tasks-file "$TASKS_FILE" \
   --workers "$WORKERS" \
   --output-dir "$OUT" "${extra[@]}" 2>&1 | tee -a "$OUT/run.log"
