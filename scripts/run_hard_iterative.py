@@ -29,7 +29,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from miniswewebagent.run.iterative import run_one  # noqa: E402
-from miniswewebagent.tasks.om2w import load_om2w_task  # noqa: E402
+from miniswewebagent.utils.om2w_tasks import load_om2w_task  # noqa: E402
 
 TASKS_FILE = REPO_ROOT / "src" / "miniswewebagent" / "run" / "benchmarks" / "om2w_260220.json"
 BASE_CONFIGS = [

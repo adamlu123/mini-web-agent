@@ -103,7 +103,7 @@ Code:
 - `src/miniswewebagent/models/__init__.py`
 - `src/miniswewebagent/environments/__init__.py`
 - `src/miniswewebagent/agents/__init__.py`
-- `src/miniswewebagent/tasks/om2w.py`
+- `src/miniswewebagent/utils/om2w_tasks.py`
 
 Files read:
 

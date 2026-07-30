@@ -19,7 +19,7 @@ Analysis of judge results for `outputs/iterative/0418_all_best_repro` (300 tasks
 
 ## Success rate by task level
 
-Levels are taken from `src/miniswewebagent/tasks/om2w_260220.json`.
+Levels are taken from `src/miniswewebagent/run/benchmarks/om2w_260220.json`.
 
 | level | total | success | success rate |
 |---|---:|---:|---:|
@@ -95,7 +95,7 @@ Categories are mutually exclusive, assigned by keyword classification on the jud
 import json, collections
 EVAL = "outputs/iterative/0418_all_best_repro_eval_20260419_233925"
 recs = [json.loads(l) for l in open(f"{EVAL}/WebJudge_Online_Mind2Web_Sandbox_eval_o4-mini_score_threshold_3_auto_eval_results.json")]
-tasks = {t["task_id"]: t for t in json.load(open("src/miniswewebagent/tasks/om2w_260220.json"))}
+tasks = {t["task_id"]: t for t in json.load(open("src/miniswewebagent/run/benchmarks/om2w_260220.json"))}
 
 # By level
 by_level = collections.defaultdict(lambda: [0, 0])

@@ -16,8 +16,8 @@ from rich.console import Console
 from miniswewebagent.config import get_config_from_spec, snapshot_config_specs
 from miniswewebagent.run.mini import DEFAULT_CONFIG, _timestamped_output_dir
 from miniswewebagent.run.mini import run_one as run_one_default
-from miniswewebagent.tasks.om2w import load_om2w_tasks
 from miniswewebagent.utils.om2w_eval import run_online_mind2web_judge
+from miniswewebagent.utils.om2w_tasks import load_om2w_tasks
 from miniswewebagent.utils.serialize import recursive_merge
 
 app = typer.Typer(no_args_is_help=False)

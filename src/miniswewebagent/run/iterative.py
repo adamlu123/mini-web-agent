@@ -26,8 +26,8 @@ from miniswewebagent.config import get_config_from_spec, snapshot_config_specs
 from miniswewebagent.environments import get_environment
 from miniswewebagent.models import get_model
 from miniswewebagent.run.mini import _apply_auto_model_overrides
-from miniswewebagent.tasks.om2w import load_om2w_task
 from miniswewebagent.utils.om2w_eval import export_online_mind2web_artifacts
+from miniswewebagent.utils.om2w_tasks import load_om2w_task
 from miniswewebagent.utils.serialize import UNSET, recursive_merge
 
 DEFAULT_CONFIG = "iterative.yaml"
