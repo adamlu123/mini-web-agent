@@ -14,6 +14,34 @@ from typing import Any
 import httpx
 
 from miniswewebagent.models.phyagi_model import _extract_response_text, text_part
+from miniswewebagent.utils.chat_completions import (
+    extract_chat_text,
+    serialize_chat_user_content,
+)
+from miniswewebagent.utils.judge_gateway import (
+    ensure_responses_endpoint,
+    policy_judge_requested,
+    resolve_judge_endpoint,
+    resolve_policy_judge,
+)
+
+DEFAULT_ENDPOINT = "http://gateway.phyagi.net/api/responses"
+DEFAULT_MODEL = "gpt-5.4"
+
+_ANSWER_JSON_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "answer": {"type": "string"},
+        "evidence": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+        "unknown": {"type": "boolean"},
+        "confidence": {"type": "number"},
+    },
+    "required": ["answer", "evidence", "unknown", "confidence"],
+}
 
 # HTTP statuses that are commonly transient at the phyagi gateway and worth
 # retrying. 401/403/404/413/422 are intentionally omitted — they will not
@@ -63,7 +91,23 @@ def _normalize_image_paths(
     return normalized
 
 
+def _is_chat_completions_endpoint(endpoint: str) -> bool:
+    return "/chat/completions" in endpoint.lower()
+
+
 def _gateway_config(args: argparse.Namespace) -> tuple[str, str, str]:
+    if policy_judge_requested(args.model):
+        # judge_model=policy: ask the policy server (vLLM) instead of the
+        # /responses judge gateway, over OpenAI chat-completions.
+        target = resolve_policy_judge(
+            endpoint=args.endpoint, model=args.model, api_key=args.api_key, tool="image_qa"
+        )
+        return target.api_key, target.endpoint, target.model
+
+    endpoint = resolve_judge_endpoint(args.endpoint) or DEFAULT_ENDPOINT
+    model = args.model or os.environ.get("OPENAI_GATEWAY_MODEL", DEFAULT_MODEL)
+    ensure_responses_endpoint(endpoint, model=model, tool="image_qa")
+
     api_key = (
         args.api_key
         or os.environ.get("OPENAI_GATEWAY_API_KEY", "")
@@ -72,8 +116,6 @@ def _gateway_config(args: argparse.Namespace) -> tuple[str, str, str]:
     if not api_key:
         raise RuntimeError("Missing OPENAI_GATEWAY_API_KEY or PHYAGI_API_KEY.")
 
-    endpoint = args.endpoint or "http://gateway.phyagi.net/api/responses"
-    model = args.model or os.environ.get("OPENAI_GATEWAY_MODEL", "gpt-5.4")
     return api_key, endpoint, model
 
 
@@ -138,39 +180,47 @@ def run_image_qa(
     retry_base_delay: float = 1.0,
 ) -> dict[str, Any]:
     resolved_image_paths = _normalize_image_paths(image_path=image_path, image_paths=image_paths)
-    payload = {
-        "model": model,
-        "input": [
-            {
-                "type": "message",
-                "role": "user",
-                "content": [text_part(_build_prompt(question))]
-                + [_high_detail_image_part_from_path(path) for path in resolved_image_paths],
-            }
-        ],
-        "max_output_tokens": 32000,
-        "text": {
-            "format": {
+    user_content = [text_part(_build_prompt(question))] + [
+        _high_detail_image_part_from_path(path) for path in resolved_image_paths
+    ]
+    chat_backend = _is_chat_completions_endpoint(endpoint)
+
+    if chat_backend:
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": [
+                {"role": "user", "content": serialize_chat_user_content(user_content)}
+            ],
+            "max_tokens": 32000,
+            "response_format": {
                 "type": "json_schema",
-                "name": "image_qa_answer",
-                "schema": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "properties": {
-                        "answer": {"type": "string"},
-                        "evidence": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                        },
-                        "unknown": {"type": "boolean"},
-                        "confidence": {"type": "number"},
-                    },
-                    "required": ["answer", "evidence", "unknown", "confidence"],
+                "json_schema": {
+                    "name": "image_qa_answer",
+                    "schema": _ANSWER_JSON_SCHEMA,
+                    "strict": True,
                 },
-                "strict": True,
-            }
-        },
-    }
+            },
+        }
+    else:
+        payload = {
+            "model": model,
+            "input": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": user_content,
+                }
+            ],
+            "max_output_tokens": 32000,
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": "image_qa_answer",
+                    "schema": _ANSWER_JSON_SCHEMA,
+                    "strict": True,
+                }
+            },
+        }
 
     with httpx.Client(timeout=timeout_seconds) as client:
         response = _post_with_retry(
@@ -186,7 +236,11 @@ def run_image_qa(
         )
         response_payload = response.json()
 
-    raw_text = _extract_response_text(response_payload).strip()
+    raw_text = (
+        extract_chat_text(response_payload)
+        if chat_backend
+        else _extract_response_text(response_payload)
+    ).strip()
     parsed = json.loads(raw_text)
     result = {
         "image_paths": [str(path) for path in resolved_image_paths],

@@ -270,3 +270,40 @@ def test_run_image_qa_raises_after_max_attempts(monkeypatch, tmp_path: Path) -> 
         )
 
     assert calls["count"] == 3
+
+
+def test_gateway_config_honours_endpoint_env(monkeypatch) -> None:
+    """OPENAI_GATEWAY_ENDPOINT is read alongside OPENAI_GATEWAY_MODEL."""
+    import argparse
+
+    from miniswewebagent.tools.image_qa import _gateway_config
+
+    monkeypatch.setenv("OPENAI_GATEWAY_ENDPOINT", "http://judge.internal/api/responses")
+    monkeypatch.setenv("OPENAI_GATEWAY_MODEL", "gpt-5.4")
+    monkeypatch.setenv("OPENAI_GATEWAY_API_KEY", "sk-env")
+
+    api_key, endpoint, model = _gateway_config(
+        argparse.Namespace(endpoint="", model="", api_key="")
+    )
+
+    assert (api_key, endpoint, model) == (
+        "sk-env",
+        "http://judge.internal/api/responses",
+        "gpt-5.4",
+    )
+
+
+def test_gateway_config_rejects_policy_endpoint(monkeypatch) -> None:
+    """A policy chat-completions URL must fail loudly rather than 404 at the gateway."""
+    import argparse
+
+    import pytest
+
+    from miniswewebagent.tools.image_qa import _gateway_config
+
+    monkeypatch.setenv("OPENAI_GATEWAY_ENDPOINT", "http://127.0.0.1:8000/v1/chat/completions")
+    monkeypatch.setenv("OPENAI_GATEWAY_MODEL", "sft_ckpt")
+    monkeypatch.setenv("OPENAI_GATEWAY_API_KEY", "sk-env")
+
+    with pytest.raises(RuntimeError, match="chat-completions URL"):
+        _gateway_config(argparse.Namespace(endpoint="", model="", api_key=""))

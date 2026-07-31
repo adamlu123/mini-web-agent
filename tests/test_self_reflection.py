@@ -92,6 +92,7 @@ def test_render_final_verdict_user_prompt_appends_backward_compatible_sections()
 
 def test_gateway_config_defaults_to_trapi_kimi(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("OPENAI_GATEWAY_MODEL", raising=False)
+    monkeypatch.delenv("OPENAI_GATEWAY_ENDPOINT", raising=False)
 
     cfg = _gateway_config(api_key="", endpoint="", model="")
 
@@ -105,13 +106,42 @@ def test_gateway_config_defaults_to_trapi_kimi(monkeypatch: pytest.MonkeyPatch) 
     )
 
 
-def test_gateway_config_preserves_legacy_responses_override() -> None:
+def test_gateway_config_preserves_legacy_responses_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPENAI_GATEWAY_ENDPOINT", raising=False)
+
     cfg = _gateway_config(api_key="sk-test", endpoint="", model="gpt-5.4")
 
     assert cfg.backend == "responses"
     assert cfg.model == "gpt-5.4"
     assert cfg.api_key == "sk-test"
     assert cfg.endpoint == "http://gateway.phyagi.net/api/responses"
+
+
+def test_gateway_config_honours_endpoint_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """OPENAI_GATEWAY_ENDPOINT is read alongside OPENAI_GATEWAY_MODEL."""
+    monkeypatch.setenv("OPENAI_GATEWAY_ENDPOINT", "http://judge.internal/api/responses")
+    monkeypatch.setenv("OPENAI_GATEWAY_MODEL", "gpt-5.4")
+    monkeypatch.setenv("OPENAI_GATEWAY_API_KEY", "sk-env")
+
+    cfg = _gateway_config(api_key="", endpoint="", model="")
+
+    assert cfg.backend == "responses"
+    assert cfg.endpoint == "http://judge.internal/api/responses"
+    assert cfg.model == "gpt-5.4"
+
+
+def test_gateway_config_rejects_policy_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A policy chat-completions URL must fail loudly, not 404 on every reflection.
+
+    Pointing OPENAI_GATEWAY_* at the local vLLM server used to send judge requests
+    for a locally-served deployment to the phyagi /responses gateway.
+    """
+    monkeypatch.setenv("OPENAI_GATEWAY_ENDPOINT", "http://127.0.0.1:8000/v1/chat/completions")
+    monkeypatch.setenv("OPENAI_GATEWAY_MODEL", "sft_ckpt")
+    monkeypatch.setenv("OPENAI_GATEWAY_API_KEY", "sk-env")
+
+    with pytest.raises(RuntimeError, match="chat-completions URL"):
+        _gateway_config(api_key="", endpoint="", model="")
 
 
 def test_load_trajectory_scope_uses_all_saved_images_across_epochs(tmp_path: Path) -> None:

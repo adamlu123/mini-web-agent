@@ -80,8 +80,13 @@ environment:
     OPENAI_COMPATIBLE_MODEL: sft_ckpt
     OPENAI_COMPATIBLE_API_KEY: dummy
     PYTHONPATH: /home/luyadong/sandbox/mini-web-agent/agent_runtime
-    OPENAI_GATEWAY_ENDPOINT: http://127.0.0.1:8000/v1/chat/completions
-    OPENAI_GATEWAY_MODEL: sft_ckpt
+    # Judge gateway for the in-workspace self_reflection / image_qa tools.
+    # NOT the policy endpoint (that is model.endpoint / OPENAI_COMPATIBLE_*).
+    # Pointing these at the local vLLM server made every reflection call ask the
+    # gateway for the nonexistent `sft_ckpt` deployment -> 404 on every step, so
+    # the completion gate could never pass.
+    OPENAI_GATEWAY_ENDPOINT: http://gateway.phyagi.net/api/responses
+    OPENAI_GATEWAY_MODEL: gpt-5.4
 
 run:
   tasks_file: src/miniswewebagent/run/benchmarks/om2w_260220.json
@@ -104,6 +109,13 @@ agent:
   trajectory_judge_result: reflection/judge_result.json
   trajectory_plan_file: plan.md
   trajectory_judge_config: judge_config.json
+  # judge_gateway_endpoint / judge_score_threshold below are read only by the
+  # agent's om2w completion gate (judge_mode: om2w). With judge_mode: trajectory
+  # the gate shells out to `python -m self_reflection`, which uses the
+  # OPENAI_GATEWAY_* environment above -- unless judge_model is the sentinel
+  # `policy`, which routes reflection at the served checkpoint itself over
+  # chat-completions. The post-run benchmark scorer uses run.judge_model, which
+  # is a separate setting.
   judge_model: o4-mini
   judge_gateway_endpoint: ""
   judge_score_threshold: 3

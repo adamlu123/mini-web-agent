@@ -19,6 +19,12 @@ from miniswewebagent.utils.browser_evidence import (
     optional_file_digest,
     trajectory_evidence_digest,
 )
+from miniswewebagent.utils.judge_gateway import (
+    JUDGE_MODEL_ENV,
+    POLICY_JUDGE_SENTINEL,
+    is_policy_judge,
+    resolve_policy_judge,
+)
 from miniswewebagent.utils.serialize import recursive_merge
 
 
@@ -48,6 +54,10 @@ class AgentConfig(BaseModel):
     require_self_reflection_success: bool = False
     judge_mode: str = "tool"
     judge_upstream_src: str = "/home/luyadong/sandbox/Online-Mind2Web/src"
+    # Judge model for the completion gate. "policy" is a sentinel meaning "judge
+    # with the policy server under evaluation": it is mirrored into the workspace
+    # environment so the in-workspace self_reflection / image_qa tools talk to
+    # model.endpoint over chat-completions instead of the /responses gateway.
     judge_model: str = "o4-mini"
     judge_gateway_endpoint: str = ""
     judge_score_threshold: int = 3
@@ -209,6 +219,51 @@ class DefaultAgent:
         self.extra_template_vars: dict[str, Any] = {}
         self.n_calls = 0
         self.n_format_errors = 0
+        self._apply_policy_judge_env()
+
+    def _apply_policy_judge_env(self) -> None:
+        """Point the in-workspace judge tools at the policy server when judge_model=policy.
+
+        ``self_reflection`` / ``image_qa`` run as subprocesses inside the workspace,
+        so the selection has to travel through the environment rather than the agent
+        config. ``model.endpoint`` is the single source of truth for where the policy
+        is served (the launch scripts override it per shard), so it wins over any
+        pre-existing ``OPENAI_COMPATIBLE_*`` entries in ``environment.env``.
+        ``OPENAI_GATEWAY_ENDPOINT`` is deliberately left alone: it still describes the
+        real judge gateway for an explicit ``--model`` override.
+        """
+        if not is_policy_judge(self.config.judge_model):
+            return
+        env = getattr(getattr(self.env, "config", None), "env", None)
+        if not isinstance(env, dict):
+            raise ValueError(
+                f"agent.judge_model={POLICY_JUDGE_SENTINEL!r} requires an environment that "
+                "exposes a mutable config.env (e.g. local_workspace); the judge selection "
+                "cannot reach the in-workspace tools otherwise."
+            )
+        model_config = getattr(self.model, "config", None)
+        target = resolve_policy_judge(
+            endpoint=(
+                self.config.judge_gateway_endpoint
+                or getattr(model_config, "endpoint", "")
+                or env.get("OPENAI_COMPATIBLE_ENDPOINT", "")
+                or env.get("WEB_AGENT_POLICY_URL", "")
+            ),
+            model=(
+                getattr(model_config, "model_name", "")
+                or env.get("OPENAI_COMPATIBLE_MODEL", "")
+                or env.get("WEB_AGENT_POLICY_MODEL", "")
+            ),
+            api_key=(
+                getattr(model_config, "api_key", "")
+                or env.get("OPENAI_COMPATIBLE_API_KEY", "")
+            ),
+            tool="agent judge_model=policy",
+        )
+        env[JUDGE_MODEL_ENV] = POLICY_JUDGE_SENTINEL
+        env["OPENAI_COMPATIBLE_ENDPOINT"] = target.endpoint
+        env["OPENAI_COMPATIBLE_MODEL"] = target.model
+        env["OPENAI_COMPATIBLE_API_KEY"] = target.api_key
 
     def _debug_dir(self) -> Path | None:
         if self.config.output_path is None:

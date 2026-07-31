@@ -81,6 +81,17 @@ from miniswewebagent.utils.browser_evidence import (
     trajectory_evidence_digest,
     trajectory_images,
 )
+from miniswewebagent.utils.chat_completions import (
+    extract_chat_text,
+    serialize_chat_user_content,
+)
+from miniswewebagent.utils.judge_gateway import (
+    POLICY_JUDGE_SENTINEL,
+    ensure_responses_endpoint,
+    policy_judge_requested,
+    resolve_judge_endpoint,
+    resolve_policy_judge,
+)
 
 DEFAULT_RESPONSES_MODEL = "gpt-5.4"
 DEFAULT_RESPONSES_ENDPOINT = "http://gateway.phyagi.net/api/responses"
@@ -375,7 +386,26 @@ def _use_legacy_responses_backend(*, endpoint: str, model: str) -> bool:
 
 
 def _gateway_config(*, api_key: str, endpoint: str, model: str) -> _GatewayConfig:
+    if policy_judge_requested(model):
+        # judge_model=policy: reflect with the very server that produced the
+        # trajectory (vLLM), not the /responses judge gateway.
+        target = resolve_policy_judge(
+            endpoint=endpoint, model=model, api_key=api_key, tool="self_reflection"
+        )
+        return _GatewayConfig(
+            backend="policy_chat",
+            endpoint=target.endpoint,
+            model=target.model,
+            api_key=target.api_key,
+        )
+
+    endpoint = resolve_judge_endpoint(endpoint)
     if _use_legacy_responses_backend(endpoint=endpoint, model=model):
+        resolved_endpoint = endpoint or DEFAULT_RESPONSES_ENDPOINT
+        resolved_model = model or os.environ.get("OPENAI_GATEWAY_MODEL", DEFAULT_RESPONSES_MODEL)
+        ensure_responses_endpoint(
+            resolved_endpoint, model=resolved_model, tool="self_reflection"
+        )
         resolved_key = (
             api_key
             or os.environ.get("OPENAI_GATEWAY_API_KEY", "")
@@ -385,8 +415,6 @@ def _gateway_config(*, api_key: str, endpoint: str, model: str) -> _GatewayConfi
             raise RuntimeError(
                 "Missing OPENAI_GATEWAY_API_KEY or PHYAGI_API_KEY for the legacy responses backend."
             )
-        resolved_endpoint = endpoint or DEFAULT_RESPONSES_ENDPOINT
-        resolved_model = model or os.environ.get("OPENAI_GATEWAY_MODEL", DEFAULT_RESPONSES_MODEL)
         return _GatewayConfig(
             backend="responses",
             endpoint=resolved_endpoint,
@@ -454,47 +482,6 @@ def _post_with_retry(
         return response
 
     raise RuntimeError("self_reflection retry loop exited without returning")
-
-
-def _serialize_trapi_content_part(part: dict[str, Any]) -> dict[str, Any]:
-    if part.get("type") == "input_image":
-        image_url = {"url": part.get("image_url", "")}
-        detail = part.get("detail")
-        if detail:
-            image_url["detail"] = detail
-        return {"type": "image_url", "image_url": image_url}
-    return {"type": "text", "text": part.get("text", "")}
-
-
-def _serialize_trapi_user_content(user_content: list[dict[str, Any]]) -> str | list[dict[str, Any]]:
-    serialized = [
-        _serialize_trapi_content_part(part)
-        for part in user_content
-        if isinstance(part, dict)
-    ]
-    if serialized and all(part.get("type") == "text" for part in serialized):
-        return "\n".join(part["text"] for part in serialized)
-    return serialized
-
-
-def _extract_trapi_chat_text(payload: dict[str, Any]) -> str:
-    choices = payload.get("choices") or []
-    if not choices:
-        return ""
-    message = choices[0].get("message") or {}
-    content = message.get("content", "")
-    if isinstance(content, list):
-        text = "\n".join(part.get("text", "") for part in content if isinstance(part, dict)).strip()
-        if text:
-            return text
-    else:
-        text = str(content or "").strip()
-        if text:
-            return text
-    reasoning = message.get("reasoning_content", "")
-    if isinstance(reasoning, list):
-        return "\n".join(part.get("text", "") for part in reasoning if isinstance(part, dict)).strip()
-    return str(reasoning or "").strip()
 
 
 def _trapi_token_provider(scope: str):
@@ -581,11 +568,12 @@ def _call_responses_gateway(
     return _extract_response_text(response_payload).strip()
 
 
-def _call_trapi_gateway(
+def _call_chat_completions(
     *,
     system_prompt: str,
     user_content: list[dict[str, Any]],
     gateway_config: _GatewayConfig,
+    bearer_token: str,
     timeout_seconds: int,
     max_new_tokens: int,
     max_attempts: int,
@@ -600,13 +588,16 @@ def _call_trapi_gateway(
             },
             {
                 "role": "user",
-                "content": _serialize_trapi_user_content(user_content),
+                "content": serialize_chat_user_content(user_content),
             },
         ],
         "max_tokens": max_new_tokens,
     }
+    # TRAPI selects the deployment from the URL path and ignores a body model;
+    # an OpenAI-compatible server (vLLM) requires it.
+    if gateway_config.backend != "trapi_kimi":
+        payload["model"] = gateway_config.model
 
-    bearer_token = _resolve_trapi_bearer_token(gateway_config.api_key)
     with httpx.Client(timeout=timeout_seconds) as client:
         response = _post_with_retry(
             client,
@@ -622,7 +613,7 @@ def _call_trapi_gateway(
         )
         response_payload = response.json()
 
-    return _extract_trapi_chat_text(response_payload).strip()
+    return extract_chat_text(response_payload).strip()
 
 
 def _call_gateway(
@@ -636,11 +627,17 @@ def _call_gateway(
     retry_base_delay: float,
     tag: str,
 ) -> str:
-    if gateway_config.backend == "trapi_kimi":
-        return _call_trapi_gateway(
+    if gateway_config.backend in {"trapi_kimi", "policy_chat"}:
+        bearer_token = (
+            gateway_config.api_key
+            if gateway_config.backend == "policy_chat"
+            else _resolve_trapi_bearer_token(gateway_config.api_key)
+        )
+        return _call_chat_completions(
             system_prompt=system_prompt,
             user_content=user_content,
             gateway_config=gateway_config,
+            bearer_token=bearer_token,
             timeout_seconds=timeout_seconds,
             max_new_tokens=max_new_tokens,
             max_attempts=max_attempts,
@@ -993,7 +990,10 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help=(
             "Override the judge model or deployment. Defaults to TRAPI Kimi-K2.5 "
-            f"({DEFAULT_TRAPI_MODEL}); explicit non-TRAPI overrides keep the legacy responses backend."
+            f"({DEFAULT_TRAPI_MODEL}); explicit non-TRAPI overrides keep the legacy responses "
+            f"backend. Pass {POLICY_JUDGE_SENTINEL!r} (or set "
+            f"OPENAI_GATEWAY_MODEL={POLICY_JUDGE_SENTINEL}) to judge with the policy server "
+            "itself over OpenAI chat-completions (OPENAI_COMPATIBLE_* / WEB_AGENT_POLICY_*)."
         ),
     )
     parser.add_argument(
