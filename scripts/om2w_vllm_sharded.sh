@@ -7,6 +7,11 @@
 #   bash scripts/om2w_vllm_sharded.sh logs g2   # tail -f one shard
 #   bash scripts/om2w_vllm_sharded.sh sessions  # release leaked Browserbase sessions only
 #
+# sessions also takes explicit output dirs, for runs this script did not launch
+# (e.g. a single unsharded run_om2w_vllm_local.sh with its own OUT):
+#
+#   bash scripts/om2w_vllm_sharded.sh sessions outputs/qwen35_4b_r1
+#
 # stop also releases the Browserbase sessions this run leaked: killing the
 # workers only drops the local CDP client, so the remote session would otherwise
 # stay RUNNING for its full 1h expiry and hold concurrency. Only session ids
@@ -238,15 +243,22 @@ cmd_stop() {
 #
 # Scoped deliberately: the project id is shared, so only session ids recorded by
 # THIS run's browser-sessions.jsonl are touched. Never release project-wide.
+#
+# Takes the roots to scan as arguments; with none, defaults to this RUN's shard
+# dirs. Each root is scanned exactly one level down (<root>/<task>/), which is
+# where the workspace of a single task lives -- passing outputs/ itself finds
+# nothing rather than silently releasing every run on the box.
 release_sessions() {
   if [ "${RELEASE_SESSIONS:-1}" = "0" ]; then
     echo "  browserbase: release skipped (RELEASE_SESSIONS=0)"
     return 0
   fi
-  local dirs=()
+  local dirs=("$@")
   local name
-  for name in $(shard_names); do dirs+=("$(out_dir "$name")"); done
-  RUN="$RUN" "$VENV_BIN/python" - "${dirs[@]}" <<'PY'
+  if [ ${#dirs[@]} -eq 0 ]; then
+    for name in $(shard_names); do dirs+=("$(out_dir "$name")"); done
+  fi
+  RUN="${RUN:-}" "$VENV_BIN/python" - "${dirs[@]}" <<'PY'
 import json, os, pathlib, sys, urllib.request, urllib.error
 
 api_key = os.environ.get("BROWSERBASE_API_KEY")
@@ -332,6 +344,11 @@ case "${1:-}" in
   stop)     resolve_run_existing; cmd_stop ;;
   status)   resolve_run_existing; cmd_status ;;
   logs)     resolve_run_existing; cmd_logs "${2:-}" ;;
-  sessions) resolve_run_existing; release_sessions ;;
-  *)        sed -n '2,41p' "$0"; exit 1 ;;
+  sessions)
+    shift
+    # Explicit dirs skip run resolution entirely, so this works for runs that
+    # were never started through this script.
+    if [ $# -gt 0 ]; then release_sessions "$@"; else resolve_run_existing; release_sessions; fi
+    ;;
+  *)        sed -n '2,45p' "$0"; exit 1 ;;
 esac
