@@ -20,7 +20,9 @@ from miniswewebagent.utils.browser_evidence import (
     trajectory_evidence_digest,
 )
 from miniswewebagent.utils.judge_gateway import (
+    JUDGE_ENDPOINT_ENV,
     JUDGE_MODEL_ENV,
+    POLICY_ONLY_ENV,
     POLICY_JUDGE_SENTINEL,
     is_policy_judge,
     resolve_policy_judge,
@@ -264,6 +266,12 @@ class DefaultAgent:
         env["OPENAI_COMPATIBLE_ENDPOINT"] = target.endpoint
         env["OPENAI_COMPATIBLE_MODEL"] = target.model
         env["OPENAI_COMPATIBLE_API_KEY"] = target.api_key
+        # Policy-only: every judge call must reach the vLLM server. Drop the
+        # judge-gateway endpoint so nothing can silently reroute there, and flag
+        # the run so the tools raise instead of falling back to a built-in
+        # /responses or TRAPI default.
+        env[POLICY_ONLY_ENV] = "1"
+        env.pop(JUDGE_ENDPOINT_ENV, None)
 
     def _debug_dir(self) -> Path | None:
         if self.config.output_path is None:

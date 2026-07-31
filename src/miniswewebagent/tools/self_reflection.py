@@ -86,6 +86,7 @@ from miniswewebagent.utils.chat_completions import (
     serialize_chat_user_content,
 )
 from miniswewebagent.utils.judge_gateway import (
+    ensure_policy_only_not_bypassed,
     POLICY_JUDGE_SENTINEL,
     ensure_responses_endpoint,
     policy_judge_requested,
@@ -400,6 +401,7 @@ def _gateway_config(*, api_key: str, endpoint: str, model: str) -> _GatewayConfi
         )
 
     endpoint = resolve_judge_endpoint(endpoint)
+    ensure_policy_only_not_bypassed(model=model, tool="self_reflection")
     if _use_legacy_responses_backend(endpoint=endpoint, model=model):
         resolved_endpoint = endpoint or DEFAULT_RESPONSES_ENDPOINT
         resolved_model = model or os.environ.get("OPENAI_GATEWAY_MODEL", DEFAULT_RESPONSES_MODEL)

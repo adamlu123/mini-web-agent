@@ -19,6 +19,7 @@ from miniswewebagent.utils.chat_completions import (
     serialize_chat_user_content,
 )
 from miniswewebagent.utils.judge_gateway import (
+    ensure_policy_only_not_bypassed,
     ensure_responses_endpoint,
     policy_judge_requested,
     resolve_judge_endpoint,
@@ -105,6 +106,7 @@ def _gateway_config(args: argparse.Namespace) -> tuple[str, str, str]:
         return target.api_key, target.endpoint, target.model
 
     endpoint = resolve_judge_endpoint(args.endpoint) or DEFAULT_ENDPOINT
+    ensure_policy_only_not_bypassed(model=args.model, tool="image_qa")
     model = args.model or os.environ.get("OPENAI_GATEWAY_MODEL", DEFAULT_MODEL)
     ensure_responses_endpoint(endpoint, model=model, tool="image_qa")
 

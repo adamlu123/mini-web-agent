@@ -29,6 +29,11 @@ JUDGE_MODEL_ENV = "OPENAI_GATEWAY_MODEL"
 
 # Sentinel value for "judge with the policy server under evaluation".
 POLICY_JUDGE_SENTINEL = "policy"
+# Set by the harness when the run is policy-only. Any attempt to fall back to a
+# /responses or TRAPI gateway is then a hard error rather than a silent reroute,
+# so a misconfigured run fails on the first judge call instead of quietly
+# scoring against a different model than the one under evaluation.
+POLICY_ONLY_ENV = "MWA_JUDGE_POLICY_ONLY"
 POLICY_ENDPOINT_ENVS = ("OPENAI_COMPATIBLE_ENDPOINT", "WEB_AGENT_POLICY_URL")
 POLICY_MODEL_ENVS = ("OPENAI_COMPATIBLE_MODEL", "WEB_AGENT_POLICY_MODEL")
 POLICY_API_KEY_ENVS = ("OPENAI_COMPATIBLE_API_KEY",)
@@ -81,6 +86,24 @@ def policy_judge_requested(model: str = "") -> bool:
     if model:
         return is_policy_judge(model)
     return is_policy_judge(os.environ.get(JUDGE_MODEL_ENV, ""))
+
+
+def ensure_policy_only_not_bypassed(*, model: str, tool: str) -> None:
+    """Fail loudly when a policy-only run is about to use a non-policy backend.
+
+    ``_gateway_config`` in both judge tools otherwise falls back to a
+    ``/responses`` or TRAPI gateway using built-in defaults, which silently sends
+    inference somewhere other than the vLLM server under evaluation.
+    """
+    if os.environ.get(POLICY_ONLY_ENV, "").strip().lower() not in {"1", "true", "yes"}:
+        return
+    raise RuntimeError(
+        f"{tool}: this run is policy-only ({POLICY_ONLY_ENV}=1, from agent.judge_model="
+        f"{POLICY_JUDGE_SENTINEL!r}), but the judge resolved to a non-policy backend "
+        f"(model={model or '<default>'!r}). Every call must go to the vLLM server. "
+        f"Drop the explicit --model/--endpoint override, or unset {POLICY_ONLY_ENV} "
+        "if routing this call elsewhere is intentional."
+    )
 
 
 def normalize_chat_completions_url(endpoint: str) -> str:

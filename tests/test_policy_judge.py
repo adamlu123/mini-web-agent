@@ -8,7 +8,10 @@ import pytest
 
 from miniswewebagent.agents.default import DefaultAgent
 from miniswewebagent.tools import image_qa, self_reflection
-from miniswewebagent.utils.judge_gateway import resolve_policy_judge
+from miniswewebagent.utils.judge_gateway import (
+    ensure_policy_only_not_bypassed,
+    resolve_policy_judge,
+)
 
 POLICY_ENVS = (
     "OPENAI_GATEWAY_MODEL",
@@ -292,8 +295,21 @@ def test_agent_policy_judge_mirrors_model_endpoint_into_workspace_env() -> None:
     assert env["OPENAI_COMPATIBLE_ENDPOINT"] == "http://127.0.0.1:8003/v1/chat/completions"
     assert env["OPENAI_COMPATIBLE_MODEL"] == "sft_ckpt"
     assert env["OPENAI_COMPATIBLE_API_KEY"] == "dummy"
-    # The real judge gateway stays configured for an explicit --model override.
-    assert env["OPENAI_GATEWAY_ENDPOINT"] == "http://gateway.phyagi.net/api/responses"
+    # Policy-only: the judge gateway is removed and the guard flag is set, so no
+    # judge call can silently reroute off the vLLM server under evaluation.
+    assert "OPENAI_GATEWAY_ENDPOINT" not in env
+    assert env["MWA_JUDGE_POLICY_ONLY"] == "1"
+
+
+def test_policy_only_run_rejects_a_non_policy_judge_backend(monkeypatch) -> None:
+    monkeypatch.setenv("MWA_JUDGE_POLICY_ONLY", "1")
+    with pytest.raises(RuntimeError, match="policy-only"):
+        ensure_policy_only_not_bypassed(model="gpt-5.4", tool="self_reflection")
+
+
+def test_policy_only_guard_is_inert_when_unset(monkeypatch) -> None:
+    monkeypatch.delenv("MWA_JUDGE_POLICY_ONLY", raising=False)
+    ensure_policy_only_not_bypassed(model="gpt-5.4", tool="self_reflection")
 
 
 def test_agent_leaves_env_untouched_for_a_regular_judge_model() -> None:
