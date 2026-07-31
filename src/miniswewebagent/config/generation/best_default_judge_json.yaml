@@ -21,6 +21,7 @@ model:
   max_output_tokens: 16000
   response_mode: json_schema
   attach_observation_screenshot: false
+  cache_ttl: 1209600
   observation_template: |
     Observation:
     Status: {{ 'ok' if observation.success else 'error' }}

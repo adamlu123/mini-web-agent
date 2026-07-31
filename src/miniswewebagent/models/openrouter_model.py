@@ -117,9 +117,11 @@ class OpenRouterModelConfig(BaseModel):
     openrouter_app_title: str = "mini-web-agent"
     max_output_tokens: int = 4000
     request_timeout_seconds: int = 120
-    # Benchmarks want reproducible decoding, so default to greedy. Set to null
-    # to omit the field and fall back to whatever the server defaults to.
-    temperature: float | None = 0.0
+    # Default to the neutral sampling temperature so a checkpoint's own
+    # generation settings are not overridden; set explicitly (e.g. 0.0) for
+    # greedy, reproducible decoding, or to null to omit the field entirely and
+    # fall back to whatever the server defaults to.
+    temperature: float | None = 1.0
     top_p: float | None = None
     seed: int | None = None
     error_log_path: Path | None = None
