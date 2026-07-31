@@ -17,8 +17,7 @@
 # To test a prompt variant, point CFG at the yaml -- either an absolute path or a
 # path relative to src/miniswewebagent/config/:
 #
-#   CFG=/home/luyadong/sandbox/mini-web-agent/src/miniswewebagent/config/eval/om2w_spb_vllm_lastobs.yaml \
-#     bash scripts/om2w_vllm_sharded.sh start
+#   CFG=/home/luyadong/sandbox/mini-web-agent/src/miniswewebagent/config/eval/om2w_spb_vllm_lastobs_minimal.yaml bash scripts/om2w_vllm_sharded.sh start
 #
 # Each start mints a fresh run name, "<CFG basename>_<YYYYmmdd_HHMMSS>", so every
 # launch gets its own output dirs (outputs/<RUN>_<shard>) and back-to-back runs of
@@ -124,6 +123,18 @@ group_alive() {
 
 cmd_start() {
   local name pid candidate candidates
+  # Fail fast on a port with no server behind it. Without this, every task on
+  # that shard dies with an httpx ConnectError on its first model.query, which
+  # looks like a config bug rather than "you named a port that isn't serving".
+  local port code
+  for port in $PORTS; do
+    code=$(curl -s -m 5 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/v1/models" 2>/dev/null)
+    if [ "$code" != "200" ]; then
+      echo "no vLLM server answering on 127.0.0.1:$port (/v1/models -> ${code:-no response})." >&2
+      echo "  Serve it first, or set PORTS to the ports you are actually serving." >&2
+      exit 1
+    fi
+  done
   # A fresh timestamp can never collide with the previous run's dirs, so check
   # that run explicitly -- otherwise a second start would quietly double up on
   # the same GPUs and Browserbase concurrency.
@@ -189,7 +200,6 @@ PY
       TASKS_FILE="$REPO/outputs/shards/${RUN}_${name}.json" \
       WORKERS="$WORKERS" \
       OUT="$out" \
-      EXTRA_CFG="environment.env.OPENAI_COMPATIBLE_ENDPOINT=http://127.0.0.1:$port/v1/chat/completions environment.env.WEB_AGENT_POLICY_URL=http://127.0.0.1:$port/v1/chat/completions" \
       bash "$REPO/scripts/run_om2w_vllm_local.sh" >"$out/launch.log" 2>&1 &
     echo $! >"$out/run.pid"
     echo "  $name: pgid=$! port=$port out=$out"

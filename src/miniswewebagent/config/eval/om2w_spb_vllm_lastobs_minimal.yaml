@@ -106,12 +106,14 @@ agent:
   trajectory_plan_file: plan.md
   trajectory_judge_config: judge_config.json
   # judge_gateway_endpoint / judge_score_threshold below are read only by the
-  # agent's om2w completion gate (judge_mode: om2w). With judge_mode: trajectory
-  # the gate shells out to `python -m self_reflection`, which uses the
-  # OPENAI_GATEWAY_* environment above -- unless judge_model is the sentinel
-  # `policy`, which routes reflection at the served checkpoint itself over
-  # chat-completions. The post-run benchmark scorer uses run.judge_model, which
-  # is a separate setting.
+  # agent's om2w completion gate (judge_mode: om2w). judge_model is also honoured
+  # with judge_mode: trajectory through the sentinel value `policy`: the agent
+  # then mirrors model.endpoint / model.model_name into the workspace as
+  # OPENAI_COMPATIBLE_* and sets OPENAI_GATEWAY_MODEL=policy, so the
+  # `python -m self_reflection` subprocess judges with the served checkpoint over
+  # chat-completions instead of the phyagi /responses gateway. Any other value
+  # leaves trajectory reflection on the OPENAI_GATEWAY_* environment above.
+  # The post-run benchmark scorer uses run.judge_model, a separate setting.
   judge_model: policy
   judge_gateway_endpoint: ""
   judge_score_threshold: 3
@@ -149,20 +151,22 @@ agent:
     ## Persistent browser CLI
 
     Create the persistent session once before the first browser step:
-
+      <bash>
       python -m browser_session create --workspace-dir "/workspace" --start-url "{{ start_url }}"
-
+      </bash>
+    
     Run an incremental step by sending an async Python function body on stdin. `page`, `context`,
     `browser`, `playwright`, `task`, and `workspace` already exist. `--action` is REQUIRED and must be
     a concise natural-language description of what the code does:
-
+      <bash>
       python -m browser_session step --workspace-dir "/workspace" --action "Open filters and select nonstop flights" --code-file - <<'PY'
       await page.get_by_role("button", name="Filters").click()
       await page.get_by_role("checkbox", name="Nonstop").check()
       print(await page.locator("body").aria_snapshot())
       PY
+      </bash>
 
-    End-of-step screenshots default to NONE. Save one whenever you think it provides useful visual evidence:
+    End-of-step screenshots default to NONE. Save one whenever you think it will provide useful visual evidence:
 
       python -m browser_session step --workspace-dir "/workspace" --action "Apply the exact price range" --screenshot always --code-file - <<'PY'
       await page.get_by_label("Minimum price").fill("100")
@@ -173,68 +177,6 @@ agent:
     The browser persists across commands; Python variables do not. The CLI reconnects and restores
     the active tab each time. Do not call browser.close() or context.close() inside step code.
 
-    Prefer recovery in this order:
-      1. inspect the structured error and retry the interaction;
-      2. reacquire the current page from context.pages;
-      3. open a NEW TAB in the same persistent context (`page = await context.new_page()`) and navigate;
-      4. only when `error_kind` is `session`, create a new persistent browser epoch with
-         `python -m browser_session create --workspace-dir "/workspace" --replace --start-url "{{ start_url }}"`.
-
-    Use `python -m browser_session status --workspace-dir "/workspace"` when session health
-    is unclear. Use `python -m browser_session close --workspace-dir "/workspace"` when the
-    task is complete. Replacing or closing a session never deletes prior step or screenshot evidence.
-
-    ## Planning and evidence
-
-    - Write plan.md once with every explicit task constraint as a numbered checklist.
-    - The CLI appends browser-steps.jsonl. Every record contains the natural-language action, code
-      path, URL, session epoch, result, and optional screenshot path.
-    - Screenshots must be raw 1280x1800 viewport captures of the real website. Never use full-page,
-      generated, annotated, composited, or model-authored images.
-    - You are encouraged to save screenshots for critical selected states, confirmations, exact values, and final results.
-    - Use printed ARIA, URL, title, visible labels, and current-run evidence rather than guessing.
-
-    ## Rules
-    - **HARD RULE — screenshots must be raw page captures.** Every PNG you save MUST come directly from `await page.screenshot(path=...)` against a real, unmodified webpage viewport. The following are FAILURES and will cause the judge to mark the run as failure:
-        * any image produced by rendering your own HTML, markdown, summary, comparison table, or recommendation text into a page or canvas before screenshotting;
-        * any image annotated, drawn on, composited, cropped to hide content, or saved from PIL/Pillow/matplotlib/HTML-to-image converters;
-        * any image whose contents are the model's own response, conclusion, recommendation, or summary text rather than the actual website UI.
-    - Use stable selectors and current-run evidence.
-    - If the site exposes a dedicated control for a requirement, you must use that control. Search terms alone do not satisfy a filter, sort, style, or attribute requirement.
-    - Ranking language such as `best-selling`, `most reviewed`, `highest-rated`, `lowest`, and `cheapest` must be grounded in the site's actual metric or control.
-    - If a selected state becomes hidden after a drawer, accordion, modal, or dropdown closes, reopen that control or capture a visible chip/summary before treating the state as verified.
-    - Treat numeric, date, quantity, and unit constraints as exact. Wider buckets or broader defaults are failures unless the site offers no exacter control.
-    - If the task asks for a final datum (code, price, quote, review, winner, benefit list), state that datum explicitly using `Final Response:` in the browser action, in the meantime the browser control code can be left blank. Do not encode it into an image.
-    - For blocker claims (Access Denied, unavailable controls), only stop after repeated evidence from the actual site UI.
-
-
-    ## Trajectory self-reflection
-
-    Author judge_config.json once with these four prompt fields:
-      - image_judge_system_prompt
-      - image_judge_user_prompt
-      - final_verdict_system_prompt
-      - final_verdict_user_prompt
-
-    The image judge must return only `Reasoning: ...` and `Score: <1-5>`. Include the task and all
-    plan.md critical points in its user prompt. The final judge must evaluate every critical point,
-    account for chronological step/session-epoch context, and end with exactly `Status: success` or
-    `Status: failure`. Its user prompt must contain `{action_history_log}` and `{image_reasonings}`.
-    Earlier incorrect states may be superseded by later evidence; evidence from an old session epoch
-    does not automatically prove state in a newer epoch.
-
-    Reflect over ALL screenshots saved by every prior incremental browser step:
-
-      python -m self_reflection --scope trajectory --trajectory-manifest browser-steps.jsonl --config "/workspace/judge_config.json" --workspace-dir "/workspace" --output reflection/judge_result.json
-
-    Per-image judgments are cached. A successful result is invalidated by any later browser step,
-    changed screenshot, plan.md change, or judge_config.json change.
-
-    ## Completion Gate
-    - Set <done>true</done> only after trajectory reflection exits 0 with predicted_label=1 for the current evidence.
-    - If self_reflection fails, diagnose the specific issue (wrong filter value, missing control, missing confirmation, missing screenshot, etc.), use the verdict to continue incrementally, save better evidence, and run
-      reflection again. Never return <done>false</done> with an empty <bash>. Do not rerun reflection until a new browser step has been recorded.
-    - When the verdict passes, set <bash> empty and put the task answer as `Final Response:` in the browser action
 
   instance_template: |
     Task: {{ task }}

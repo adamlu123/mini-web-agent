@@ -31,9 +31,9 @@ extra=()
 [ -n "${TASK_LEVEL:-}" ] && extra+=(--task-level "$TASK_LEVEL")
 
 # Extra dotted config overrides, space separated, e.g.
-#   EXTRA_CFG="environment.env.OPENAI_COMPATIBLE_ENDPOINT=http://127.0.0.1:8002/v1/chat/completions"
-# Needed when serving on a non-default port, since the eval configs hardcode
-# :8000 in environment.env.
+#   EXTRA_CFG="agent.step_limit=10 run.judge_runs=3"
+# The policy port does NOT need one: ENDPOINT sets model.endpoint, which is the
+# single source of truth the agent mirrors into the workspace.
 cfg_overrides=()
 for override in ${EXTRA_CFG:-}; do
   cfg_overrides+=(-c "$override")
