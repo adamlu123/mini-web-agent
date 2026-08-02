@@ -92,14 +92,20 @@ run:
   judge_model: o4-mini
   judge_endpoint: http://gateway.phyagi.net/api/responses
   judge_runs: 1
+  # The persistent browser CLI writes browser-steps.jsonl + screenshots/*.png, not
+  # the final_script_log.txt + screenshots/final_execution_*.png layout that
+  # om2w_judge/run.py's WebJudge_Online_Mind2Web_Sandbox_eval mode globs for. With
+  # the default judge every screenshot is silently dropped and tasks are scored on
+  # action text alone, so point the scorer at the persistent-CLI evaluator.
+  judge_script: scripts/eval_persistent_cli_steps_with_original_om2w.py
   logs_root: logs
 
 agent:
   agent_class: default
   debug_log: true
   output_path:
-  step_limit: 50
-  require_self_reflection_success: true
+  step_limit: 30
+  require_self_reflection_success: false
   judge_mode: trajectory
   trajectory_manifest: browser-steps.jsonl
   trajectory_judge_result: reflection/judge_result.json
@@ -143,40 +149,79 @@ agent:
 
     - Complete the task incrementally. Each browser command should perform a small group of related
       Playwright actions against the current live page state.
-    - Do NOT create final_script.py and do NOT attempt an end-to-end replay.
+    - Prefer page.get_by_role or page.get_by_label. If you want to click a generic button (e.g. that belongs to an element), use the full .get_by_role() path to the element (e.g. .get_by_role("group", name="Test Item").get_by_role("button", name="Go") instead of .get_by_role("button", name="Go"), as this is ambiguous)
     - Put exactly one shell command in <bash>. A browser CLI invocation with one heredoc is one
       command. Never declare done in the same response as a non-empty command.
     - Do not install packages.
+    - The browser and the page object persists across commands; The CLI reconnects and restores the active tab each time. Do not call browser.close() or context.close() inside step code.
+    - <important>After you set done=true, you cannot continue working on this task.</important>
+
 
     ## Persistent browser CLI
 
     Create the persistent session once before the first browser step:
-      <bash>
-      python -m browser_session create --workspace-dir "/workspace" --start-url "{{ start_url }}"
-      </bash>
-    
+
+    <think>
+    I need to create the browser session first. 
+    </think>
+    <bash>
+    python -m browser_session create --workspace-dir "/workspace" --start-url "{{ start_url }}"
+    </bash>
+    <done>false</done>
+    <final_response></final_response>
+
     Run an incremental step by sending an async Python function body on stdin. `page`, `context`,
-    `browser`, `playwright`, `task`, and `workspace` already exist. `--action` is REQUIRED and must be
+    `browser`, `playwright`, `task`, and `workspace` already exist. Do not import anything!!! `--action` is REQUIRED and must be
     a concise natural-language description of what the code does:
-      <bash>
-      python -m browser_session step --workspace-dir "/workspace" --action "Open filters and select nonstop flights" --code-file - <<'PY'
-      await page.get_by_role("button", name="Filters").click()
-      await page.get_by_role("checkbox", name="Nonstop").check()
-      print(await page.locator("body").aria_snapshot())
-      PY
-      </bash>
 
-    End-of-step screenshots default to NONE. Save one whenever you think it will provide useful visual evidence:
+    <think>
+    By default 'page' object exists after the browser session creation, i do need to go to the url www.xxx.com/air-aeroapi/ and get the aria snapshot of the page.
+    </think>
+    <bash>
+    python -m browser_session step --workspace-dir "/workspace" --action "go to the url www.xxx.com/air-aeroapi/ and read the ARIA snapshot" --code-file - <<'PY'
+    await page.goto("https://www.xxx.com/air-aeroapi/")
+    print(await page.locator("body").aria_snapshot())
+    PY
+    </bash>
+    <done>false</done>
+    <final_response></final_response>
 
-      python -m browser_session step --workspace-dir "/workspace" --action "Apply the exact price range" --screenshot always --code-file - <<'PY'
-      await page.get_by_label("Minimum price").fill("100")
-      await page.get_by_label("Maximum price").fill("300")
-      await page.get_by_role("button", name="Apply").click()
-      PY
+    <think>
+    Next, based on the aria snapshot, I need to open filters and select nonstop flights
+    </think>
+    <bash>
+    python -m browser_session step --workspace-dir "/workspace" --action "Open filters and select nonstop flights" --code-file - <<'PY'
+    await page.get_by_role("button", name="Filters").click()
+    await page.get_by_role("checkbox", name="Nonstop").check()
+    print(await page.locator("body").aria_snapshot())
+    PY
+    </bash>
+    <done>false</done>
+    <final_response></final_response>
 
-    The browser persists across commands; Python variables do not. The CLI reconnects and restores
-    the active tab each time. Do not call browser.close() or context.close() inside step code.
+    The heredoc body and its closing `PY` marker must start at column 0 with no leading spaces,
+    otherwise the heredoc never terminates and the step code fails to compile.
 
+    <think>
+    Next, based on the aria snapshot, I need to fill in the price range. 
+    </think>
+    <bash>
+    python -m browser_session step --workspace-dir "/workspace" --action "Apply the exact price range" --code-file - <<'PY'
+    await page.get_by_label("Minimum price").fill("100")
+    await page.get_by_label("Maximum price").fill("300")
+    await page.get_by_role("button", name="Apply").click()
+    PY
+    </bash>
+    <done>false</done>
+    <final_response></final_response>
+
+    If the tasks is done, declare done and leave the bash command empty. 
+    <think>
+    The task xxx is completed. 
+    </think>
+    <bash>\n</bash>
+    <done>true</done>
+    <final_response>xxx</final_response>
 
   instance_template: |
     Task: {{ task }}

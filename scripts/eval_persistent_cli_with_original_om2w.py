@@ -39,6 +39,13 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+# eval_with_original_om2w.py lives in scripts/archive/ but is still imported
+# below, so keep that directory importable. Appended, not prepended, so nothing
+# in the archive can shadow a repo-root package.
+ARCHIVE_DIR = Path(__file__).resolve().parent / "archive"
+if str(ARCHIVE_DIR) not in sys.path:
+    sys.path.append(str(ARCHIVE_DIR))
+
 # Import the local engine first so eval_with_original_om2w's legacy absolute
 # repository path cannot select the engine from a different worktree.
 from om2w_judge.utils import OpenaiEngine, extract_predication  # noqa: E402

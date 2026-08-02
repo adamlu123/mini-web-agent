@@ -16,7 +16,7 @@ from rich.console import Console
 from miniswewebagent.config import get_config_from_spec, snapshot_config_specs
 from miniswewebagent.run.mini import DEFAULT_CONFIG, _timestamped_output_dir
 from miniswewebagent.run.mini import run_one as run_one_default
-from miniswewebagent.utils.om2w_eval import run_online_mind2web_judge
+from miniswewebagent.utils.om2w_eval import judge_result_file_path, run_online_mind2web_judge
 from miniswewebagent.utils.om2w_tasks import load_om2w_tasks
 from miniswewebagent.utils.serialize import recursive_merge
 
@@ -341,8 +341,10 @@ def main(
                 endpoint_target_uri=resolved_judge_endpoint,
                 log_path=run_log_path,
             )
-            result_file = eval_output_dir / (
-                f"WebJudge_Online_Mind2Web_Sandbox_eval_{resolved_judge_model}_score_threshold_3_auto_eval_results.json"
+            result_file = judge_result_file_path(
+                eval_output_dir,
+                resolved_judge_model,
+                judge_script=resolved_judge_script,
             )
             eval_rows = _read_eval_rows(result_file)
             return {

@@ -33,20 +33,27 @@ from pathlib import Path
 
 from PIL import Image
 
-# Make the freshly-cloned upstream package importable as-is.
+# Make the freshly-cloned upstream package importable as-is. The clone is not
+# present on every host, so fall back to the vendored copy under om2w_judge/,
+# which exposes the same identify_key_points / judge_image / encode_image /
+# MAX_IMAGE surface used below.
 UPSTREAM_SRC = Path("/home/luyadong/sandbox/Online-Mind2Web/src")
-if str(UPSTREAM_SRC) not in sys.path:
+if UPSTREAM_SRC.is_dir() and str(UPSTREAM_SRC) not in sys.path:
     sys.path.insert(0, str(UPSTREAM_SRC))
 
-from methods import webjudge_online_mind2web as upstream_webjudge  # noqa: E402
+_REPO = Path(__file__).resolve().parents[2]
+if str(_REPO) not in sys.path:
+    sys.path.insert(0, str(_REPO))
+
+if UPSTREAM_SRC.is_dir():
+    from methods import webjudge_online_mind2web as upstream_webjudge  # noqa: E402
+else:
+    from om2w_judge.methods import webjudge_online_mind2web as upstream_webjudge  # noqa: E402
 
 # Use the local engine so reasoning models like o4-mini work (it routes
 # max_tokens -> max_completion_tokens and drops temperature when required).
 # Upstream utils.extract_predication is the same logic but we inline its
 # behavior via the local one to keep a single import source.
-_REPO = Path("/home/luyadong/sandbox/mini-web-agent")
-if str(_REPO) not in sys.path:
-    sys.path.insert(0, str(_REPO))
 from om2w_judge.utils import OpenaiEngine, extract_predication  # noqa: E402
 
 

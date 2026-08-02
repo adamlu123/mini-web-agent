@@ -175,8 +175,33 @@ def _build_missing_history_failure_response(row: dict[str, Any]) -> str:
     )
 
 
+SANDBOX_JUDGE_MODE = "WebJudge_Online_Mind2Web_Sandbox_eval"
+PERSISTENT_CLI_JUDGE_MODE = "WebJudge_Online_Mind2Web_eval"
+
+
+def is_persistent_cli_judge_script(judge_script: Path) -> bool:
+    """True for scripts/eval_persistent_cli[_steps]_with_original_om2w.py.
+
+    Those evaluators read browser-steps.jsonl actions and root screenshots/*.png,
+    which is the layout the persistent browser CLI produces. They expose a
+    different CLI than om2w_judge/run.py: no --mode, and --num_worker rather
+    than --num_proc.
+    """
+    name = judge_script.name
+    return name.startswith("eval_persistent_cli") and name.endswith("_with_original_om2w.py")
+
+
+def judge_result_file_path(output_dir: Path, judge_model: str, *, judge_script: Path | None = None) -> Path:
+    mode = (
+        PERSISTENT_CLI_JUDGE_MODE
+        if judge_script is not None and is_persistent_cli_judge_script(judge_script)
+        else SANDBOX_JUDGE_MODE
+    )
+    return output_dir / f"{mode}_{judge_model}_score_threshold_3_auto_eval_results.json"
+
+
 def _judge_result_file_path(output_dir: Path, judge_model: str) -> Path:
-    return output_dir / f"WebJudge_Online_Mind2Web_Sandbox_eval_{judge_model}_score_threshold_3_auto_eval_results.json"
+    return judge_result_file_path(output_dir, judge_model)
 
 
 def _ordered_step_stems(output_dir: Path) -> list[str]:
@@ -458,24 +483,47 @@ def run_online_mind2web_judge(
     log_path: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     output_dir.mkdir(parents=True, exist_ok=True)
-    cmd = [
-        str(judge_python),
-        str(judge_script),
-        "--mode",
-        "WebJudge_Online_Mind2Web_Sandbox_eval",
-        "--model",
-        judge_model,
-        "--trajectories_dir",
-        str(trajectories_dir),
-        "--api_key",
-        api_key,
-        "--output_path",
-        str(output_dir),
-        "--num_proc",
-        str(num_proc),
-        "--score_threshold",
-        "3",
-    ]
+    if is_persistent_cli_judge_script(judge_script):
+        cmd = [
+            str(judge_python),
+            str(judge_script),
+            "--model",
+            judge_model,
+            "--trajectories_dir",
+            str(trajectories_dir),
+            "--api_key",
+            api_key,
+            "--output_path",
+            str(output_dir),
+            "--num_worker",
+            str(num_proc),
+            "--score_threshold",
+            "3",
+            # The evaluator hard-fails when the discovered task count differs
+            # from this; 0 disables the check so --limit / --task-level subsets
+            # can be scored.
+            "--expected_tasks",
+            "0",
+        ]
+    else:
+        cmd = [
+            str(judge_python),
+            str(judge_script),
+            "--mode",
+            SANDBOX_JUDGE_MODE,
+            "--model",
+            judge_model,
+            "--trajectories_dir",
+            str(trajectories_dir),
+            "--api_key",
+            api_key,
+            "--output_path",
+            str(output_dir),
+            "--num_proc",
+            str(num_proc),
+            "--score_threshold",
+            "3",
+        ]
     if endpoint_target_uri:
         cmd.extend(["--endpoint_target_uri", endpoint_target_uri])
     completed = subprocess.run(cmd, text=True, capture_output=True)
@@ -486,6 +534,6 @@ def run_online_mind2web_judge(
             encoding="utf-8",
         )
     normalize_online_mind2web_judge_results(
-        result_file=_judge_result_file_path(output_dir, judge_model),
+        result_file=judge_result_file_path(output_dir, judge_model, judge_script=judge_script),
     )
     return completed
