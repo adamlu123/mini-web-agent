@@ -1,0 +1,216 @@
+# Persistent incremental browser variant driven by the SPB "minimal" prompt,
+# served by gpt-5.5 through the phyagi gateway.
+#
+# Structure follows best_default_judge_json_persistent_cli.yaml (phyagi gateway
+# policy, Browserbase persistent CLI, gateway-judged benchmark scoring), but the
+# system/instance templates are taken verbatim from
+# eval/om2w_spb_vllm_lastobs_minimal.yaml, so:
+#   - the wire format is the unified SFT state format
+#     (<think>/<bash>/<done>/<final_response>) -> response_mode: sft_state,
+#     NOT json_schema;
+#   - the prompt hardcodes the /workspace path -> environment.workspace_alias
+#     must stay /workspace;
+#   - the prompt never asks the agent to write plan.md / judge_config.json or to
+#     run `python -m self_reflection`, so trajectory self-reflection is not a
+#     completion gate here (require_self_reflection_success: false) and there is
+#     no compaction step (summary_every_n_steps: 0).
+# History is NOT trimmed (no history_context_mode): that setting belongs to the
+# vLLM checkpoint eval, not to this gateway policy.
+
+model:
+  model_class: phyagi
+  model_name: gpt-5.5
+  openai_gateway_endpoint: http://gateway.phyagi.net/api/responses
+  openai_gateway_tier: base
+  reasoning_effort: xhigh
+  request_timeout_seconds: 120
+  max_output_tokens: 16000
+  response_mode: sft_state
+  # gpt-5.5 happily continues the few-shot pattern and emits an entire imagined
+  # rollout in one turn; without this the last <done>true</done> of that rollout
+  # would end the episode on step 1. Keep only the first state block.
+  sft_state_first_block: true
+  attach_observation_screenshot: false
+  cache_ttl: 1209600
+  observation_template: |
+    Observation:
+    Status: {{ 'ok' if observation.success else 'error' }}
+    Workspace: {{ observation.workspace_dir }}
+    Working directory: {{ observation.cwd }}
+    Return code: {{ observation.returncode }}
+    {% if observation.exception %}Exception:
+    {{ observation.exception }}
+    {% endif %}{% if observation.command_output %}Command output:
+    {{ observation.command_output }}
+    {% endif %}{% if observation.screenshot_path %}New screenshot: {{ observation.screenshot_path }}
+    {% endif %}
+  format_error_template: |
+    Format error:
+
+    {{ error }}
+
+    Respond in exactly this unified SFT state format and nothing else:
+    <think>
+    reasoning
+    </think>
+    <bash>
+    exactly one shell command, or empty when done is true
+    </bash>
+    <done>false</done>
+    <final_response></final_response>
+
+environment:
+  environment_class: local_workspace
+  start_url:
+  output_dir: outputs/persistent_cli_minimal_gpt55
+  command_timeout_seconds: 240
+  shell: /bin/bash
+  credentials_file: /home/luyadong/cred.sh
+  task_metadata_filename: task.json
+  output_truncation_chars: 24000
+  recent_files_limit: 40
+  # The prompt below refers to the workspace as /workspace; the alias makes that
+  # path resolve to the real per-task workspace directory.
+  workspace_alias: /workspace
+  env:
+    PAGER: cat
+    MANPAGER: cat
+    LESS: -R
+    PIP_PROGRESS_BAR: 'off'
+    TQDM_DISABLE: '1'
+    MWA_BROWSER_BACKEND: browserbase
+    MWA_BROWSER_WIDTH: '1280'
+    MWA_BROWSER_HEIGHT: '1800'
+    OPENAI_GATEWAY_ENDPOINT: http://gateway.phyagi.net/api/responses
+    OPENAI_GATEWAY_MODEL: gpt-5.5
+    PYTHONPATH: /home/luyadong/sandbox/mini-web-agent/agent_runtime
+
+run:
+  tasks_file: /home/luyadong/sandbox/mini-web-agent/src/miniswewebagent/run/benchmarks/om2w_260220.json
+  logs_root: /home/luyadong/sandbox/mini-web-agent/logs
+  judge_enabled: true
+  judge_model: o4-mini
+  judge_endpoint: http://gateway.phyagi.net/api/responses
+  judge_python: /home/luyadong/.venv/bin/python
+  # Persistent-CLI runs write browser-steps.jsonl + screenshots/*.png, not the
+  # final_script_log.txt layout om2w_judge/run.py globs for, so score them with
+  # the steps-based evaluator or every screenshot is silently dropped.
+  judge_script: /home/luyadong/sandbox/mini-web-agent/scripts/eval_persistent_cli_steps_with_original_om2w.py
+
+agent:
+  agent_class: default
+  debug_log: true
+  output_path:
+  step_limit: 100
+  require_self_reflection_success: false
+  judge_mode: trajectory
+  trajectory_manifest: browser-steps.jsonl
+  trajectory_judge_result: reflection/judge_result.json
+  trajectory_plan_file: plan.md
+  trajectory_judge_config: judge_config.json
+  judge_model: o4-mini
+  judge_gateway_endpoint: http://gateway.phyagi.net/api/responses
+  judge_score_threshold: 3
+  summary_every_n_steps: 0  # no compaction
+
+  system_template: |
+    You are a benchmark-oriented web agent operating through a local terminal and a persistent,
+    backend-agnostic browser-session CLI.
+
+    Return exactly one response per turn in this format:
+    <think>
+    <detailed observation, reasoning, and next step>
+    </think>
+    <bash>
+    <exactly one shell command, or empty when declaring done>
+    </bash>
+    <done>false</done>
+    <final_response></final_response>
+
+    ## Execution model
+
+    - Complete the task incrementally. Each browser command should perform a small group of related
+      Playwright actions against the current live page state.
+    - Prefer page.get_by_role or page.get_by_label. If you want to click a generic button (e.g. that belongs to an element), use the full .get_by_role() path to the element (e.g. .get_by_role("group", name="Test Item").get_by_role("button", name="Go") instead of .get_by_role("button", name="Go"), as this is ambiguous)
+    - Put exactly one shell command in <bash>. A browser CLI invocation with one heredoc is one
+      command. Never declare done in the same response as a non-empty command.
+    - Do not install packages.
+    - The browser and the page object persists across commands; The CLI reconnects and restores the active tab each time. Do not call browser.close() or context.close() inside step code.
+    - <important>After you set done=true, you cannot continue working on this task.</important>
+
+
+    ## Persistent browser CLI
+
+    Create the persistent session once before the first browser step:
+
+    <think>
+    I need to create the browser session first. 
+    </think>
+    <bash>
+    python -m browser_session create --workspace-dir "/workspace" --start-url "{{ start_url }}"
+    </bash>
+    <done>false</done>
+    <final_response></final_response>
+
+    Run an incremental step by sending an async Python function body on stdin. `page`, `context`,
+    `browser`, `playwright`, `task`, and `workspace` already exist. Do not import anything!!! `--action` is REQUIRED and must be
+    a concise natural-language description of what the code does:
+
+    <think>
+    By default 'page' object exists after the browser session creation, i do need to go to the url www.xxx.com/air-aeroapi/ and get the aria snapshot of the page.
+    </think>
+    <bash>
+    python -m browser_session step --workspace-dir "/workspace" --action "go to the url www.xxx.com/air-aeroapi/ and read the ARIA snapshot" --code-file - <<'PY'
+    await page.goto("https://www.xxx.com/air-aeroapi/")
+    print(await page.locator("body").aria_snapshot())
+    PY
+    </bash>
+    <done>false</done>
+    <final_response></final_response>
+
+    <think>
+    Next, based on the aria snapshot, I need to open filters and select nonstop flights
+    </think>
+    <bash>
+    python -m browser_session step --workspace-dir "/workspace" --action "Open filters and select nonstop flights" --code-file - <<'PY'
+    await page.get_by_role("button", name="Filters").click()
+    await page.get_by_role("checkbox", name="Nonstop").check()
+    print(await page.locator("body").aria_snapshot())
+    PY
+    </bash>
+    <done>false</done>
+    <final_response></final_response>
+
+    The heredoc body and its closing `PY` marker must start at column 0 with no leading spaces,
+    otherwise the heredoc never terminates and the step code fails to compile.
+
+    <think>
+    Next, based on the aria snapshot, I need to fill in the price range. 
+    </think>
+    <bash>
+    python -m browser_session step --workspace-dir "/workspace" --action "Apply the exact price range" --code-file - <<'PY'
+    await page.get_by_label("Minimum price").fill("100")
+    await page.get_by_label("Maximum price").fill("300")
+    await page.get_by_role("button", name="Apply").click()
+    PY
+    </bash>
+    <done>false</done>
+    <final_response></final_response>
+
+    If the tasks is done, declare done and leave the bash command empty. 
+    <think>
+    The task xxx is completed. 
+    </think>
+    <bash>\n</bash>
+    <done>true</done>
+    <final_response>xxx</final_response>
+
+  instance_template: |
+    Task: {{ task }}
+    {% if task_id %}Task ID: {{ task_id }}
+    {% endif %}{% if start_url %}Start URL: {{ start_url }}
+    {% endif %}Workspace root: /workspace
+    Task metadata: /workspace/task.json
+
+    Complete the task through incremental persistent-browser CLI steps. The browser state persists
+    across steps, while browser-steps.jsonl and saved screenshots form the cumulative evidence.
