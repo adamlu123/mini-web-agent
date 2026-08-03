@@ -147,7 +147,7 @@ def auto_eval(args, task_subset, final_predicted_labels, lock, model):
     if os.path.exists(output_json_path):
         with open(output_json_path, "r", encoding="utf-8") as handle:
             already_data = handle.read()
-        already_tasks = already_data.splitlines()
+        already_tasks = already_data.split("\n")
         for item in already_tasks:
             item = json.loads(item)
             already_ids.append(item["task_id"])

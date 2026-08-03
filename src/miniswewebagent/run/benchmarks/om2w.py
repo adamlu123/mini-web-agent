@@ -16,7 +16,11 @@ from rich.console import Console
 from miniswewebagent.config import get_config_from_spec, snapshot_config_specs
 from miniswewebagent.run.mini import DEFAULT_CONFIG, _timestamped_output_dir
 from miniswewebagent.run.mini import run_one as run_one_default
-from miniswewebagent.utils.om2w_eval import judge_result_file_path, run_online_mind2web_judge
+from miniswewebagent.utils.om2w_eval import (
+    judge_result_file_path,
+    run_online_mind2web_judge,
+    split_jsonl_lines,
+)
 from miniswewebagent.utils.om2w_tasks import load_om2w_tasks
 from miniswewebagent.utils.serialize import recursive_merge
 
@@ -66,7 +70,7 @@ def _read_eval_rows(result_file: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     if not result_file.exists():
         return rows
-    for line in result_file.read_text(encoding="utf-8").splitlines():
+    for line in split_jsonl_lines(result_file.read_text(encoding="utf-8")):
         if not line.strip():
             continue
         rows.append(json.loads(line))

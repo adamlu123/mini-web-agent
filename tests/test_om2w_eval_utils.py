@@ -8,6 +8,7 @@ from miniswewebagent.utils.om2w_eval import (
     export_online_mind2web_artifacts,
     export_online_mind2web_artifacts_all_final_execution,
     normalize_online_mind2web_judge_results,
+    split_jsonl_lines,
 )
 
 
@@ -310,6 +311,53 @@ def test_normalize_online_mind2web_judge_results_leaves_valid_failure_unchanged(
     assert replacements == 0
     payload = json.loads(result_file.read_text(encoding="utf-8").strip())
     assert payload["evaluation_details"]["response"] == original_response
+
+
+def test_normalize_online_mind2web_judge_results_survives_unicode_line_separators(tmp_path) -> None:
+    """U+2028 & friends inside a judge response must not split a JSONL row.
+
+    ``str.splitlines`` breaks on these characters, which cut a valid row in half
+    and made the whole batch crash with a JSONDecodeError.
+    """
+    result_file = tmp_path / "judge_results.json"
+    exotic_response = "Thoughts: line one\u2028line two\u2029line three\x0bline four\x0cline five\x85end"
+    rows = [
+        {
+            "task_id": "task-1",
+            "task": "Example task",
+            "action_history": ["click"],
+            "evaluation_details": {"response": exotic_response, "predicted_label": 1},
+            "predicted_label": 1,
+        },
+        {
+            "task_id": "task-2",
+            "task": "Another task",
+            "action_history": ["type"],
+            "evaluation_details": {"response": "Status: \"failure\"", "predicted_label": 0},
+            "predicted_label": 0,
+        },
+    ]
+    result_file.write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+
+    assert normalize_online_mind2web_judge_results(result_file=result_file) == 0
+
+    parsed = [
+        json.loads(line)
+        for line in result_file.read_text(encoding="utf-8").split("\n")
+        if line.strip()
+    ]
+    assert [row["task_id"] for row in parsed] == ["task-1", "task-2"]
+    assert parsed[0]["evaluation_details"]["response"] == exotic_response
+
+
+def test_split_jsonl_lines_only_breaks_on_newline() -> None:
+    text = "a\u2028b\u2029c\x0bd\x0ce\x85f\ngh\n"
+
+    assert split_jsonl_lines(text) == ["a\u2028b\u2029c\x0bd\x0ce\x85f", "gh", ""]
+    assert len(text.splitlines()) > 2
 
 
 def test_run_online_mind2web_judge_defaults_to_sandbox_eval(tmp_path, monkeypatch) -> None:

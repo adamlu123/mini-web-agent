@@ -258,6 +258,16 @@ def _write_placeholder_screenshot(path: Path) -> None:
     path.write_bytes(_PLACEHOLDER_PNG_BYTES)
 
 
+def split_jsonl_lines(text: str) -> list[str]:
+    """Split JSONL text on newlines only.
+
+    ``str.splitlines`` additionally breaks on U+2028, U+2029, \\x0b, \\x0c and
+    \\x85, which judge responses can contain verbatim inside a JSON string. Those
+    extra break points cut a valid row in half and make ``json.loads`` fail.
+    """
+    return text.split("\n")
+
+
 def normalize_online_mind2web_judge_results(*, result_file: Path) -> int:
     if not result_file.exists():
         return 0
@@ -266,7 +276,7 @@ def normalize_online_mind2web_judge_results(*, result_file: Path) -> int:
     updated_rows: list[str] = []
     replacements = 0
 
-    for line in original_text.splitlines():
+    for line in split_jsonl_lines(original_text):
         if not line.strip():
             continue
         row = json.loads(line)
