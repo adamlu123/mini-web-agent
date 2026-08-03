@@ -236,11 +236,31 @@ def parse_xml_output(raw: str) -> dict[str, Any]:
     }
 
 
-def parse_sft_state_output(raw: str) -> dict[str, Any]:
+def _truncate_to_first_sft_state_block(raw: str) -> str:
+    """Drop everything after the first complete SFT state block.
+
+    Instruction-tuned gateway models frequently continue the few-shot pattern and
+    emit an entire imagined rollout (several <think>/<bash>/<done> blocks against
+    observations they never saw). Only the first block is grounded in real state,
+    and the harness executes one command per turn, so the rest must be discarded.
+    """
+    match = re.search(r"(?is)</final_response\s*>", raw)
+    if not match:
+        return raw
+    return raw[: match.end()]
+
+
+def parse_sft_state_output(raw: str, *, first_block: bool = False) -> dict[str, Any]:
     """Parse the unified SFT state format emitted by the Qwen3.5 checkpoints.
 
     <think>…</think><bash>…</bash><done>…</done><final_response>…</final_response>
+
+    With ``first_block`` the raw text is cut after the first complete block before
+    parsing; otherwise the last value of each tag wins (the historical behaviour
+    the SPB checkpoint evals are baselined on).
     """
+    if first_block:
+        raw = _truncate_to_first_sft_state_block(raw)
     think_values = _extract_sft_think_values(raw)
     bash_values = _extract_xml_tag_values(raw, "bash")
     done_values = _extract_xml_tag_values(raw, "done")
@@ -417,6 +437,9 @@ class PhyagiModelConfig(BaseModel):
     response_mode: str = "xml"
     format_error_template: str = DEFAULT_XML_FORMAT_ERROR_TEMPLATE
     attach_observation_screenshot: bool = True
+    # response_mode="sft_state" only: keep just the first <think>/<bash>/<done>/
+    # <final_response> block when a model emits a whole imagined rollout.
+    sft_state_first_block: bool = False
 
     @field_validator(
         "model_name",
@@ -618,7 +641,10 @@ class PhyagiModel:
 
     def _parse_model_output(self, raw_text: str) -> dict[str, Any]:
         if self.config.response_mode == "sft_state":
-            return parse_sft_state_output(raw_text)
+            return parse_sft_state_output(
+                raw_text,
+                first_block=bool(getattr(self.config, "sft_state_first_block", False)),
+            )
         if self.config.response_mode == "xml":
             return parse_xml_output(raw_text)
         parsed = parse_json_output(raw_text)

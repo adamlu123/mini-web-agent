@@ -10,6 +10,7 @@ from miniswewebagent.exceptions import FormatError
 from miniswewebagent.models.phyagi_model import (
     PhyagiModel,
     _serialize_response_input,
+    parse_sft_state_output,
     parse_xml_output,
 )
 
@@ -613,3 +614,73 @@ def test_serialize_response_input_preserves_complete_raw_assistant_response() ->
     assistant_text = serialized[0]["content"][0]["text"]
     assert json.loads(assistant_text) == raw_response
     assert raw_response["bash_command"] in assistant_text
+
+
+_MULTI_BLOCK_SFT_STATE = """<think>
+Create the persistent browser session.
+</think>
+<bash>
+python -m browser_session create --workspace-dir "/workspace"
+</bash>
+<done>false</done>
+<final_response></final_response>
+
+<think>
+Now inspect the page.
+</think>
+<bash>
+python -m browser_session step --workspace-dir "/workspace" --action "inspect" --code-file - <<'PY'
+print(await page.title())
+PY
+</bash>
+<done>false</done>
+<final_response></final_response>
+
+<think>
+The task is complete.
+</think>
+<bash>
+</bash>
+<done>true</done>
+<final_response>All done.</final_response>"""
+
+
+def test_parse_sft_state_output_first_block_stops_at_first_state() -> None:
+    parsed = parse_sft_state_output(_MULTI_BLOCK_SFT_STATE, first_block=True)
+
+    assert parsed["done"] is False
+    assert parsed["bash_command"] == 'python -m browser_session create --workspace-dir "/workspace"'
+    assert parsed["final_response"] == ""
+
+
+def test_parse_sft_state_output_default_keeps_last_block() -> None:
+    parsed = parse_sft_state_output(_MULTI_BLOCK_SFT_STATE)
+
+    assert parsed["done"] is True
+    assert parsed["bash_command"] == ""
+    assert parsed["final_response"] == "All done."
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "<think>\nt\n</think>\n<bash>\nls\n</bash>\n<done>false</done>\n<final_response></final_response>",
+        "<think>\nt\n</think>\n<bash>\n</bash>\n<done>true</done>\n<final_response>42</final_response>",
+        "prefill thought\n</think>\n<bash>\nls\n</bash>\n<done>false</done>\n<final_response></final_response>",
+    ],
+)
+def test_parse_sft_state_output_first_block_is_a_noop_for_single_blocks(raw: str) -> None:
+    assert parse_sft_state_output(raw, first_block=True) == parse_sft_state_output(raw)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "<think>x</think>",
+        "<think>x</think><bash>ls</bash><done>true</done><final_response>y</final_response>",
+        "<think>x</think><bash></bash><done>false</done><final_response></final_response>",
+    ],
+)
+def test_parse_sft_state_output_first_block_still_rejects_invalid_states(raw: str) -> None:
+    with pytest.raises(ValueError):
+        parse_sft_state_output(raw, first_block=True)

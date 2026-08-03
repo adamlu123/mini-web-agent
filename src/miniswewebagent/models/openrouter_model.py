@@ -129,6 +129,8 @@ class OpenRouterModelConfig(BaseModel):
     response_mode: str = "xml"
     format_error_template: str = DEFAULT_XML_FORMAT_ERROR_TEMPLATE
     attach_observation_screenshot: bool = True
+    # See PhyagiModelConfig.sft_state_first_block.
+    sft_state_first_block: bool = False
 
     @field_validator(
         "model_name",
