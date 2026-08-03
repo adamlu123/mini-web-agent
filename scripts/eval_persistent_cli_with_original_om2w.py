@@ -142,11 +142,33 @@ def load_screenshot_paths(path: Path) -> list[str]:
     return [str(item) for item in screenshots]
 
 
+def _load_json_mapping(path: Path) -> dict[str, Any]:
+    """Return the JSON object at ``path``, or an empty mapping if unusable."""
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _task_description(payload: dict[str, Any]) -> str:
+    return str(payload.get("task") or payload.get("confirmed_task") or "").strip()
+
+
 def load_task_artifacts(task_dir: Path) -> TaskArtifacts:
     task_path = task_dir / "task.json"
-    task_payload = json.loads(task_path.read_text(encoding="utf-8"))
+    task_payload = _load_json_mapping(task_path)
     task_id = str(task_payload.get("task_id") or task_dir.name).strip()
-    task = str(task_payload.get("task") or task_payload.get("confirmed_task") or "").strip()
+    task = _task_description(task_payload)
+    if not task:
+        # The agent's workspace is rooted at the task directory, so a step that
+        # writes its answer to "task.json" clobbers the harness descriptor. The
+        # harness writes result.json after the episode with the same task text,
+        # so recover from it instead of failing the whole judge run: one bad
+        # directory used to abort discovery and leave every task unscored.
+        result_payload = _load_json_mapping(task_dir / "result.json")
+        task = _task_description(result_payload)
+        task_id = str(result_payload.get("task_id") or task_id).strip()
     if not task:
         raise ValueError(f"{task_path}: missing task description")
 
