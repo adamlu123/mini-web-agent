@@ -5,8 +5,13 @@ This variant reuses ``eval_persistent_cli_with_original_om2w.py`` for task
 discovery, judging, retries, and resumable output. It auto-detects either:
 
 * task folders with ``task.json`` and ``steps/step_<id>.sh``; or
-* task folders with ``result.json`` and ``trajectory/*.png``. For this layout,
+* task folders with ``result.json`` and ``screenshots/*.png``. For this layout,
   each ``action_history[].action`` is truncated after its final ``->``.
+
+Both layouts read screenshots from ``screenshots/``, never from ``trajectory/``.
+``trajectory/`` is a post-run export that pads failed captures with blank
+placeholder PNGs so its indices stay dense; feeding those to the judge shows it
+empty frames instead of real page state.
 """
 
 from __future__ import annotations
@@ -38,13 +43,9 @@ RAW_RESULT_ACTION_HISTORY_SOURCE = "result.json.action_history"
 RAW_RESULT_ACTION_HISTORY_CONTRACT = (
     "every non-empty result.json action_history entry in list order, unchanged"
 )
-RESULT_SCREENSHOT_SOURCE = "trajectory/*.png"
+RESULT_SCREENSHOT_SOURCE = "screenshots/*.png"
 RESULT_SCREENSHOT_CONTRACT = (
-    "every root-level trajectory/*.png in numeric filename order"
-)
-DECLARED_SCREENSHOT_SOURCE = "result.json.screenshot_paths"
-DECLARED_SCREENSHOT_CONTRACT = (
-    "every path in result.json.screenshot_paths in list order"
+    "every root-level screenshots/*.png in browser-step order"
 )
 
 
@@ -102,30 +103,8 @@ def load_result_action_history(
     return actions
 
 
-def load_declared_screenshot_paths(
-    task_dir: Path, result_path: Path, payload: dict[str, object]
-) -> list[str]:
-    paths = payload.get("screenshot_paths")
-    if not isinstance(paths, list):
-        raise ValueError(f"{result_path}: screenshot_paths must be a list")
-
-    screenshots: list[str] = []
-    for index, value in enumerate(paths):
-        if not isinstance(value, str) or not value:
-            raise ValueError(
-                f"{result_path}: screenshot_paths[{index}] must be a non-empty string"
-            )
-        path = Path(value)
-        if not path.is_absolute():
-            path = task_dir / path
-        if not path.is_file():
-            raise ValueError(f"{result_path}: screenshot does not exist: {path}")
-        screenshots.append(str(path.resolve()))
-    return screenshots
-
-
 def load_result_task_artifacts(
-    task_dir: Path, *, trim_last_arrow: bool, use_declared_screenshots: bool
+    task_dir: Path, *, trim_last_arrow: bool
 ) -> evaluator.TaskArtifacts:
     result_path = task_dir / "result.json"
     payload = json.loads(result_path.read_text(encoding="utf-8"))
@@ -134,13 +113,6 @@ def load_result_task_artifacts(
     if not task:
         raise ValueError(f"{result_path}: missing task description")
 
-    if use_declared_screenshots:
-        screenshot_paths = load_declared_screenshot_paths(
-            task_dir, result_path, payload
-        )
-    else:
-        screenshot_paths = evaluator.load_screenshot_paths(task_dir / "trajectory")
-
     return evaluator.TaskArtifacts(
         task_id=task_id,
         task_dir=str(task_dir.resolve()),
@@ -148,7 +120,7 @@ def load_result_task_artifacts(
         action_history=load_result_action_history(
             result_path, trim_last_arrow=trim_last_arrow
         ),
-        screenshot_paths=screenshot_paths,
+        screenshot_paths=evaluator.load_screenshot_paths(task_dir / "screenshots"),
     )
 
 
@@ -156,7 +128,6 @@ def discover_result_task_artifacts(
     trajectories_dir: Path,
     *,
     trim_last_arrow: bool,
-    use_declared_screenshots: bool,
 ) -> list[evaluator.TaskArtifacts]:
     task_dirs = sorted(
         path
@@ -164,11 +135,7 @@ def discover_result_task_artifacts(
         if path.is_dir() and (path / "result.json").is_file()
     )
     artifacts = [
-        load_result_task_artifacts(
-            path,
-            trim_last_arrow=trim_last_arrow,
-            use_declared_screenshots=use_declared_screenshots,
-        )
+        load_result_task_artifacts(path, trim_last_arrow=trim_last_arrow)
         for path in task_dirs
     ]
     task_ids = [item.task_id for item in artifacts]
@@ -177,6 +144,14 @@ def discover_result_task_artifacts(
             task_id for task_id in set(task_ids) if task_ids.count(task_id) > 1
         )
         raise ValueError(f"Duplicate task IDs: {duplicates}")
+    # A missing screenshots/ directory is a layout mismatch, not a bad task:
+    # judging would silently fall back to action text alone for the whole run.
+    # Individual tasks with no captures stay tolerated.
+    if artifacts and not any(item.screenshot_paths for item in artifacts):
+        raise ValueError(
+            f"{trajectories_dir}: no task directory contains root-level "
+            "screenshots/*.png, so every task would be judged without images"
+        )
     return artifacts
 
 
@@ -204,7 +179,6 @@ def main() -> None:
     result_mode = args.result_action_history_mode
     if result_mode is not None or uses_result_json_layout(trajectories_dir):
         trim_last_arrow = result_mode != "raw"
-        use_declared_screenshots = result_mode is not None
         args.task_source = "result.json.task"
         if trim_last_arrow:
             args.action_history_source = RESULT_ACTION_HISTORY_SOURCE
@@ -212,16 +186,11 @@ def main() -> None:
         else:
             args.action_history_source = RAW_RESULT_ACTION_HISTORY_SOURCE
             args.action_history_contract = RAW_RESULT_ACTION_HISTORY_CONTRACT
-        if use_declared_screenshots:
-            args.screenshot_source = DECLARED_SCREENSHOT_SOURCE
-            args.screenshot_contract = DECLARED_SCREENSHOT_CONTRACT
-        else:
-            args.screenshot_source = RESULT_SCREENSHOT_SOURCE
-            args.screenshot_contract = RESULT_SCREENSHOT_CONTRACT
+        args.screenshot_source = RESULT_SCREENSHOT_SOURCE
+        args.screenshot_contract = RESULT_SCREENSHOT_CONTRACT
         evaluator.discover_task_artifacts = lambda root: discover_result_task_artifacts(
             root,
             trim_last_arrow=trim_last_arrow,
-            use_declared_screenshots=use_declared_screenshots,
         )
     else:
         args.action_history_source = ACTION_HISTORY_SOURCE

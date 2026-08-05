@@ -14,7 +14,20 @@ UPLOAD_REPO="${UPLOAD_REPO:-$UPLOAD_ROOT/mini-web-agent}"
 PHITRAIN_ROOT="${PHITRAIN_ROOT:-$UPLOAD_ROOT/phitrain}"
 LOCAL_REPO="${LOCAL_REPO:-/tmp/mini-web-agent-qwen35-eval}"
 ASSET_SUBDIR="${ASSET_SUBDIR:-cluster_eval_assets}"
-HF_CKPT="${HF_CKPT:-$SOURCE_ROOT/last_hf}"
+# Empty selects the highest-numbered checkpoint (the historical behaviour).
+# Set to a step number to evaluate an earlier checkpoint. The converted HF
+# directory is named per step, so an earlier step can never reuse (or clobber)
+# the final checkpoint's conversion in last_hf.
+CHECKPOINT_STEP="${CHECKPOINT_STEP:-}"
+if [[ -n "$CHECKPOINT_STEP" ]]; then
+    [[ "$CHECKPOINT_STEP" =~ ^[0-9]+$ ]] || {
+        echo "[qwen35-eval][error] CHECKPOINT_STEP must be a non-negative integer: $CHECKPOINT_STEP" >&2
+        exit 2
+    }
+    HF_CKPT="${HF_CKPT:-$SOURCE_ROOT/step_${CHECKPOINT_STEP}_hf}"
+else
+    HF_CKPT="${HF_CKPT:-$SOURCE_ROOT/last_hf}"
+fi
 BASE_MODEL="${BASE_MODEL:-Qwen/Qwen3.5-9B}"
 MODEL_NAME="${MODEL_NAME:-sft_ckpt}"
 TP="${TP:-8}"
@@ -25,6 +38,47 @@ GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.92}"
 PORT="${PORT:-8000}"
 CREDS_FILE="${CREDS_FILE:-/run/secrets/webchain-sampling/cred.sh}"
 VLLM_WAIT_SECONDS="${VLLM_WAIT_SECONDS:-3600}"
+# Empty keeps the frozen config's agent.step_limit; set to override it.
+STEP_LIMIT="${STEP_LIMIT:-}"
+STEP_LIMIT_ARGS=()
+if [[ -n "$STEP_LIMIT" ]]; then
+    [[ "$STEP_LIMIT" =~ ^[1-9][0-9]*$ ]] || {
+        echo "[qwen35-eval][error] STEP_LIMIT must be a positive integer: $STEP_LIMIT" >&2
+        exit 2
+    }
+    STEP_LIMIT_ARGS=(-c "agent.step_limit=$STEP_LIMIT")
+fi
+# The phitrain conversion writes max_position_embeddings from the training
+# sequence length (32768) into text_config, while base Qwen3.5-9B is 262144.
+# The two text_configs are otherwise identical (rope_scaling=None, same
+# head_dim/rope geometry, no sliding_window), so the checkpoint's value is
+# metadata rather than an architectural ceiling. --hf-overrides cannot fix it:
+# a nested {"text_config": {...}} replaces the sub-config with a plain dict and
+# crashes, and a flat key only sets the unused top-level attribute. So use
+# vLLM's documented escape hatch instead. Safe here precisely because the base
+# RoPE covers 262144; positions past the 32k trained length are still
+# extrapolation, so set this deliberately.
+ALLOW_LONG_MAX_MODEL_LEN="${ALLOW_LONG_MAX_MODEL_LEN:-0}"
+if [[ "$ALLOW_LONG_MAX_MODEL_LEN" == "1" ]]; then
+    export VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
+    echo "[qwen35-eval] VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 (serving beyond the checkpoint's max_position_embeddings)"
+fi
+# Hard ceiling on prompt tokens per request. The agent evicts its oldest
+# assistant turns to stay under it, so a long episode degrades gracefully
+# instead of vLLM rejecting an over-length request and failing the task. Derived
+# from the served context window so the two can never drift apart; set to 0 to
+# disable the budget entirely.
+MAX_OUTPUT_TOKENS="${MAX_OUTPUT_TOKENS:-4096}"
+CONTEXT_MARGIN="${CONTEXT_MARGIN:-672}"
+MAX_CONTEXT_TOKENS="${MAX_CONTEXT_TOKENS:-$((MAX_MODEL_LEN - MAX_OUTPUT_TOKENS - CONTEXT_MARGIN))}"
+[[ "$MAX_CONTEXT_TOKENS" =~ ^[0-9]+$ ]] || {
+    echo "[qwen35-eval][error] MAX_CONTEXT_TOKENS must be a non-negative integer: $MAX_CONTEXT_TOKENS" >&2
+    exit 2
+}
+if (( MAX_CONTEXT_TOKENS > 0 && MAX_CONTEXT_TOKENS + MAX_OUTPUT_TOKENS > MAX_MODEL_LEN )); then
+    echo "[qwen35-eval][error] MAX_CONTEXT_TOKENS + MAX_OUTPUT_TOKENS exceeds MAX_MODEL_LEN" >&2
+    exit 2
+fi
 
 for numeric_name in TP WORKERS JUDGE_NUM_PROC MAX_MODEL_LEN PORT VLLM_WAIT_SECONDS; do
     numeric_value="${!numeric_name}"
@@ -126,9 +180,9 @@ hf_checkpoint_ready() {
 }
 
 if ! hf_checkpoint_ready; then
-    HF_TMP="$SOURCE_ROOT/.last_hf.${JOB_NAME}.partial"
+    HF_TMP="$SOURCE_ROOT/.hf_convert.${JOB_NAME}.partial"
     case "$HF_TMP" in
-        "$SOURCE_ROOT"/.last_hf.*.partial) rm -rf -- "$HF_TMP" ;;
+        "$SOURCE_ROOT"/.hf_convert.*.partial) rm -rf -- "$HF_TMP" ;;
         *)
             echo "[qwen35-eval][error] refusing unsafe conversion temp path: $HF_TMP" >&2
             exit 1
@@ -136,8 +190,8 @@ if ! hf_checkpoint_ready; then
     esac
     mkdir -p "$HF_TMP"
 
-    echo "[qwen35-eval] converting final DCP checkpoint under $SOURCE_ROOT"
-    python - "$SOURCE_ROOT" "$HF_TMP" <<'PY'
+    echo "[qwen35-eval] converting DCP checkpoint under $SOURCE_ROOT (step=${CHECKPOINT_STEP:-latest})"
+    python - "$SOURCE_ROOT" "$HF_TMP" "${CHECKPOINT_STEP:-}" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -147,8 +201,9 @@ from phitrain.utils.checkpoint.info import find_final_checkpoint
 
 source_root = Path(sys.argv[1])
 output_dir = Path(sys.argv[2])
+requested_step = (sys.argv[3] if len(sys.argv) > 3 else "").strip()
 found = find_final_checkpoint(source_root)
-if found is None:
+if found is None and not requested_step:
     raise SystemExit(f"[qwen35-eval][error] no final checkpoint under {source_root}")
 
 # This run's Lightning callback updates `last/` only at save_steps. Prefer the
@@ -158,7 +213,20 @@ numbered = sorted(
     (path for path in source_root.iterdir() if path.is_dir() and path.name.isdigit()),
     key=lambda path: int(path.name),
 )
-if numbered:
+if requested_step:
+    # Explicit step wins, so an earlier checkpoint can be evaluated without
+    # depending on whichever one happens to be newest.
+    matches = [path for path in numbered if int(path.name) == int(requested_step)]
+    if not matches:
+        available = ", ".join(path.name for path in numbered) or "<none>"
+        raise SystemExit(
+            f"[qwen35-eval][error] checkpoint step {requested_step} not found under "
+            f"{source_root}; available: {available}"
+        )
+    source_checkpoint = matches[0]
+    checkpoint_basename = source_checkpoint.name
+    checkpoint_step = int(checkpoint_basename)
+elif numbered:
     source_checkpoint = numbered[-1]
     checkpoint_basename = source_checkpoint.name
     checkpoint_step = int(checkpoint_basename)
@@ -243,7 +311,7 @@ Path(marker).write_text(
 PY
 
     if [[ -e "$HF_CKPT" ]]; then
-        HF_BACKUP="$SOURCE_ROOT/last_hf.incomplete.$(date -u +%Y%m%dT%H%M%SZ).$$"
+        HF_BACKUP="${HF_CKPT}.incomplete.$(date -u +%Y%m%dT%H%M%SZ).$$"
         echo "[qwen35-eval] preserving incomplete conversion at $HF_BACKUP"
         mv "$HF_CKPT" "$HF_BACKUP"
     fi
@@ -259,6 +327,7 @@ hf_checkpoint_ready || {
     cp "$HF_CKPT/checkpoint_selection.json" "$RUN_ROOT/checkpoint_selection.json"
 }
 echo "[qwen35-eval] model=$HF_CKPT tp=$TP max_model_len=$MAX_MODEL_LEN"
+echo "[qwen35-eval] context_budget=$MAX_CONTEXT_TOKENS max_output_tokens=$MAX_OUTPUT_TOKENS"
 echo "[qwen35-eval] run_id=$EVAL_RUN_ID tasks=$TASKS_FILE workers=$WORKERS"
 nvidia-smi -L
 
@@ -321,6 +390,9 @@ python -m miniswewebagent.run.benchmarks.om2w \
     -c "environment.credentials_file=$CREDS_FILE" \
     -c "environment.env.PYTHONPATH=$REPO/agent_runtime" \
     -c "run.logs_root=$LOGS_DIR" \
+    -c "model.max_output_tokens=$MAX_OUTPUT_TOKENS" \
+    -c "agent.max_context_tokens=$MAX_CONTEXT_TOKENS" \
+    "${STEP_LIMIT_ARGS[@]}" \
     --tasks-file "$TASKS_FILE" \
     --task-level all \
     --workers "$WORKERS" \

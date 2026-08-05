@@ -22,6 +22,27 @@ GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.92}"
 PORT="${PORT:-8000}"
 CREDS_FILE="${CREDS_FILE:-/run/secrets/webchain-sampling/cred.sh}"
 VLLM_WAIT_SECONDS="${VLLM_WAIT_SECONDS:-3600}"
+# Empty keeps the frozen config's agent.step_limit; set to override it.
+STEP_LIMIT="${STEP_LIMIT:-}"
+STEP_LIMIT_ARGS=()
+if [[ -n "$STEP_LIMIT" ]]; then
+    [[ "$STEP_LIMIT" =~ ^[1-9][0-9]*$ ]] || {
+        echo "[qwen36-eval][error] STEP_LIMIT must be a positive integer: $STEP_LIMIT" >&2
+        exit 2
+    }
+    STEP_LIMIT_ARGS=(-c "agent.step_limit=$STEP_LIMIT")
+fi
+# Empty keeps the frozen config's agent.max_context_tokens (0 = eviction off).
+# Set to enable token eviction; budget should leave room for max_output_tokens
+# inside the served max_model_len.
+MAX_CONTEXT_TOKENS="${MAX_CONTEXT_TOKENS:-}"
+if [[ -n "$MAX_CONTEXT_TOKENS" ]]; then
+    [[ "$MAX_CONTEXT_TOKENS" =~ ^[1-9][0-9]*$ ]] || {
+        echo "[qwen36-eval][error] MAX_CONTEXT_TOKENS must be a positive integer: $MAX_CONTEXT_TOKENS" >&2
+        exit 2
+    }
+    STEP_LIMIT_ARGS+=(-c "agent.max_context_tokens=$MAX_CONTEXT_TOKENS")
+fi
 
 for numeric_name in TP WORKERS JUDGE_NUM_PROC MAX_MODEL_LEN PORT VLLM_WAIT_SECONDS; do
     numeric_value="${!numeric_name}"
@@ -171,6 +192,7 @@ python -m miniswewebagent.run.benchmarks.om2w \
     -c "environment.credentials_file=$CREDS_FILE" \
     -c "environment.env.PYTHONPATH=$REPO/agent_runtime" \
     -c "run.logs_root=$LOGS_DIR" \
+    "${STEP_LIMIT_ARGS[@]}" \
     --tasks-file "$TASKS_FILE" \
     --task-level all \
     --workers "$WORKERS" \

@@ -2,6 +2,7 @@
 # Run an om2w benchmark sharded across several locally served vLLM instances.
 # 
 #   PORTS="8001 8002" CFG=/home/luyadong/sandbox/mini-web-agent/src/miniswewebagent/config/eval/om2w_spb_vllm_lastobs_minimal.yaml bash scripts/om2w_vllm_sharded.sh start
+#   PORTS="8000 8001" CFG=/home/luyadong/sandbox/mini-web-agent/src/miniswewebagent/config/eval/om2w_spb_vllm_lastobs.yaml bash scripts/om2w_vllm_sharded.sh start
 #   bash scripts/om2w_vllm_sharded.sh start     # build shards + launch one run per port
 #   bash scripts/om2w_vllm_sharded.sh stop      # terminate every run in this RUN group
 #   bash scripts/om2w_vllm_sharded.sh status    # pids, progress, last log line

@@ -25,7 +25,6 @@ model:
     {{ observation.exception }}
     {% endif %}{% if observation.command_output %}Command output:
     {{ observation.command_output }}
-    {% endif %}{% if observation.screenshot_path %}New screenshot: {{ observation.screenshot_path }}
     {% endif %}
   format_error_template: |
     Format error:
@@ -80,7 +79,8 @@ agent:
   trajectory_judge_result: reflection/judge_result.json
   trajectory_plan_file: plan.md
   trajectory_judge_config: judge_config.json
-  summary_every_n_steps: 50
+  summary_every_n_steps: 10
+  # history_context_mode: last_obs  # history obs stubbed, latest obs full
   summary_user_prompt: |
     Summarize the complete incremental task state for a fresh agent context. Include the task,
     plan.md critical points, current persistent browser session epoch and health, every important

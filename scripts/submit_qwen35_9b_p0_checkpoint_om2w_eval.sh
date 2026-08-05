@@ -11,7 +11,8 @@ Usage: submit_qwen35_9b_p0_checkpoint_om2w_eval.sh [--dry-run]
 Environment overrides:
   SOURCE_TRAINING_JOB, SOURCE_ROOT, EVAL_RUN_ID, JOB_NAME, MODEL_NAME,
   WORKERS, TP, GPU_MEMORY_UTILIZATION, FOLLOW_LOGS, CREDENTIALS_FILE,
-  AIFSDK_ROOT.
+  AIFSDK_ROOT, CHECKPOINT_STEP, STEP_LIMIT, MAX_CONTEXT_TOKENS,
+  MAX_OUTPUT_TOKENS, CONTEXT_MARGIN.
 EOF
 }
 
@@ -34,7 +35,35 @@ SOURCE_TRAINING_JOB="${SOURCE_TRAINING_JOB:-luyadong-p0-abr-q35-9b-f0802-s294-f4
 SOURCE_ROOT="${SOURCE_ROOT:-/mnt/pvc/experiments/luyadong/outputs/$SOURCE_TRAINING_JOB/train}"
 BASE_MODEL="${BASE_MODEL:-Qwen/Qwen3.5-9B}"
 MODEL_NAME="${MODEL_NAME:-sft_ckpt}"
-EVAL_RUN_ID="${EVAL_RUN_ID:-qwen35-9b-s294-p0-lastobs-minimal-full-$(date -u +%Y%m%dT%H%M%SZ)}"
+# Empty evaluates the newest checkpoint; set to a step number (e.g. 200) to
+# evaluate an earlier one. It is woven into EVAL_RUN_ID and JOB_NAME so runs of
+# different steps never share an output directory or job name.
+CHECKPOINT_STEP="${CHECKPOINT_STEP:-}"
+if [[ -n "$CHECKPOINT_STEP" ]]; then
+    [[ "$CHECKPOINT_STEP" =~ ^[0-9]+$ ]] || {
+        echo "[error] CHECKPOINT_STEP must be a non-negative integer: $CHECKPOINT_STEP" >&2
+        exit 2
+    }
+    CHECKPOINT_TAG="-s${CHECKPOINT_STEP}"
+else
+    CHECKPOINT_TAG=""
+fi
+# Empty keeps the frozen config's agent.step_limit; set to override it.
+STEP_LIMIT="${STEP_LIMIT:-}"
+if [[ -n "$STEP_LIMIT" ]]; then
+    [[ "$STEP_LIMIT" =~ ^[1-9][0-9]*$ ]] || {
+        echo "[error] STEP_LIMIT must be a positive integer: $STEP_LIMIT" >&2
+        exit 2
+    }
+    STEP_LIMIT_TAG="-step${STEP_LIMIT}"
+    # Volcano caps JOB_NAME at 40 chars, so the job tag is deliberately shorter
+    # than the run-id tag.
+    STEP_LIMIT_JOB_TAG="-sl${STEP_LIMIT}"
+else
+    STEP_LIMIT_TAG=""
+    STEP_LIMIT_JOB_TAG=""
+fi
+EVAL_RUN_ID="${EVAL_RUN_ID:-qwen35-9b-s294-p0-lastobs-minimal-full${CHECKPOINT_TAG}${STEP_LIMIT_TAG}-$(date -u +%Y%m%dT%H%M%SZ)}"
 
 SOURCE_CONFIG_RUN="${SOURCE_CONFIG_RUN:-$MINI_WEB_AGENT_DIR/outputs/qwen36_27b_lastobs_minimal_20260802_204810_g0}"
 CONFIG_SOURCE="${CONFIG_SOURCE:-$SOURCE_CONFIG_RUN/config_snapshot/merged_config.yaml}"
@@ -56,7 +85,7 @@ export PROJECT_NAME="${PROJECT_NAME:-agenticbrain-sft}"
 export PRIORITY="${PRIORITY:-p0}"
 export PRIORITY_CLASS_NAME="${PRIORITY_CLASS_NAME:-high}"
 export NAMESPACE="${NAMESPACE:-bonete61}"
-export JOB_NAME="${JOB_NAME:-${USER_ALIAS}-p0-absft-q35-9b-s294}"
+export JOB_NAME="${JOB_NAME:-${USER_ALIAS}-p0-absft-q35-9b-s294${CHECKPOINT_TAG}${STEP_LIMIT_JOB_TAG}}"
 
 [[ "$PRIORITY" == "p0" && "$PRIORITY_CLASS_NAME" == "high" ]] || {
     echo "[error] this launcher requires PRIORITY=p0 and PRIORITY_CLASS_NAME=high" >&2
@@ -222,6 +251,12 @@ EXTRA_ENV+=",WORKERS=$WORKERS,JUDGE_NUM_PROC=$JUDGE_NUM_PROC,TP=$TP"
 EXTRA_ENV+=",MAX_MODEL_LEN=$MAX_MODEL_LEN,GPU_MEMORY_UTILIZATION=$GPU_MEMORY_UTILIZATION"
 EXTRA_ENV+=",CONFIG_SHA256=$CONFIG_SHA256,TASKS_SHA256=$TASKS_SHA256"
 EXTRA_ENV+=",CHAT_TEMPLATE_SHA256=$CHAT_TEMPLATE_SHA256"
+[[ -n "$CHECKPOINT_STEP" ]] && EXTRA_ENV+=",CHECKPOINT_STEP=$CHECKPOINT_STEP"
+[[ -n "$STEP_LIMIT" ]] && EXTRA_ENV+=",STEP_LIMIT=$STEP_LIMIT"
+[[ -n "${MAX_CONTEXT_TOKENS:-}" ]] && EXTRA_ENV+=",MAX_CONTEXT_TOKENS=$MAX_CONTEXT_TOKENS"
+[[ "${ALLOW_LONG_MAX_MODEL_LEN:-0}" == "1" ]] && EXTRA_ENV+=",ALLOW_LONG_MAX_MODEL_LEN=1"
+[[ -n "${MAX_OUTPUT_TOKENS:-}" ]] && EXTRA_ENV+=",MAX_OUTPUT_TOKENS=$MAX_OUTPUT_TOKENS"
+[[ -n "${CONTEXT_MARGIN:-}" ]] && EXTRA_ENV+=",CONTEXT_MARGIN=$CONTEXT_MARGIN"
 if [[ -n "${HF_TOKEN:-}" ]]; then
     EXTRA_ENV+=",HF_TOKEN=$HF_TOKEN,HF_HUB_TOKEN=$HF_TOKEN"
 fi

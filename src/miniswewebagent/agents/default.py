@@ -76,6 +76,11 @@ class AgentConfig(BaseModel):
     # ("last_obs_think") everything before the current observation block.
     context_window_steps: int = 0
     history_context_mode: str = "full"
+    # Hard ceiling on prompt tokens per model request (0 = no limit). When the
+    # windowed history exceeds it, the oldest assistant turns are evicted until
+    # the request fits, so a long episode degrades instead of the server
+    # rejecting an over-length request and killing the whole run.
+    max_context_tokens: int = 0
     output_path: Path | None = None
 
 
@@ -775,7 +780,9 @@ class DefaultAgent:
     def step(self) -> list[dict[str, Any]]:
         return self.execute_actions(self.query())
 
-    def _windowed_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _windowed_messages(
+        self, messages: list[dict[str, Any]], n_steps: int | None = None
+    ) -> list[dict[str, Any]]:
         """Sliding-window view of the history for the model request.
 
         With context_window_steps=N > 0: keep messages[0] (system) and
@@ -783,9 +790,10 @@ class DefaultAgent:
         block preceding the N-th assistant message from the end. The window
         therefore holds the last N assistant turns plus their surrounding user
         messages (including the current pending observation). Short histories
-        are returned unchanged.
+        are returned unchanged. `n_steps` overrides the configured window, which
+        the token-budget search uses to try progressively smaller windows.
         """
-        n_steps = self.config.context_window_steps
+        n_steps = self.config.context_window_steps if n_steps is None else n_steps
         if n_steps <= 0:
             return messages
         assistant_idx = [i for i, m in enumerate(messages) if m.get("role") == "assistant"]
@@ -879,6 +887,48 @@ class DefaultAgent:
             out.append(m)
         return out
 
+    def _fit_context(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Build the model request, evicting old turns to honour max_context_tokens.
+
+        Returns the configured window untouched when no budget is set, when the
+        model backend cannot count prompt tokens, or when the request already
+        fits. Otherwise binary-searches the largest number of trailing assistant
+        turns that fits, since the token count grows monotonically with the
+        window size.
+        """
+        configured = self._transform_history(self._windowed_messages(messages))
+        budget = self.config.max_context_tokens
+        if budget <= 0:
+            return configured
+        fits = getattr(self.model, "prompt_tokens_within", None)
+        if fits is None or fits(configured, budget):
+            return configured
+
+        n_assistant = sum(1 for m in messages if m.get("role") == "assistant")
+        window = self.config.context_window_steps
+        low, high = 1, min(n_assistant, window) if window > 0 else n_assistant
+        best: list[dict[str, Any]] | None = None
+        best_steps = 0
+        while low <= high:
+            mid = (low + high) // 2
+            candidate = self._transform_history(self._windowed_messages(messages, mid))
+            if fits(candidate, budget):
+                best, best_steps = candidate, mid
+                low = mid + 1
+            else:
+                high = mid - 1
+        if best is None:
+            # Even a single turn is over budget; send the smallest window rather
+            # than the full history so the request is as likely to land as possible.
+            best, best_steps = self._transform_history(self._windowed_messages(messages, 1)), 1
+        print(
+            f"[context-budget] {budget} tokens exceeded at {n_assistant} assistant "
+            f"turns; evicted to the last {best_steps}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return best
+
     def query(self) -> dict[str, Any]:
         if 0 < self.config.step_limit <= self.n_calls:
             raise LimitsExceeded(
@@ -888,7 +938,7 @@ class DefaultAgent:
                     extra={"exit_status": "LimitsExceeded", "submission": ""},
                 )
             )
-        message = self.model.query(self._transform_history(self._windowed_messages(self.messages)))
+        message = self.model.query(self._fit_context(self.messages))
         self.n_calls += 1
         self.add_messages(message)
         return message

@@ -40,7 +40,23 @@ CREDENTIALS_FILE="${CREDENTIALS_FILE:-/home/luyadong/cred.sh}"
 
 MODEL_ID="${MODEL_ID:-/mnt/pvc/experiments/luyadong/models/webwright-teacher}"
 MODEL_NAME="${MODEL_NAME:-sft_ckpt}"
-EVAL_RUN_ID="${EVAL_RUN_ID:-qwen36-27b-lastobs-minimal-full-$(date -u +%Y%m%dT%H%M%SZ)}"
+# Empty keeps the frozen config's agent.step_limit; set to override it. It is
+# woven into EVAL_RUN_ID / JOB_NAME so runs of different limits never collide.
+STEP_LIMIT="${STEP_LIMIT:-}"
+if [[ -n "$STEP_LIMIT" ]]; then
+    [[ "$STEP_LIMIT" =~ ^[1-9][0-9]*$ ]] || {
+        echo "[error] STEP_LIMIT must be a positive integer: $STEP_LIMIT" >&2
+        exit 2
+    }
+    STEP_LIMIT_TAG="-step${STEP_LIMIT}"
+    # Volcano caps JOB_NAME at 40 chars, so the job tag is deliberately shorter
+    # than the run-id tag.
+    STEP_LIMIT_JOB_TAG="-sl${STEP_LIMIT}"
+else
+    STEP_LIMIT_TAG=""
+    STEP_LIMIT_JOB_TAG=""
+fi
+EVAL_RUN_ID="${EVAL_RUN_ID:-qwen36-27b-lastobs-minimal-full${STEP_LIMIT_TAG}-$(date -u +%Y%m%dT%H%M%SZ)}"
 WORKERS="${WORKERS:-80}"
 JUDGE_NUM_PROC="${JUDGE_NUM_PROC:-32}"
 TP="${TP:-8}"
@@ -53,7 +69,7 @@ export PROJECT_NAME="${PROJECT_NAME:-agenticbrain-sft}"
 export PRIORITY="${PRIORITY:-p0}"
 export PRIORITY_CLASS_NAME="${PRIORITY_CLASS_NAME:-high}"
 export NAMESPACE="${NAMESPACE:-bonete61}"
-export JOB_NAME="${JOB_NAME:-${USER_ALIAS}-p0-absft-q36-27b-full}"
+export JOB_NAME="${JOB_NAME:-${USER_ALIAS}-p0-absft-q36-27b-full${STEP_LIMIT_JOB_TAG}}"
 
 [[ "$PRIORITY" == "p0" && "$PRIORITY_CLASS_NAME" == "high" ]] || {
     echo "[error] this launcher requires PRIORITY=p0 and PRIORITY_CLASS_NAME=high" >&2
@@ -185,6 +201,8 @@ EXTRA_ENV+=",WORKERS=$WORKERS,JUDGE_NUM_PROC=$JUDGE_NUM_PROC,TP=$TP"
 EXTRA_ENV+=",MAX_MODEL_LEN=$MAX_MODEL_LEN,GPU_MEMORY_UTILIZATION=$GPU_MEMORY_UTILIZATION"
 EXTRA_ENV+=",CONFIG_SHA256=$CONFIG_SHA256,TASKS_SHA256=$TASKS_SHA256"
 EXTRA_ENV+=",CHAT_TEMPLATE_SHA256=$CHAT_TEMPLATE_SHA256"
+[[ -n "$STEP_LIMIT" ]] && EXTRA_ENV+=",STEP_LIMIT=$STEP_LIMIT"
+[[ -n "${MAX_CONTEXT_TOKENS:-}" ]] && EXTRA_ENV+=",MAX_CONTEXT_TOKENS=$MAX_CONTEXT_TOKENS"
 if [[ -n "${HF_TOKEN:-}" ]]; then
     EXTRA_ENV+=",HF_TOKEN=$HF_TOKEN,HF_HUB_TOKEN=$HF_TOKEN"
 fi

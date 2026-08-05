@@ -182,16 +182,32 @@ def load_task_artifacts(task_dir: Path) -> TaskArtifacts:
 
 
 def discover_task_artifacts(trajectories_dir: Path) -> list[TaskArtifacts]:
+    # Symlinks are skipped because the agent's workspace is rooted at its own
+    # task directory, so a step running e.g. `ln -sfn /workspace /workspace_backup`
+    # drops a sibling link in the trajectories dir that points back at the task.
+    # Path.is_dir() follows symlinks, so such a link used to be discovered as a
+    # second copy of the same task.
     task_dirs = sorted(
         path
         for path in trajectories_dir.iterdir()
-        if path.is_dir() and (path / "task.json").is_file()
+        if path.is_dir() and not path.is_symlink() and (path / "task.json").is_file()
     )
-    artifacts = [load_task_artifacts(path) for path in task_dirs]
-    task_ids = [item.task_id for item in artifacts]
-    if len(task_ids) != len(set(task_ids)):
-        duplicates = sorted({task_id for task_id in task_ids if task_ids.count(task_id) > 1})
-        raise ValueError(f"Duplicate task IDs: {duplicates}")
+    artifacts = []
+    seen: dict[str, TaskArtifacts] = {}
+    for task_dir in task_dirs:
+        artifact = load_task_artifacts(task_dir)
+        previous = seen.get(artifact.task_id)
+        if previous is not None:
+            # Keep the first directory rather than aborting: a duplicate is one
+            # unusable task, but raising here leaves every task unscored.
+            print(
+                f"[warn] duplicate task ID {artifact.task_id}: keeping "
+                f"{previous.task_dir}, skipping {artifact.task_dir}",
+                flush=True,
+            )
+            continue
+        seen[artifact.task_id] = artifact
+        artifacts.append(artifact)
     return artifacts
 
 

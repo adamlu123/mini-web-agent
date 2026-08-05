@@ -39,6 +39,70 @@ def _serialize_chat_content_part(part: dict[str, Any]) -> dict[str, Any]:
     return {"type": "text", "text": part.get("text", "")}
 
 
+# Fallback estimate for endpoints with no /tokenize: characters per token,
+# measured over 40 OM2W request payloads against the Qwen3.5 tokenizer (observed
+# range 2.36-4.09). Only used when an exact count is unavailable, and it is a
+# heuristic, not a bound -- see _serialized_utf8_bytes for the safe bound.
+MIN_CHARS_PER_TOKEN = 2.0
+
+# Chat-template scaffolding (role markers, turn delimiters) added per message on
+# top of the content tokens. Generous on purpose: it only pads the cheap
+# short-circuit below, never the exact count.
+TEMPLATE_TOKENS_PER_MESSAGE = 8
+
+
+def _serialized_text_chars(serialized: list[dict[str, Any]]) -> int:
+    total = 0
+    for message in serialized:
+        content = message.get("content")
+        if isinstance(content, str):
+            total += len(content)
+        elif isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict) and isinstance(part.get("text"), str):
+                    total += len(part["text"])
+    return total
+
+
+def _serialized_utf8_bytes(serialized: list[dict[str, Any]]) -> int:
+    """UTF-8 byte length of the request text.
+
+    This is a hard upper bound on the token count: the tokenizer is a byte-level
+    BPE whose base vocabulary is the 256 single bytes, so no text ever encodes to
+    more tokens than it has bytes, and merges only ever reduce the count.
+    Character counts are NOT such a bound -- observed payloads reach 2.36
+    chars/token, so a chars/N estimate can silently understate the real length.
+    """
+    total = 0
+    for message in serialized:
+        content = message.get("content")
+        if isinstance(content, str):
+            total += len(content.encode("utf-8"))
+        elif isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict) and isinstance(part.get("text"), str):
+                    total += len(part["text"].encode("utf-8"))
+    return total
+
+
+def _tokenize_endpoints(chat_endpoint: str) -> list[str]:
+    """Candidate /tokenize URLs for an OpenAI-compatible chat endpoint.
+
+    vLLM serves /tokenize at the server root (the /v1 variant 404s), so try that
+    first, then the versioned path for proxies that only expose /v1.
+    """
+    base = chat_endpoint.rstrip("/")
+    for suffix in ("/chat/completions", "/completions"):
+        if base.endswith(suffix):
+            base = base[: -len(suffix)]
+            break
+    candidates = []
+    if base.endswith("/v1"):
+        candidates.append(f"{base[: -len('/v1')]}/tokenize")
+    candidates.append(f"{base}/tokenize")
+    return candidates
+
+
 def _sft_state_assistant_content(message: dict[str, Any]) -> str | None:
     """Rebuild an assistant turn in the unified SFT state format.
 
@@ -170,7 +234,65 @@ class OpenRouterModel(PhyagiModel):
         self._last_usage_metrics = dict(zero_use)
         self._cumulative_request_metrics = dict(zero_req)
         self._cumulative_usage_metrics = dict(zero_use)
+        # None until the first probe; then the working /tokenize URL, or "" when
+        # the server has none and only the character estimate is available.
+        self._tokenize_url: str | None = None
         self._ensure_auth()
+
+    def prompt_tokens_within(self, messages: list[dict[str, Any]], budget: int) -> bool:
+        """Whether the request built from `messages` fits in `budget` prompt tokens.
+
+        Serializes exactly as `_build_payload` does, so the count reflects the
+        `sft_state` assistant replay rather than the harness's stored content.
+        A conservative character bound short-circuits the common case; only
+        requests that might exceed the budget cost a `/tokenize` round trip.
+        """
+        if budget <= 0:
+            return True
+        serialized = _serialize_chat_messages(messages, response_mode=self.config.response_mode)
+        # Skip the round trip only when the request cannot possibly exceed the
+        # budget, using the byte bound rather than a character estimate.
+        ceiling = _serialized_utf8_bytes(serialized) + TEMPLATE_TOKENS_PER_MESSAGE * len(serialized)
+        if ceiling <= budget:
+            return True
+        exact = self._exact_prompt_tokens(serialized)
+        if exact is None:
+            # No exact counter available: fall back to the character heuristic.
+            estimate = _serialized_text_chars(serialized) / MIN_CHARS_PER_TOKEN
+            return estimate + TEMPLATE_TOKENS_PER_MESSAGE * len(serialized) <= budget
+        return exact <= budget
+
+    def _exact_prompt_tokens(self, serialized: list[dict[str, Any]]) -> int | None:
+        """Prompt token count from the server's /tokenize endpoint, or None."""
+        if self._tokenize_url == "":
+            return None
+        payload = {
+            "model": self.config.model_name,
+            "messages": serialized,
+            "add_generation_prompt": True,
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.config.openrouter_api_key}",
+        }
+        candidates = (
+            [self._tokenize_url]
+            if self._tokenize_url
+            else _tokenize_endpoints(self.config.openrouter_endpoint)
+        )
+        for url in candidates:
+            try:
+                with httpx.Client(timeout=self.config.request_timeout_seconds) as client:
+                    response = client.post(url, headers=headers, json=payload)
+                response.raise_for_status()
+                count = _safe_int(response.json().get("count"))
+            except Exception:
+                continue
+            if count > 0:
+                self._tokenize_url = url
+                return count
+        self._tokenize_url = ""
+        return None
 
     def _log_gateway_error(self, *, event: str, attempt: int, error: BaseException) -> None:
         # Override PhyagiModel._log_gateway_error which references

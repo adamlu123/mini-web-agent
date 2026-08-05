@@ -1162,7 +1162,7 @@ def _build_parser() -> argparse.ArgumentParser:
     step.add_argument(
         "--screenshot",
         choices=("none", "always", "on-success", "on-error"),
-        default="always",
+        default="none",
         help="End-of-step viewport screenshot policy (default: none).",
     )
     step.add_argument("--screenshot-path", default="")

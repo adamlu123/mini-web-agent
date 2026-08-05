@@ -106,11 +106,11 @@ agent:
   output_path:
   step_limit: 30
   require_self_reflection_success: false
-  judge_mode: trajectory
-  trajectory_manifest: browser-steps.jsonl
-  trajectory_judge_result: reflection/judge_result.json
-  trajectory_plan_file: plan.md
-  trajectory_judge_config: judge_config.json
+  # judge_mode: trajectory
+  # trajectory_manifest: browser-steps.jsonl
+  # trajectory_judge_result: reflection/judge_result.json
+  # trajectory_plan_file: plan.md
+  # trajectory_judge_config: judge_config.json
   # judge_gateway_endpoint / judge_score_threshold below are read only by the
   # agent's om2w completion gate (judge_mode: om2w). judge_model is also honoured
   # with judge_mode: trajectory through the sentinel value `policy`: the agent
@@ -120,9 +120,9 @@ agent:
   # chat-completions instead of the phyagi /responses gateway. Any other value
   # leaves trajectory reflection on the OPENAI_GATEWAY_* environment above.
   # The post-run benchmark scorer uses run.judge_model, a separate setting.
-  judge_model: policy
-  judge_gateway_endpoint: ""
-  judge_score_threshold: 3
+  # judge_model: policy
+  # judge_gateway_endpoint: ""
+  # judge_score_threshold: 3
   summary_every_n_steps: 0  # no compaction
   history_context_mode: last_obs  # history obs stubbed, latest obs full
   summary_user_prompt: |

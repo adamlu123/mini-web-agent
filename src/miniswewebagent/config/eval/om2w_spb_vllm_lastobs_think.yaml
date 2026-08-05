@@ -115,7 +115,7 @@ agent:
   # `policy`, which routes reflection at the served checkpoint itself over
   # chat-completions. The post-run benchmark scorer uses run.judge_model, which
   # is a separate setting.
-  judge_model: o4-mini
+  judge_model: policy
   judge_gateway_endpoint: ""
   judge_score_threshold: 3
   summary_every_n_steps: 0  # no compaction

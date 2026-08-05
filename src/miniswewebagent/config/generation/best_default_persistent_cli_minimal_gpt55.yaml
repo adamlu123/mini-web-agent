@@ -103,15 +103,16 @@ agent:
   output_path:
   step_limit: 100
   require_self_reflection_success: false
-  judge_mode: trajectory
-  trajectory_manifest: browser-steps.jsonl
-  trajectory_judge_result: reflection/judge_result.json
-  trajectory_plan_file: plan.md
-  trajectory_judge_config: judge_config.json
-  judge_model: o4-mini
-  judge_gateway_endpoint: http://gateway.phyagi.net/api/responses
-  judge_score_threshold: 3
+  # judge_mode: trajectory
+  # trajectory_manifest: browser-steps.jsonl
+  # trajectory_judge_result: reflection/judge_result.json
+  # trajectory_plan_file: plan.md
+  # trajectory_judge_config: judge_config.json
+  # judge_model: o4-mini
+  # judge_gateway_endpoint: http://gateway.phyagi.net/api/responses
+  # judge_score_threshold: 3
   summary_every_n_steps: 0  # no compaction
+  # history_context_mode: last_obs
 
   system_template: |
     You are a benchmark-oriented web agent operating through a local terminal and a persistent,
