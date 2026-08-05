@@ -74,6 +74,18 @@ After a run, per-task judge files land at `<task>/scores/WebJudge_Online_Mind2We
 
 Roll-up by level uses `/home/luyadong/.osagent_eval/om2w/Online_Mind2Web.json` for `task_id → level`.
 
+## Comparing runs
+
+To diff two (or more) run output directories living under the same root (e.g. a baseline config vs a candidate config), task-by-task:
+
+```bash
+mini-web-compare --runs baseline,candidate --runs-root outputs/default
+```
+
+Or, while `mini-web-traces --root outputs/default` is running: `curl "http://127.0.0.1:8009/api/compare?runs=baseline,candidate"`.
+
+Each task is classified `improved` / `regressed` / `same_success` / `same_fail` / `unknown` against a baseline run (majority vote over that run's `WebJudge_*_auto_eval_results.json` rows), broken down overall and by level. Unlike the roll-up above, the level lookup here reads the bundled `run/benchmarks/om2w_260220.json` / `run/benchmarks/odysseys/odysseys.json` task files directly, not the host-specific `~/.osagent_eval/om2w/Online_Mind2Web.json`, so it works the same on any checkout.
+
 ## Gotchas
 
 - `local_workspace.py` builds subprocess env as `os.environ | self._credential_env | self.config.env | {...}` — **values from `cred.sh` WIN over the live shell env**. If OpenRouter returns 401, fix `cred.sh` itself, not just `export` in your shell.
