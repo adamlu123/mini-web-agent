@@ -4,6 +4,16 @@ Use the concern-based paths below for commands and automation. Executable
 scripts live in concern-specific subdirectories; the `scripts/` root contains
 only this guide.
 
+## Folders
+
+- `archive/`: Old scripts kept for reference; do not use for active jobs.
+- `cluster/`: Submit and run cluster evaluation jobs.
+- `data/`: Prepare and tokenize training data.
+- `eval/`: Evaluate completed agent runs.
+- `lib/`: Shared helpers used by other scripts.
+- `local/`: Serve models and run evaluations locally.
+- `review/`: Serve results and open review tunnels.
+
 ## Command matrix
 
 | Concern | Canonical command | Purpose |
@@ -23,9 +33,6 @@ only this guide.
 | Qwen3.5 data | `python scripts/data/qwen35/tokenize_lastobs_singleturn.py --help` | Tokenize the bundle for PhiTrain VLM SFT. |
 | Review | `bash scripts/review/viewer.sh [port]` | Serve run and judge artifacts locally. |
 | Review | `bash scripts/review/tunnel.sh [port]` | Create a public Cloudflare tunnel to the viewer. |
-
-Files in `scripts/lib/` are sourced helpers, not commands. Files in
-`scripts/archive/` are historical and must not be used by active workflows.
 
 ## Common examples
 
