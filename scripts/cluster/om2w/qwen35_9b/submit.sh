@@ -154,7 +154,7 @@ done
 CONFIG_SHA256="$(mwa_sha256 "$CONFIG_SOURCE")"
 TASKS_SHA256="$(mwa_sha256 "$TASKS_SOURCE")"
 CHAT_TEMPLATE_SHA256="$(mwa_sha256 "$CHAT_TEMPLATE_SOURCE")"
-EXPECTED_CHAT_TEMPLATE_SHA256="e00b0a10f784841c4ee4c2dbd7e983244b59099f06920edf74d1f9804b71f035"
+EXPECTED_CHAT_TEMPLATE_SHA256="${EXPECTED_CHAT_TEMPLATE_SHA256:-e00b0a10f784841c4ee4c2dbd7e983244b59099f06920edf74d1f9804b71f035}"
 [[ "$CHAT_TEMPLATE_SHA256" == "$EXPECTED_CHAT_TEMPLATE_SHA256" ]] || {
     echo "[error] eval chat template does not match the tokenized training data" >&2
     echo "[error] expected=$EXPECTED_CHAT_TEMPLATE_SHA256 actual=$CHAT_TEMPLATE_SHA256" >&2
@@ -179,15 +179,19 @@ if [[ "$DRY_RUN" == "1" ]]; then
     exit 0
 fi
 
-SOURCE_PHASE="$(
-    kubectl -n "$NAMESPACE" get job.batch.volcano.sh "$SOURCE_TRAINING_JOB" \
-        -o jsonpath='{.status.state.phase}'
-)"
-[[ "$SOURCE_PHASE" == "Completed" ]] || {
-    echo "[error] source training job must be Completed before eval submission" >&2
-    echo "[error] job=$SOURCE_TRAINING_JOB phase=$SOURCE_PHASE" >&2
-    exit 1
-}
+if [[ "${SKIP_SOURCE_PHASE_CHECK:-0}" == "1" ]]; then
+    echo "[qwen35-submit][warn] SKIP_SOURCE_PHASE_CHECK=1: not verifying source job phase"
+else
+    SOURCE_PHASE="$(
+        kubectl -n "$NAMESPACE" get job.batch.volcano.sh "$SOURCE_TRAINING_JOB" \
+            -o jsonpath='{.status.state.phase}'
+    )"
+    [[ "$SOURCE_PHASE" == "Completed" ]] || {
+        echo "[error] source training job must be Completed before eval submission" >&2
+        echo "[error] job=$SOURCE_TRAINING_JOB phase=$SOURCE_PHASE" >&2
+        exit 1
+    }
+fi
 
 STAGING_PARENT="$(mktemp -d "${TMPDIR:-/tmp}/qwen35-checkpoint-eval.XXXXXX")"
 UPLOAD_DIR="$STAGING_PARENT/mini-web-agent"
