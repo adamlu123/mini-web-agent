@@ -4,7 +4,7 @@
 #
 #   RUN_ROOT=/mnt/pvc/experiments/luyadong/evals/<run-id> \
 #   JOB_SUFFIX=q36-27b \
-#     bash scripts/submit_om2w_judge_only_cluster.sh
+#     bash scripts/cluster/om2w/judge_only/submit.sh
 
 set -euo pipefail
 

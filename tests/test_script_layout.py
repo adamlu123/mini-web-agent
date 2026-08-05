@@ -6,8 +6,6 @@ import os
 import subprocess
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = REPO_ROOT / "scripts"
 
@@ -25,24 +23,8 @@ CANONICAL_SHELL_SCRIPTS = (
     "review/viewer.sh",
 )
 
-LEGACY_SHELL_WRAPPERS = {
-    "run_om2w_judge_only_cluster.sh": "cluster/om2w/judge_only/run.sh",
-    "submit_om2w_judge_only_cluster.sh": "cluster/om2w/judge_only/submit.sh",
-    "run_qwen35_9b_p0_checkpoint_om2w_eval.sh": "cluster/om2w/qwen35_9b/run.sh",
-    "submit_qwen35_9b_p0_checkpoint_om2w_eval.sh": "cluster/om2w/qwen35_9b/submit.sh",
-    "run_qwen36_27b_om2w_cluster_eval.sh": "cluster/om2w/qwen36_27b/run.sh",
-    "submit_qwen36_27b_om2w_cluster_eval.sh": "cluster/om2w/qwen36_27b/submit.sh",
-    "om2w_vllm_sharded.sh": "local/om2w/shards.sh",
-    "run_om2w_vllm_local.sh": "local/om2w/run.sh",
-    "serve_vllm_qwen35_local.sh": "local/om2w/serve_qwen35.sh",
-    "start_public_tunnel.sh": "review/tunnel.sh",
-    "start_remote_review_viewer.sh": "review/viewer.sh",
-}
-
-
 def test_active_shell_scripts_parse() -> None:
     paths = [str(SCRIPTS_DIR / path) for path in CANONICAL_SHELL_SCRIPTS]
-    paths.extend(str(SCRIPTS_DIR / path) for path in LEGACY_SHELL_WRAPPERS)
     paths.extend(
         [
             str(SCRIPTS_DIR / "lib/cluster_runtime.sh"),
@@ -52,17 +34,9 @@ def test_active_shell_scripts_parse() -> None:
     subprocess.run(["bash", "-n", *paths], check=True)
 
 
-@pytest.mark.parametrize(
-    ("legacy_path", "canonical_path"),
-    LEGACY_SHELL_WRAPPERS.items(),
-)
-def test_legacy_shell_entry_point_forwards_to_canonical(
-    legacy_path: str,
-    canonical_path: str,
-) -> None:
-    wrapper = SCRIPTS_DIR / legacy_path
-    assert os.access(wrapper, os.X_OK)
-    assert canonical_path in wrapper.read_text(encoding="utf-8")
+def test_scripts_root_contains_only_command_guide() -> None:
+    root_files = sorted(path.name for path in SCRIPTS_DIR.iterdir() if path.is_file())
+    assert root_files == ["README.md"]
 
 
 def test_cluster_staging_uses_runtime_allowlist(tmp_path: Path) -> None:

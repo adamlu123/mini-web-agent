@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from scripts.preprocess_qwen35_lastobs_singleturn import (
+from scripts.data.qwen35.preprocess_lastobs_singleturn import (
     ConversionStats,
     build_singleturn_rows,
     load_eval_success_filter,

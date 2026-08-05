@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import importlib.util
 import json
-import sys
+from itertools import pairwise
 from pathlib import Path
 
 from miniswewebagent.agents.default import DefaultAgent
+from miniswewebagent.evaluation.om2w import runner as om2w_runner
 from miniswewebagent.models.openrouter_model import (
     MIN_CHARS_PER_TOKEN,
     TEMPLATE_TOKENS_PER_MESSAGE,
@@ -17,20 +17,6 @@ from miniswewebagent.models.openrouter_model import (
     _serialized_utf8_bytes,
     _tokenize_endpoints,
 )
-
-SCRIPT_PATH = (
-    Path(__file__).resolve().parents[1] / "scripts" / "eval_persistent_cli_with_original_om2w.py"
-)
-
-
-def _load_judge_module():
-    spec = importlib.util.spec_from_file_location("_judge_mod", SCRIPT_PATH)
-    module = importlib.util.module_from_spec(spec)
-    # Register before exec: the module defines dataclasses, whose field
-    # resolution looks the defining module up in sys.modules.
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
 
 
 class _StubModel:
@@ -112,7 +98,7 @@ def test_eviction_keeps_turns_alternating() -> None:
     fitted = agent._fit_context(_history(60))
     roles = [m["role"] for m in fitted]
     assert roles[0] == "system"
-    assert all(a != b for a, b in zip(roles[1:], roles[2:])), roles
+    assert all(a != b for a, b in pairwise(roles[1:])), roles
 
 
 def test_eviction_is_non_mutating() -> None:
@@ -224,17 +210,15 @@ def _write_task_dir(root: Path, task_id: str) -> Path:
 
 
 def test_discovery_skips_agent_created_symlink(tmp_path: Path) -> None:
-    module = _load_judge_module()
     task_dir = _write_task_dir(tmp_path, "abc123")
     # Reproduces `ln -sfn /workspace /workspace_backup` run inside the task dir.
     (tmp_path / "abc123_backup").symlink_to(task_dir, target_is_directory=True)
 
-    artifacts = module.discover_task_artifacts(tmp_path)
+    artifacts = om2w_runner.discover_task_artifacts(tmp_path)
     assert [a.task_id for a in artifacts] == ["abc123"]
 
 
 def test_discovery_keeps_first_on_duplicate_task_id(tmp_path: Path, capsys) -> None:
-    module = _load_judge_module()
     _write_task_dir(tmp_path, "abc123")
     other = tmp_path / "abc123_copy"
     (other / "screenshots").mkdir(parents=True)
@@ -242,7 +226,7 @@ def test_discovery_keeps_first_on_duplicate_task_id(tmp_path: Path, capsys) -> N
         json.dumps({"task_id": "abc123", "task": "do a thing"}), encoding="utf-8"
     )
 
-    artifacts = module.discover_task_artifacts(tmp_path)
+    artifacts = om2w_runner.discover_task_artifacts(tmp_path)
     assert [a.task_id for a in artifacts] == ["abc123"]
     assert artifacts[0].task_dir == str((tmp_path / "abc123").resolve())
     assert "duplicate task ID" in capsys.readouterr().out

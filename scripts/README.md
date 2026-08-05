@@ -1,8 +1,8 @@
 # Script command guide
 
-Use the concern-based paths below for new commands and automation. The older
-scripts directly under `scripts/` remain compatibility wrappers so existing
-jobs and documentation do not break.
+Use the concern-based paths below for commands and automation. Executable
+scripts live in concern-specific subdirectories; the `scripts/` root contains
+only this guide.
 
 ## Command matrix
 
@@ -76,6 +76,3 @@ bash scripts/review/tunnel.sh 8010
 - The tunnel helper prefers `cloudflared` on `PATH`; otherwise it downloads the
   pinned 2026.3.0 binary into the user cache and verifies the GitHub release
   checksum. `CLOUDFLARED_BIN` selects an existing custom binary.
-
-The root-level wrappers preserve the former commands, but canonical paths
-should be used in new scheduler specs, documentation, and shell history.

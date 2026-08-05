@@ -39,8 +39,6 @@ mwa_stage_cluster_repo() {
         scripts/cluster
         scripts/eval
         scripts/lib
-        scripts/eval_persistent_cli_steps_with_original_om2w.py
-        scripts/eval_persistent_cli_with_original_om2w.py
     )
 
     mkdir -p "$upload_dir"

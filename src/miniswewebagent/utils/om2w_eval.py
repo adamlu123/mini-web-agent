@@ -188,22 +188,17 @@ class JudgeInterface(str, Enum):
 
 _PERSISTENT_CLI_SCRIPT_NAMES = frozenset(
     {
-        # Canonical entry points.
         "persistent_cli.py",
         "persistent_cli_steps.py",
-        # Compatibility entry points retained during the migration.
-        "eval_persistent_cli_with_original_om2w.py",
-        "eval_persistent_cli_steps_with_original_om2w.py",
     }
 )
 
 
 def is_persistent_cli_judge_script(judge_script: Path) -> bool:
-    """Return whether a known legacy or canonical persistent CLI was selected.
+    """Return whether a canonical persistent CLI was selected.
 
-    New callers should pass :class:`JudgeInterface` explicitly. Exact filename
-    matching remains for callers and configs created before that interface was
-    available.
+    Callers should pass :class:`JudgeInterface` explicitly. Exact filename
+    matching supports callers that only provide a script path.
     """
     return judge_script.name in _PERSISTENT_CLI_SCRIPT_NAMES
 
