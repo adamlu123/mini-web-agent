@@ -1,0 +1,42 @@
+# TRAPI endpoint overlay for the persistent-CLI generation config.
+#
+# Usage (overlay, applied AFTER the base config so it wins):
+#
+#   -c generation/best_default_judge_json_persistent_cli.yaml \
+#   -c generation/trapi_gpt5_endpoints.yaml
+#
+# The base config's agent/environment/prompt sections are reused verbatim; only
+# the policy model is swapped from the phyagi gateway to TRAPI. Leftover phyagi
+# keys (openai_gateway_endpoint, openai_gateway_tier, cache_ttl) are ignored by
+# TrapiModelConfig.
+#
+# `run.model_endpoints` is the pool the batch runner spreads tasks over. Each
+# task is pinned to exactly one deployment for its whole trajectory (round-robin
+# over the selected task list) and the assignment is written to
+# <output_dir>/<task_id>/model_endpoint.json.
+#
+# environment.env keeps OPENAI_GATEWAY_* pointing at the phyagi gateway on
+# purpose: that drives the in-workspace self_reflection image judge, which is a
+# separate concern from the policy model.
+
+model:
+  model_class: trapi
+  model_name: gpt-5.4_2026-03-05
+  trapi_instance: gcr/shared
+  trapi_endpoint: https://trapi.research.microsoft.com
+  trapi_api_version: 2025-04-01-preview
+  trapi_scope: api://trapi/.default
+  token_parameter: max_completion_tokens
+  strict_schema: false
+  reasoning_effort: xhigh
+  request_timeout_seconds: 300
+  max_output_tokens: 16000
+  response_mode: json_schema
+  attach_observation_screenshot: false
+
+run:
+  model_endpoints:
+    - gpt-5.4_2026-03-05
+    - gpt-5.6-luna_2026-07-09
+    - gpt-5.5_2026-04-24
+    - gpt-5.6-sol_2026-07-09

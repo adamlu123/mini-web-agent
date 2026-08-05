@@ -13,6 +13,7 @@ _MODEL_MAPPING = {
     "vllm": "miniswewebagent.models.openai_compatible_model.OpenAICompatibleModel",
     "anthropic": "miniswewebagent.models.anthropic_model.AnthropicModel",
     "trapi_kimi": "miniswewebagent.models.trapi_kimi_model.TrapiKimiModel",
+    "trapi": "miniswewebagent.models.trapi_model.TrapiModel",
 }
 
 

@@ -13,6 +13,7 @@ only this guide.
 - `lib/`: Shared helpers used by other scripts.
 - `local/`: Serve models and run evaluations locally.
 - `review/`: Serve results and open review tunnels.
+- `usage/`: Report gateway spend from Application Insights.
 
 ## Command matrix
 
@@ -33,6 +34,8 @@ only this guide.
 | Qwen3.5 data | `python scripts/data/qwen35/tokenize_lastobs_singleturn.py --help` | Tokenize the bundle for PhiTrain VLM SFT. |
 | Review | `bash scripts/review/viewer.sh [port]` | Serve run and judge artifacts locally. |
 | Review | `bash scripts/review/tunnel.sh [port]` | Create a public Cloudflare tunnel to the viewer. |
+| Gateway spend | `python scripts/usage/gateway_spend.py [--hours N]` | Report your gateway spend by model, resolving `$OPENAI_GATEWAY_API_KEY` to its owner. |
+| Gateway spend | `python scripts/usage/gateway_spend.py --team Fara` | Report a team's spend per user. |
 
 ## Common examples
 

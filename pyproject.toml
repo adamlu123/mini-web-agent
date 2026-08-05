@@ -29,6 +29,11 @@ dev = [
     "pytest-asyncio",
     "ruff",
 ]
+# TRAPI backends (trapi, trapi_kimi) mint Azure AD tokens; imported lazily so the
+# rest of the package still works without it.
+trapi = [
+    "azure-identity",
+]
 
 [project.scripts]
 mini-web = "miniswewebagent.run.mini:app"

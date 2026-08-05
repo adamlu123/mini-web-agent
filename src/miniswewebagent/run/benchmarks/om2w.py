@@ -58,6 +58,7 @@ def _select_tasks(
     task_ids: list[str],
     limit: int,
     task_level: str | None,
+    offset: int = 0,
 ) -> list[dict[str, object]]:
     tasks = load_om2w_tasks(tasks_file)
     if task_level and task_level.lower() != "all":
@@ -65,9 +66,45 @@ def _select_tasks(
     if task_ids:
         selected_ids = set(task_ids)
         tasks = [task for task in tasks if task["task_id"] in selected_ids]
+    if offset > 0:
+        tasks = tasks[offset:]
     if limit > 0:
         tasks = tasks[:limit]
     return tasks
+
+
+def _assign_model_endpoints(
+    tasks: list[dict[str, object]],
+    endpoints: list[str],
+) -> dict[str, str]:
+    """Pin exactly one endpoint per task, spread uniformly over the pool.
+
+    Round-robin over the already-ordered task list, so with N tasks and E
+    endpoints each endpoint gets either floor(N/E) or ceil(N/E) tasks, and a
+    task keeps the same endpoint for every step of its trajectory.
+    """
+    if not endpoints:
+        return {}
+    return {
+        str(task["task_id"]): endpoints[index % len(endpoints)]
+        for index, task in enumerate(tasks)
+    }
+
+
+def _record_task_endpoint(task_output_dir: Path, task_id: str, endpoint: str) -> None:
+    """Persist the endpoint assignment next to the task's trajectory."""
+    task_output_dir.mkdir(parents=True, exist_ok=True)
+    (task_output_dir / "model_endpoint.json").write_text(
+        json.dumps(
+            {
+                "task_id": task_id,
+                "model_endpoint": endpoint,
+                "assigned_at": datetime.now().isoformat(timespec="seconds"),
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
 
 def _read_eval_rows(result_file: Path) -> list[dict[str, Any]]:
@@ -107,6 +144,7 @@ def _run_task_worker(
     log_dir: Path,
     iterative: bool = False,
     session_id_prefix: str | None = None,
+    model_endpoint: str | None = None,
 ) -> dict[str, Any]:
     task_id = str(task["task_id"])
     task_output_dir = output_root / task_id
@@ -118,6 +156,12 @@ def _run_task_worker(
     auto_model_overrides: dict[str, Any] = {}
     if session_id_prefix:
         auto_model_overrides["session_id"] = f"{session_id_prefix}_{task_id}"
+
+    model_overrides: dict[str, Any] = {}
+    if model_endpoint:
+        model_overrides["model_name"] = model_endpoint
+        # Written before the run so the assignment survives a crash.
+        _record_task_endpoint(task_output_dir, task_id, model_endpoint)
 
     with task_log_path.open("w", encoding="utf-8") as handle:
         with contextlib.redirect_stdout(handle), contextlib.redirect_stderr(handle):
@@ -131,6 +175,7 @@ def _run_task_worker(
                     resolved_output_dir=task_output_dir,
                     snapshot_config=False,
                     auto_model_overrides=auto_model_overrides or None,
+                    model_overrides=model_overrides or None,
                 )
                 row = {
                     "task_id": task_id,
@@ -142,6 +187,7 @@ def _run_task_worker(
                     "output_dir": str(task_output_dir),
                     "log_path": str(task_log_path),
                     "result_json": str(task_output_dir / "result.json"),
+                    "model_endpoint": model_endpoint or "",
                 }
                 if iterative:
                     row["iterative_success"] = bool(result.get("_iterative_success", False))
@@ -159,6 +205,7 @@ def _run_task_worker(
                     "output_dir": str(task_output_dir),
                     "log_path": str(task_log_path),
                     "result_json": str(task_output_dir / "result.json"),
+                    "model_endpoint": model_endpoint or "",
                 }
                 if iterative:
                     row["iterative_success"] = False
@@ -171,6 +218,12 @@ def main(
     tasks_file: Path | None = typer.Option(None, "--tasks-file", help="Path to an Online-Mind2Web JSON file."),
     task_id: list[str] = typer.Option([], "--task-id", help="Only run the specified task id(s)."),
     limit: int = typer.Option(0, "--limit", help="Run only the first N selected tasks."),
+    offset: int = typer.Option(0, "--offset", help="Skip the first N selected tasks (0-based). Combine with --limit to run a row range."),
+    model_endpoint: list[str] = typer.Option(
+        [],
+        "--model-endpoint",
+        help="Model endpoint/deployment to spread tasks over (repeatable). Each task is pinned to exactly one.",
+    ),
     task_level: str | None = typer.Option(None, "--task-level", help="Filter tasks by level, e.g. hard."),
     workers: int = typer.Option(0, "--workers", help="Parallel worker processes. Defaults from config."),
     evaluate: bool | None = typer.Option(None, "--evaluate/--no-evaluate", help="Run judge after generation."),
@@ -216,7 +269,15 @@ def main(
         task_id,
         limit,
         resolved_task_level,
+        offset=max(0, int(offset or run_config.get("task_offset") or 0)),
     )
+
+    resolved_model_endpoints = [
+        str(item).strip()
+        for item in (model_endpoint or run_config.get("model_endpoints") or [])
+        if str(item).strip()
+    ]
+    endpoint_assignments = _assign_model_endpoints(tasks, resolved_model_endpoints)
 
     # Default judge parallelism to the number of tasks when not explicitly set
     if not (judge_num_proc or run_config.get("judge_num_proc")):
@@ -251,6 +312,23 @@ def main(
     _write_batch_log_line(batch_log_path, f"output_dir={batch_output_dir}")
     _write_batch_log_line(batch_log_path, f"config_snapshot_dir={config_snapshot_dir}")
 
+    endpoint_counts: dict[str, int] = {}
+    if endpoint_assignments:
+        for endpoint in endpoint_assignments.values():
+            endpoint_counts[endpoint] = endpoint_counts.get(endpoint, 0) + 1
+        _write_batch_log_line(
+            batch_log_path, f"model_endpoints={json.dumps(endpoint_counts, sort_keys=True)}"
+        )
+        (batch_output_dir / "model_endpoint_assignments.json").write_text(
+            json.dumps(
+                {"counts": endpoint_counts, "assignments": endpoint_assignments},
+                indent=2,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+        console.print(f"Endpoint distribution: {endpoint_counts}")
+
     mode_label = "iterative" if is_iterative else "standard"
     console.print(f"Running {len(tasks)} Online-Mind2Web task(s) ({mode_label} mode)")
     console.print(f"Outputs: [bold green]{batch_output_dir}[/bold green]")
@@ -267,6 +345,7 @@ def main(
                 log_dir=batch_log_dir,
                 iterative=is_iterative,
                 session_id_prefix=batch_name,
+                model_endpoint=endpoint_assignments.get(str(task["task_id"])),
             )
             generation_rows.append(row)
             console.print(f"[{index}/{len(tasks)}] {row['task_id']} -> {row['status']}")
@@ -283,6 +362,7 @@ def main(
                     log_dir=batch_log_dir,
                     iterative=is_iterative,
                     session_id_prefix=batch_name,
+                    model_endpoint=endpoint_assignments.get(str(task["task_id"])),
                 ): task
                 for task in tasks
             }
@@ -307,6 +387,9 @@ def main(
         "config_snapshot_dir": str(config_snapshot_dir),
         "log_dir": str(batch_log_dir),
         "n_tasks": len(tasks),
+        "task_offset": max(0, int(offset or run_config.get("task_offset") or 0)),
+        "model_endpoints": resolved_model_endpoints,
+        "model_endpoint_counts": endpoint_counts,
         "n_failed_generation": sum(1 for row in generation_rows if row["status"] != "ok"),
         "judge_enabled": resolved_evaluate,
         "judge_model": resolved_judge_model,

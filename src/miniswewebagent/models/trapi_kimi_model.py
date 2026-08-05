@@ -229,6 +229,22 @@ class TrapiKimiModel(PhyagiModel):
             return {"type": "json_object"}
         return None
 
+    def _rate_limit_delay(self, exc: Exception, attempt: int) -> float:
+        """Seconds to wait after a 429.
+
+        Kimi's shared pool stays saturated for long windows and does not return
+        an actionable hint, so wait a long random interval to desynchronize
+        workers. ``Retry-After`` may only extend that wait, never shorten it.
+        """
+        delay = random.uniform(
+            RATE_LIMIT_BACKOFF_MIN_SECONDS,
+            RATE_LIMIT_BACKOFF_MAX_SECONDS,
+        )
+        retry_after = _retry_after_seconds(exc)
+        if retry_after is not None and retry_after > delay:
+            delay = min(retry_after, RATE_LIMIT_BACKOFF_MAX_SECONDS * 2)
+        return delay
+
     def _build_payload(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
         # Azure OpenAI infers the deployment from the URL; no top-level "model" field.
         payload: dict[str, Any] = {
@@ -285,17 +301,7 @@ class TrapiKimiModel(PhyagiModel):
                         self._log_gateway_error(event="rate_limit_error", attempt=rate_limit_attempt + 1, error=exc)
                         if rate_limit_attempt >= MAX_RATE_LIMIT_RETRIES:
                             raise
-                        # Random wait in [MIN, MAX] seconds to desynchronize workers
-                        # and let the shared TRAPI TPM bucket refill between retries.
-                        delay = random.uniform(
-                            RATE_LIMIT_BACKOFF_MIN_SECONDS,
-                            RATE_LIMIT_BACKOFF_MAX_SECONDS,
-                        )
-                        # Retry-After can only extend the wait, never shorten it.
-                        retry_after = _retry_after_seconds(exc)
-                        if retry_after is not None and retry_after > delay:
-                            delay = min(retry_after, RATE_LIMIT_BACKOFF_MAX_SECONDS * 2)
-                        await asyncio.sleep(delay)
+                        await asyncio.sleep(self._rate_limit_delay(exc, rate_limit_attempt))
                         continue
                     if _is_transient_gateway_error(exc):
                         self._log_gateway_error(event="transient_gateway_error", attempt=rate_limit_attempt + 1, error=exc)

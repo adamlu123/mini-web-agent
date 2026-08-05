@@ -192,6 +192,7 @@ def run_one(
     debug: bool = False,
     snapshot_config: bool = True,
     auto_model_overrides: dict[str, Any] | None = None,
+    model_overrides: dict[str, Any] | None = None,
 ) -> Any:
     config_spec = config_spec or [DEFAULT_CONFIG]
     configs = [get_config_from_spec(spec) for spec in config_spec]
@@ -251,6 +252,11 @@ def run_one(
 
     applied_auto = _apply_auto_model_overrides(config, auto_model_overrides)
 
+    # Unlike auto overrides, these always win over YAML: the caller pins them
+    # per task (e.g. the TRAPI deployment assigned to this task).
+    if model_overrides:
+        config = recursive_merge(config, {"model": dict(model_overrides)})
+
     model = get_model(config.get("model", {}))
     env = get_environment(config.get("environment", {}))
     agent = get_agent(model, env, config.get("agent", {}), default_type="default")
@@ -258,6 +264,8 @@ def run_one(
     console.print(f"Running task in [bold green]{resolved_output_dir}[/bold green]")
     if applied_auto:
         console.print(f"Auto model overrides applied: {applied_auto}")
+    if model_overrides:
+        console.print(f"Model overrides applied: {dict(model_overrides)}")
     run_exception: Exception | None = None
     close_exception: Exception | None = None
     result: dict[str, Any] = {}
