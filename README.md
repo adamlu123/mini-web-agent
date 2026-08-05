@@ -96,6 +96,24 @@ To stop the shared viewer and free the local port, kill all matching viewer and 
 pids=$(ps -eo pid=,command= | awk '/miniswewebagent\.run\.utilities\.trace_viewer --root outputs\/default --host 127\.0\.0\.1 --port 52869/ || /cloudflared tunnel --url http:\/\/127\.0\.0\.1:52869/ {print $1}'); [ -n "$pids" ] && kill $pids
 ```
 
+## Run compare
+
+To compare 1+ runs under the same `--root` as the trace viewer (e.g. a baseline config vs a candidate config), start `mini-web-traces` as above and query its `/api/compare` endpoint:
+
+```bash
+curl "http://127.0.0.1:8009/api/compare?runs=baseline,candidate&baseline=baseline"
+```
+
+`runs` is a comma-separated list of run folder names under `--root`; `baseline` (optional, defaults to the first run in `runs`) picks which run the others are diffed against. The response has a per-run `leaderboard` (success rate overall and by task level), a per-task `tasks` list (status in each run plus `flipsVsBaseline`: `improved` / `regressed` / `same_success` / `same_fail` / `unknown`), and a `diffSummary` with those counts aggregated overall and by level. Task levels (easy/medium/hard) are resolved from the bundled `run/benchmarks/om2w_260220.json` and `run/benchmarks/odysseys/odysseys.json` task files.
+
+For a terminal-only report (no server needed):
+
+```bash
+mini-web-compare --runs baseline,candidate --runs-root outputs/default
+```
+
+Add `--baseline <run_id>` to pick the baseline explicitly, or `--json` to print the raw comparison payload instead of tables.
+
 ## Review viewer
 
 To inspect sandbox runs alongside judge outputs:
