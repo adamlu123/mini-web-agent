@@ -35,7 +35,16 @@
         </div>
       </header>
 
-      <section class="workspace">
+      <nav class="tab-bar" role="tablist">
+        <button type="button" class="tab-btn active" id="traceTabBtn" role="tab" aria-selected="true">
+          Trace
+        </button>
+        <button type="button" class="tab-btn" id="compareTabBtn" role="tab" aria-selected="false">
+          Compare
+        </button>
+      </nav>
+
+      <section class="workspace" id="traceView">
         <aside class="sidebar card">
           <div class="sidebar-top">
             <h2>Tasks</h2>
@@ -188,8 +197,95 @@
           </section>
         </main>
       </section>
+
+      <section class="workspace compare-workspace" id="compareView" hidden>
+        <div class="compare-toolbar card">
+          <label class="control">
+            <span>Run A (baseline)</span>
+            <select id="compareRunA"></select>
+          </label>
+          <label class="control">
+            <span>Run B</span>
+            <select id="compareRunB"></select>
+          </label>
+          <button id="compareLoadBtn" type="button">Compare runs</button>
+          <div class="meta-pill grow">
+            <span>Status</span>
+            <strong id="compareStatusText">Loading...</strong>
+          </div>
+        </div>
+
+        <div class="card compare-leaderboard-card">
+          <h2>Leaderboard</h2>
+          <table class="leaderboard-table">
+            <thead>
+              <tr>
+                <th>Run</th>
+                <th>Overall</th>
+                <th>Easy</th>
+                <th>Medium</th>
+                <th>Hard</th>
+              </tr>
+            </thead>
+            <tbody id="leaderboardBody">
+              <tr>
+                <td colspan="5" class="empty-hint">No comparison loaded yet.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="compare-body">
+          <aside class="sidebar card">
+            <div class="sidebar-top">
+              <h2>Tasks</h2>
+              <div class="legend" id="compareFilterChips">
+                <button type="button" class="filter-chip active" data-filter="all" data-label="All">All</button>
+                <button type="button" class="filter-chip regressed" data-filter="regressed" data-label="Regressed">
+                  Regressed
+                </button>
+                <button type="button" class="filter-chip improved" data-filter="improved" data-label="Improved">
+                  Improved
+                </button>
+                <button
+                  type="button"
+                  class="filter-chip same_success"
+                  data-filter="same_success"
+                  data-label="Same pass"
+                >
+                  Same pass
+                </button>
+                <button type="button" class="filter-chip same_fail" data-filter="same_fail" data-label="Same fail">
+                  Same fail
+                </button>
+                <button type="button" class="filter-chip unknown" data-filter="unknown" data-label="Unknown">
+                  Unknown
+                </button>
+              </div>
+            </div>
+            <ul id="compareTaskList" class="task-list"></ul>
+          </aside>
+
+          <main class="main-panel">
+            <section class="summary card" id="compareEmptyState">
+              <p class="empty-hint">Select a task on the left to inspect Run A vs Run B side by side.</p>
+            </section>
+
+            <section class="step-card card compare-detail" id="compareDetail" hidden>
+              <div class="step-header">
+                <div>
+                  <h2 id="compareTaskTitle">-</h2>
+                  <p id="compareTaskMeta">-</p>
+                </div>
+              </div>
+              <div class="compare-columns" id="compareColumns"></div>
+            </section>
+          </main>
+        </div>
+      </section>
     </div>
 
     <script src="app.js"></script>
+    <script src="compare.js"></script>
   </body>
 </html>
