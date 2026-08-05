@@ -37,11 +37,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../../../lib/cluster_submit.sh
 source "$SCRIPT_DIR/../../../lib/cluster_submit.sh"
 MINI_WEB_AGENT_DIR="$(mwa_cluster_repo_root "$SCRIPT_DIR")"
-AIFSDK_ROOT="${AIFSDK_ROOT:-/home/luyadong/sandbox/aifsdk}"
+AIFSDK_ROOT="${AIFSDK_ROOT:-$HOME/sandbox/aifsdk}"
 SUBMIT="${SUBMIT:-$AIFSDK_ROOT/clusters/lambda/submission/submit_job.sh}"
 
 TASKS_SOURCE="${TASKS_SOURCE:-$MINI_WEB_AGENT_DIR/src/miniswewebagent/run/benchmarks/om2w_260220.json}"
-CREDENTIALS_FILE="${CREDENTIALS_FILE:-/home/luyadong/cred.sh}"
+CREDENTIALS_FILE="${CREDENTIALS_FILE:-$HOME/cred.sh}"
 
 EVAL_DIR_NAME="${EVAL_DIR_NAME:-outputs_eval_judgeonly_1}"
 JUDGE_MODEL="${JUDGE_MODEL:-o4-mini}"

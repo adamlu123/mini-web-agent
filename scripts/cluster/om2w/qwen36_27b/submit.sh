@@ -27,7 +27,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../../../lib/cluster_submit.sh
 source "$SCRIPT_DIR/../../../lib/cluster_submit.sh"
 MINI_WEB_AGENT_DIR="$(mwa_cluster_repo_root "$SCRIPT_DIR")"
-AIFSDK_ROOT="${AIFSDK_ROOT:-/home/luyadong/sandbox/aifsdk}"
+AIFSDK_ROOT="${AIFSDK_ROOT:-$HOME/sandbox/aifsdk}"
 SUBMIT="${SUBMIT:-$AIFSDK_ROOT/clusters/lambda/submission/submit_job.sh}"
 
 SOURCE_RUN="${SOURCE_RUN:-$MINI_WEB_AGENT_DIR/outputs/runs/qwen36_27b_lastobs_minimal_20260802_204810/g0}"
@@ -38,7 +38,7 @@ CONFIG_MANIFEST_SOURCE="${CONFIG_MANIFEST_SOURCE:-$SOURCE_RUN/config_snapshot/co
 # the complete task file referenced by the frozen config.
 TASKS_SOURCE="${TASKS_SOURCE:-$MINI_WEB_AGENT_DIR/src/miniswewebagent/run/benchmarks/om2w_260220.json}"
 CHAT_TEMPLATE_SOURCE="${CHAT_TEMPLATE_SOURCE:-$MINI_WEB_AGENT_DIR/src/miniswewebagent/config/eval/qwen3_5_train_aligned.jinja}"
-CREDENTIALS_FILE="${CREDENTIALS_FILE:-/home/luyadong/cred.sh}"
+CREDENTIALS_FILE="${CREDENTIALS_FILE:-$HOME/cred.sh}"
 
 MODEL_ID="${MODEL_ID:-/mnt/pvc/experiments/luyadong/models/webwright-teacher}"
 MODEL_NAME="${MODEL_NAME:-sft_ckpt}"

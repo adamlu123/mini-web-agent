@@ -13,6 +13,18 @@ Environment overrides:
   WORKERS, TP, GPU_MEMORY_UTILIZATION, FOLLOW_LOGS, CREDENTIALS_FILE,
   AIFSDK_ROOT, CHECKPOINT_STEP, STEP_LIMIT, MAX_CONTEXT_TOKENS,
   MAX_OUTPUT_TOKENS, CONTEXT_MARGIN.
+
+Per-user paths (defaults derive from $HOME; set explicitly if your layout
+differs):
+  AIFSDK_ROOT          aifsdk checkout          (default $HOME/sandbox/aifsdk)
+  CREDENTIALS_FILE     cred.sh with API keys    (default $HOME/cred.sh)
+  SOURCE_CONFIG_RUN    a mini-web-agent run dir containing config_snapshot/
+                       with merged_config.yaml, the source spec yaml, and
+                       config_spec_manifest.json. The default points at a run
+                       that only exists on the original author's machine —
+                       everyone else must set SOURCE_CONFIG_RUN (or the
+                       individual CONFIG_SOURCE / CONFIG_SPEC_SOURCE /
+                       CONFIG_MANIFEST_SOURCE overrides).
 EOF
 }
 
@@ -29,7 +41,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../../../lib/cluster_submit.sh
 source "$SCRIPT_DIR/../../../lib/cluster_submit.sh"
 MINI_WEB_AGENT_DIR="$(mwa_cluster_repo_root "$SCRIPT_DIR")"
-AIFSDK_ROOT="${AIFSDK_ROOT:-/home/luyadong/sandbox/aifsdk}"
+AIFSDK_ROOT="${AIFSDK_ROOT:-$HOME/sandbox/aifsdk}"
 PHITRAIN_SOURCE="${PHITRAIN_SOURCE:-$AIFSDK_ROOT/phitrain}"
 SUBMIT="${SUBMIT:-$AIFSDK_ROOT/clusters/lambda/submission/submit_job.sh}"
 
@@ -71,9 +83,18 @@ SOURCE_CONFIG_RUN="${SOURCE_CONFIG_RUN:-$MINI_WEB_AGENT_DIR/outputs/runs/qwen36_
 CONFIG_SOURCE="${CONFIG_SOURCE:-$SOURCE_CONFIG_RUN/config_snapshot/merged_config.yaml}"
 CONFIG_SPEC_SOURCE="${CONFIG_SPEC_SOURCE:-$SOURCE_CONFIG_RUN/config_snapshot/00_om2w_spb_vllm_lastobs_minimal.yaml}"
 CONFIG_MANIFEST_SOURCE="${CONFIG_MANIFEST_SOURCE:-$SOURCE_CONFIG_RUN/config_snapshot/config_spec_manifest.json}"
+for config_asset in "$CONFIG_SOURCE" "$CONFIG_SPEC_SOURCE" "$CONFIG_MANIFEST_SOURCE"; do
+    [[ -e "$config_asset" ]] || {
+        echo "[error] frozen config asset is missing: $config_asset" >&2
+        echo "[error] the SOURCE_CONFIG_RUN default points at a run dir that only exists" >&2
+        echo "[error] on the original author's machine; set SOURCE_CONFIG_RUN to a run dir" >&2
+        echo "[error] containing config_snapshot/ (see --help for details)" >&2
+        exit 1
+    }
+done
 TASKS_SOURCE="${TASKS_SOURCE:-$MINI_WEB_AGENT_DIR/src/miniswewebagent/run/benchmarks/om2w_260220.json}"
 CHAT_TEMPLATE_SOURCE="${CHAT_TEMPLATE_SOURCE:-$PHITRAIN_SOURCE/scripts/tools/data/tokenization/tokenizers/Qwen3.5-no-auto-think/chat_template.jinja}"
-CREDENTIALS_FILE="${CREDENTIALS_FILE:-/home/luyadong/cred.sh}"
+CREDENTIALS_FILE="${CREDENTIALS_FILE:-$HOME/cred.sh}"
 
 WORKERS="${WORKERS:-80}"
 JUDGE_NUM_PROC="${JUDGE_NUM_PROC:-32}"
