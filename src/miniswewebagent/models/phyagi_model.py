@@ -366,6 +366,24 @@ def _extract_response_text(payload: dict[str, Any]) -> str:
     return "\n".join(texts)
 
 
+def _extract_reasoning_summary(payload: dict[str, Any]) -> str:
+    """Join the summary text of every reasoning item in a Responses API payload.
+
+    Returns an empty string when summaries were not requested or the model chose
+    not to emit one (both are normal, e.g. at low reasoning effort).
+    """
+    texts: list[str] = []
+    for item in payload.get("output") or []:
+        if not isinstance(item, dict) or item.get("type") != "reasoning":
+            continue
+        for entry in item.get("summary") or []:
+            if isinstance(entry, dict) and isinstance(entry.get("text"), str):
+                texts.append(entry["text"])
+            elif isinstance(entry, str):
+                texts.append(entry)
+    return "\n\n".join(text for text in texts if text.strip())
+
+
 def _safe_int(value: Any) -> int:
     try:
         return int(value)
@@ -427,6 +445,10 @@ class PhyagiModelConfig(BaseModel):
     openai_gateway_endpoint: str = "https://gateway.phyagi.net/api"
     openai_gateway_tier: str = "base"
     reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh"] | None = None
+    # Ask the gateway to return a natural-language summary of the hidden reasoning.
+    # Without this the API returns reasoning items with an empty summary list, so the
+    # reasoning tokens are billed and then discarded. Set to None to disable.
+    reasoning_summary: Literal["auto", "concise", "detailed"] | None = "auto"
     cache_ttl: int | None = None
     session_id: str = ""
     strict_session: bool = False
@@ -595,6 +617,11 @@ class PhyagiModel:
             return None
         return self.config.error_log_path.parent / "raw_responses.jsonl"
 
+    def _reasoning_log_path(self) -> Path | None:
+        if self.config.error_log_path is None:
+            return None
+        return self.config.error_log_path.parent / "reasoning.jsonl"
+
     def format_message(self, **kwargs) -> dict[str, Any]:
         role = kwargs["role"]
         content = kwargs.get("content", "")
@@ -684,6 +711,8 @@ class PhyagiModel:
         }
         if self.config.reasoning_effort is not None:
             payload["reasoning"] = {"effort": self.config.reasoning_effort}
+            if self.config.reasoning_summary is not None:
+                payload["reasoning"]["summary"] = self.config.reasoning_summary
         if self.config.response_mode == "json_schema":
             payload["text"] = {
                 "format": {
@@ -719,6 +748,7 @@ class PhyagiModel:
 
         last_error: ValueError | None = None
         raw_text = ""
+        reasoning_summary = ""
         request_messages = list(messages)
         for attempt_index in range(MAX_JSON_PARSE_RETRIES + 1):
             payload = self._build_payload(request_messages)
@@ -784,6 +814,18 @@ class PhyagiModel:
                 attempt=attempt_index + 1,
                 raw_text=raw_text,
             )
+            reasoning_summary = _extract_reasoning_summary(response_payload)
+            if reasoning_summary:
+                append_runtime_log(
+                    self._reasoning_log_path(),
+                    source="model",
+                    event="reasoning_summary",
+                    attempt=attempt_index + 1,
+                    model=self.config.model_name,
+                    reasoning_effort=self.config.reasoning_effort,
+                    reasoning_tokens=self._last_usage_metrics.get("reasoning_output_tokens", 0),
+                    reasoning_summary=reasoning_summary,
+                )
             try:
                 parsed = self._parse_model_output(raw_text)
                 break
@@ -819,6 +861,7 @@ class PhyagiModel:
                 "done": bool(parsed.get("done", False)),
                 "final_response": parsed.get("final_response", ""),
                 "raw_response": parsed,
+                "reasoning_summary": reasoning_summary,
                 "usage": self._usage_snapshot(),
             },
         )

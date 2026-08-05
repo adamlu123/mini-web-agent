@@ -9,6 +9,7 @@ import httpx
 from miniswewebagent.exceptions import FormatError
 from miniswewebagent.models.phyagi_model import (
     PhyagiModel,
+    _extract_reasoning_summary,
     _serialize_response_input,
     parse_sft_state_output,
     parse_xml_output,
@@ -562,7 +563,47 @@ def test_phyagi_model_includes_reasoning_effort_in_payload() -> None:
 
     payload = model._build_payload([{"role": "user", "content": "Task"}])
 
+    assert payload["reasoning"] == {"effort": "xhigh", "summary": "auto"}
+
+
+def test_phyagi_model_reasoning_summary_can_be_disabled() -> None:
+    model = PhyagiModel(
+        openai_gateway_api_key="dummy",
+        reasoning_effort="xhigh",
+        reasoning_summary=None,
+    )
+
+    payload = model._build_payload([{"role": "user", "content": "Task"}])
+
     assert payload["reasoning"] == {"effort": "xhigh"}
+
+
+def test_phyagi_model_omits_reasoning_block_without_effort() -> None:
+    model = PhyagiModel(openai_gateway_api_key="dummy")
+
+    payload = model._build_payload([{"role": "user", "content": "Task"}])
+
+    assert "reasoning" not in payload
+
+
+def test_extract_reasoning_summary_joins_summary_items() -> None:
+    payload = {
+        "output": [
+            {"type": "reasoning", "summary": [{"type": "summary_text", "text": "first"}]},
+            {"type": "reasoning", "summary": [{"type": "summary_text", "text": "second"}]},
+            {"type": "message", "content": [{"text": "{}"}]},
+        ]
+    }
+
+    assert _extract_reasoning_summary(payload) == "first\n\nsecond"
+
+
+def test_extract_reasoning_summary_handles_missing_summaries() -> None:
+    # The gateway returns reasoning items with an empty summary list when it
+    # chooses not to emit one, which is common even at high effort.
+    assert _extract_reasoning_summary({"output": [{"type": "reasoning", "summary": []}]}) == ""
+    assert _extract_reasoning_summary({"output": [{"type": "message"}]}) == ""
+    assert _extract_reasoning_summary({}) == ""
 
 
 def test_phyagi_model_legacy_endpoint_is_normalized_to_sdk_base_url() -> None:
@@ -684,3 +725,87 @@ def test_parse_sft_state_output_first_block_is_a_noop_for_single_blocks(raw: str
 def test_parse_sft_state_output_first_block_still_rejects_invalid_states(raw: str) -> None:
     with pytest.raises(ValueError):
         parse_sft_state_output(raw, first_block=True)
+
+
+def _json_message_payload_with_reasoning(text: str, summary: list | None) -> dict:
+    reasoning_item: dict = {"type": "reasoning", "summary": summary or []}
+    return {
+        "output": [
+            reasoning_item,
+            {"type": "message", "content": [{"type": "output_text", "text": text}]},
+        ],
+        "usage": {
+            "input_tokens": 10,
+            "output_tokens": 5,
+            "total_tokens": 15,
+            "output_tokens_details": {"reasoning_tokens": 4},
+        },
+    }
+
+
+_JSON_STEP = '{"thought":"t","bash_command":"ls","done":false,"final_response":""}'
+
+
+def test_query_writes_reasoning_summary_to_task_folder(monkeypatch, tmp_path) -> None:
+    fake_cls, _ = _make_fake_async_openai(
+        _json_message_payload_with_reasoning(
+            _JSON_STEP, [{"type": "summary_text", "text": "**Plan**\nDo the thing."}]
+        )
+    )
+    monkeypatch.setattr("miniswewebagent.models.phyagi_model.AsyncOpenAI", fake_cls)
+
+    model = PhyagiModel(
+        openai_gateway_api_key="dummy",
+        response_mode="json_schema",
+        reasoning_effort="xhigh",
+        error_log_path=tmp_path / "runtime_errors.jsonl",
+    )
+    message = model.query([{"role": "user", "content": "Task"}])
+
+    assert message["extra"]["reasoning_summary"] == "**Plan**\nDo the thing."
+
+    log_path = tmp_path / "reasoning.jsonl"
+    assert log_path.exists()
+    record = json.loads(log_path.read_text().strip())
+    assert record["event"] == "reasoning_summary"
+    assert record["reasoning_summary"] == "**Plan**\nDo the thing."
+    assert record["reasoning_effort"] == "xhigh"
+    assert record["reasoning_tokens"] == 4
+
+
+def test_query_skips_reasoning_log_when_no_summary_returned(monkeypatch, tmp_path) -> None:
+    fake_cls, _ = _make_fake_async_openai(
+        _json_message_payload_with_reasoning(_JSON_STEP, [])
+    )
+    monkeypatch.setattr("miniswewebagent.models.phyagi_model.AsyncOpenAI", fake_cls)
+
+    model = PhyagiModel(
+        openai_gateway_api_key="dummy",
+        response_mode="json_schema",
+        reasoning_effort="xhigh",
+        error_log_path=tmp_path / "runtime_errors.jsonl",
+    )
+    message = model.query([{"role": "user", "content": "Task"}])
+
+    assert message["extra"]["reasoning_summary"] == ""
+    assert not (tmp_path / "reasoning.jsonl").exists()
+
+
+def test_reasoning_summary_is_not_replayed_into_model_context(monkeypatch, tmp_path) -> None:
+    fake_cls, state = _make_fake_async_openai(
+        _json_message_payload_with_reasoning(
+            _JSON_STEP, [{"type": "summary_text", "text": "SECRET_REASONING"}]
+        )
+    )
+    monkeypatch.setattr("miniswewebagent.models.phyagi_model.AsyncOpenAI", fake_cls)
+
+    model = PhyagiModel(
+        openai_gateway_api_key="dummy",
+        response_mode="json_schema",
+        reasoning_effort="xhigh",
+        error_log_path=tmp_path / "runtime_errors.jsonl",
+    )
+    assistant = model.query([{"role": "user", "content": "Task"}])
+    model.query([{"role": "user", "content": "Task"}, assistant])
+
+    assert "SECRET_REASONING" not in json.dumps(state["last_kwargs"]["input"])
