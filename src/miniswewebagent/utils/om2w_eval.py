@@ -4,6 +4,7 @@ import json
 import re
 import shutil
 import subprocess
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +12,6 @@ from miniswewebagent.utils.browser_evidence import (
     load_browser_steps,
     resolve_workspace_path,
 )
-
 
 _PLACEHOLDER_PNG_BYTES = bytes.fromhex(
     "89504e470d0a1a0a"
@@ -179,22 +179,62 @@ SANDBOX_JUDGE_MODE = "WebJudge_Online_Mind2Web_Sandbox_eval"
 PERSISTENT_CLI_JUDGE_MODE = "WebJudge_Online_Mind2Web_eval"
 
 
+class JudgeInterface(str, Enum):
+    """Command-line contracts supported by the OM2W judge launcher."""
+
+    SANDBOX = "sandbox"
+    PERSISTENT_CLI = "persistent-cli"
+
+
+_PERSISTENT_CLI_SCRIPT_NAMES = frozenset(
+    {
+        # Canonical entry points.
+        "persistent_cli.py",
+        "persistent_cli_steps.py",
+        # Compatibility entry points retained during the migration.
+        "eval_persistent_cli_with_original_om2w.py",
+        "eval_persistent_cli_steps_with_original_om2w.py",
+    }
+)
+
+
 def is_persistent_cli_judge_script(judge_script: Path) -> bool:
-    """True for scripts/eval_persistent_cli[_steps]_with_original_om2w.py.
+    """Return whether a known legacy or canonical persistent CLI was selected.
 
-    Those evaluators read browser-steps.jsonl actions and root screenshots/*.png,
-    which is the layout the persistent browser CLI produces. They expose a
-    different CLI than om2w_judge/run.py: no --mode, and --num_worker rather
-    than --num_proc.
+    New callers should pass :class:`JudgeInterface` explicitly. Exact filename
+    matching remains for callers and configs created before that interface was
+    available.
     """
-    name = judge_script.name
-    return name.startswith("eval_persistent_cli") and name.endswith("_with_original_om2w.py")
+    return judge_script.name in _PERSISTENT_CLI_SCRIPT_NAMES
 
 
-def judge_result_file_path(output_dir: Path, judge_model: str, *, judge_script: Path | None = None) -> Path:
+def resolve_judge_interface(
+    *,
+    judge_interface: JudgeInterface | str | None = None,
+    judge_script: Path | None = None,
+) -> JudgeInterface:
+    """Resolve the judge CLI contract, preferring an explicit selection."""
+    if judge_interface is not None:
+        return JudgeInterface(judge_interface)
+    if judge_script is not None and is_persistent_cli_judge_script(judge_script):
+        return JudgeInterface.PERSISTENT_CLI
+    return JudgeInterface.SANDBOX
+
+
+def judge_result_file_path(
+    output_dir: Path,
+    judge_model: str,
+    *,
+    judge_script: Path | None = None,
+    judge_interface: JudgeInterface | str | None = None,
+) -> Path:
+    interface = resolve_judge_interface(
+        judge_interface=judge_interface,
+        judge_script=judge_script,
+    )
     mode = (
         PERSISTENT_CLI_JUDGE_MODE
-        if judge_script is not None and is_persistent_cli_judge_script(judge_script)
+        if interface is JudgeInterface.PERSISTENT_CLI
         else SANDBOX_JUDGE_MODE
     )
     return output_dir / f"{mode}_{judge_model}_score_threshold_3_auto_eval_results.json"
@@ -491,9 +531,14 @@ def run_online_mind2web_judge(
     api_key: str,
     endpoint_target_uri: str = "",
     log_path: Path | None = None,
+    judge_interface: JudgeInterface | str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     output_dir.mkdir(parents=True, exist_ok=True)
-    if is_persistent_cli_judge_script(judge_script):
+    interface = resolve_judge_interface(
+        judge_interface=judge_interface,
+        judge_script=judge_script,
+    )
+    if interface is JudgeInterface.PERSISTENT_CLI:
         cmd = [
             str(judge_python),
             str(judge_script),
@@ -536,7 +581,11 @@ def run_online_mind2web_judge(
         ]
     if endpoint_target_uri:
         cmd.extend(["--endpoint_target_uri", endpoint_target_uri])
-    completed = subprocess.run(cmd, text=True, capture_output=True)
+    completed = subprocess.run(  # noqa: PLW1510 - caller inspects the completed status
+        cmd,
+        text=True,
+        capture_output=True,
+    )
     if log_path is not None:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         log_path.write_text(
@@ -544,6 +593,11 @@ def run_online_mind2web_judge(
             encoding="utf-8",
         )
     normalize_online_mind2web_judge_results(
-        result_file=judge_result_file_path(output_dir, judge_model, judge_script=judge_script),
+        result_file=judge_result_file_path(
+            output_dir,
+            judge_model,
+            judge_script=judge_script,
+            judge_interface=interface,
+        ),
     )
     return completed

@@ -384,3 +384,51 @@ def test_run_online_mind2web_judge_defaults_to_sandbox_eval(tmp_path, monkeypatc
     cmd = captured["cmd"]
     assert cmd[2] == "--mode"
     assert cmd[3] == "WebJudge_Online_Mind2Web_Sandbox_eval"
+
+
+def test_canonical_persistent_judge_script_uses_persistent_cli_contract(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from miniswewebagent.utils import om2w_eval
+
+    captured = {}
+
+    def fake_run(cmd, text, capture_output):
+        captured["cmd"] = cmd
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(om2w_eval.subprocess, "run", fake_run)
+
+    judge_script = tmp_path / "scripts" / "eval" / "persistent_cli_steps.py"
+    om2w_eval.run_online_mind2web_judge(
+        judge_python=tmp_path / "python",
+        judge_script=judge_script,
+        trajectories_dir=tmp_path / "traj",
+        output_dir=tmp_path / "out",
+        judge_model="o4-mini",
+        num_proc=4,
+        api_key="key",
+    )
+
+    cmd = captured["cmd"]
+    assert "--mode" not in cmd
+    assert cmd[cmd.index("--num_worker") + 1] == "4"
+    assert om2w_eval.judge_result_file_path(
+        tmp_path,
+        "o4-mini",
+        judge_script=judge_script,
+    ).name.startswith(om2w_eval.PERSISTENT_CLI_JUDGE_MODE)
+
+
+def test_explicit_judge_interface_overrides_script_name(tmp_path) -> None:
+    from miniswewebagent.utils import om2w_eval
+
+    result_path = om2w_eval.judge_result_file_path(
+        tmp_path,
+        "o4-mini",
+        judge_script=tmp_path / "unknown-name.py",
+        judge_interface=om2w_eval.JudgeInterface.PERSISTENT_CLI,
+    )
+
+    assert result_path.name.startswith(om2w_eval.PERSISTENT_CLI_JUDGE_MODE)

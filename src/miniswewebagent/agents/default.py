@@ -110,6 +110,14 @@ def _python_action_text(action: dict[str, Any]) -> str:
     return str(action.get("python_code") or "").strip()
 
 
+def _rejects_python_code_actions(environment: Any) -> bool:
+    """Whether a local workspace requires the explicit shell action field."""
+    return (
+        environment.__class__.__name__ == "LocalWorkspaceEnvironment"
+        and not getattr(environment, "accepts_legacy_python_code", False)
+    )
+
+
 def _markdown_code_fence_language(*, bash_command_text: str, python_code_text: str) -> str:
     if bash_command_text:
         return "bash"
@@ -120,7 +128,7 @@ def _markdown_code_fence_language(*, bash_command_text: str, python_code_text: s
 
 # ---------------------------------------------------------------------------
 # om2w judge helpers (upstream WebJudge_Online_Mind2Web_eval, used when
-# AgentConfig.judge_mode == "om2w"). Mirrors scripts/eval_with_original_om2w.py.
+# AgentConfig.judge_mode == "om2w"). Mirrors the packaged OM2W judge adapter.
 # ---------------------------------------------------------------------------
 
 _OM2W_STEP_ACTION_RE = re.compile(r"^\s*step\s+\d+\s+action\s*:\s*.+\s*$", re.IGNORECASE)
@@ -576,7 +584,7 @@ class DefaultAgent:
     def _om2w_gate_error(self) -> str | None:
         """Run the upstream WebJudge_Online_Mind2Web_eval on the latest run and gate on it.
 
-        Mirrors scripts/eval_with_original_om2w.py: reads last_actions from
+        Mirrors ``miniswewebagent.evaluation.om2w.judge``: reads last_actions from
         final_script_log.txt (matching ``step <N> action: ...``), screenshots from
         ``screenshots/final_execution_<N>*.png``, then calls the upstream judge.
         The verdict is cached in ``final_runs/run_<id>/om2w_judge_result.json``.
@@ -968,7 +976,21 @@ class DefaultAgent:
                     },
                 )
             )
-        outputs = [self.env.execute(action) for action in extra.get("actions", [])]
+        actions = extra.get("actions", [])
+        if _rejects_python_code_actions(self.env) and any(
+            _python_action_text(action) for action in actions
+        ):
+            raise FormatError(
+                self.model.format_message(
+                    role="user",
+                    content=(
+                        "Format error: `python_code` actions are not supported by "
+                        "local_workspace; use `bash_command` instead."
+                    ),
+                    extra={"interrupt_type": "FormatError"},
+                )
+            )
+        outputs = [self.env.execute(action) for action in actions]
         self._write_debug_step_artifact(step_index=self.n_calls, assistant_message=message, outputs=outputs)
         observation_messages = self.model.format_observation_messages(message, outputs, self.get_template_vars())
         if self.config.attach_instance_template_after_observation:

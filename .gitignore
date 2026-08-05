@@ -2,5 +2,6 @@ outputs/
 __pycache__/
 *.pyc
 logs/
+scripts/.tools/
 om2w_judge/output_*
 om2w_judge/archive/

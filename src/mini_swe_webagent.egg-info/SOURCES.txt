@@ -14,6 +14,8 @@ src/miniswewebagent/agents/iterative.py
 src/miniswewebagent/agents/iterative_strict.py
 src/miniswewebagent/config/__init__.py
 src/miniswewebagent/config/mini.yaml
+src/miniswewebagent/config/__pycache__/__init__.cpython-311.pyc
+src/miniswewebagent/config/__pycache__/__init__.cpython-312.pyc
 src/miniswewebagent/config/archive/best_default_judge.yaml
 src/miniswewebagent/config/archive/best_default_judge_json_claude.yaml
 src/miniswewebagent/config/archive/best_default_judge_json_kimi.yaml
@@ -49,6 +51,11 @@ src/miniswewebagent/config/generation/best_default_persistent_cli_minimal_gpt55.
 src/miniswewebagent/environments/__init__.py
 src/miniswewebagent/environments/local_browser.py
 src/miniswewebagent/environments/local_workspace.py
+src/miniswewebagent/evaluation/__init__.py
+src/miniswewebagent/evaluation/om2w/__init__.py
+src/miniswewebagent/evaluation/om2w/artifacts.py
+src/miniswewebagent/evaluation/om2w/judge.py
+src/miniswewebagent/evaluation/om2w/runner.py
 src/miniswewebagent/models/__init__.py
 src/miniswewebagent/models/anthropic_model.py
 src/miniswewebagent/models/azure_responses_model.py
@@ -61,6 +68,7 @@ src/miniswewebagent/run/iterative.py
 src/miniswewebagent/run/mini.py
 src/miniswewebagent/run/benchmarks/__init__.py
 src/miniswewebagent/run/benchmarks/om2w.py
+src/miniswewebagent/run/benchmarks/webtail_flight_hotel.py
 src/miniswewebagent/run/benchmarks/WTB/webtail_flight_hotel.py
 src/miniswewebagent/run/utilities/__init__.py
 src/miniswewebagent/run/utilities/mini_extra.py
@@ -94,6 +102,7 @@ src/miniswewebagent/viewer/index.html
 src/miniswewebagent/viewer/styles.css
 tests/test_browser_evidence.py
 tests/test_browser_session_cli.py
+tests/test_context_budget_and_discovery.py
 tests/test_end_to_end_smoke.py
 tests/test_image_qa.py
 tests/test_local_browser_environment.py
@@ -101,11 +110,14 @@ tests/test_local_workspace_environment.py
 tests/test_om2w_batch_cli.py
 tests/test_om2w_eval_utils.py
 tests/test_om2w_judge_run.py
+tests/test_om2w_tasks_loader.py
 tests/test_openrouter_model.py
 tests/test_phyagi_model.py
 tests/test_policy_judge.py
 tests/test_probe_website_cli.py
+tests/test_qwen35_lastobs_preprocessing.py
 tests/test_review_viewer.py
+tests/test_script_layout.py
 tests/test_self_reflection.py
 tests/test_trace_viewer.py
 tests/test_trajectory_completion_gate.py

@@ -32,6 +32,11 @@ class LocalWorkspaceEnvironmentConfig(BaseModel):
 
 
 class LocalWorkspaceEnvironment:
+    # Older model prompts emitted shell commands in the `python_code` field.
+    # The workspace executor intentionally treats that field as a shell-command
+    # alias until those saved configs and checkpoints are retired.
+    accepts_legacy_python_code = True
+
     def __init__(self, *, config_class: type = LocalWorkspaceEnvironmentConfig, **kwargs):
         self.config = config_class(**kwargs)
         self.config.output_dir = self.config.output_dir.expanduser()

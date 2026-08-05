@@ -27,6 +27,10 @@ from miniswewebagent.utils.serialize import recursive_merge
 app = typer.Typer(no_args_is_help=False)
 console = Console(highlight=False)
 
+# Compatibility patch point retained for callers and tests that replaced the
+# pre-refactor module-level runner.
+run_one = run_one_default
+
 DEFAULT_BENCHMARK_CONFIG = "archive/benchmark/om2w_hard_local_workspace.yaml"
 DEFAULT_OM2W_CONFIGS = [DEFAULT_CONFIG, DEFAULT_BENCHMARK_CONFIG]
 DEFAULT_LOG_ROOT = Path("/Users/lu/Documents/sandbox/mini-swe-agent/logs")
@@ -91,7 +95,7 @@ def _resolve_run_one(iterative: bool):
     if iterative:
         from miniswewebagent.run.iterative import run_one as run_one_iter
         return run_one_iter
-    return run_one_default
+    return run_one
 
 
 def _run_task_worker(

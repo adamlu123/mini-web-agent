@@ -59,7 +59,9 @@ A retry of these 7 tasks was launched in screen session `op47_retry7` into `outp
 
 - N=50 snapshot has 293 task dirs (300 − 7 missing). Eval skipped 1 (`9829f3087ab1f9c8eba6b6dd2b831d25_112325` has dir but 0 PNGs at N=50), yielding 292 rows.
 - N=100..300 snapshots each have 294 task dirs (300 − 6 missing). Eval skipped 1 (`949dc965a6c23a95663b3bc2ca2c3a8a` — 0 PNGs under its `run_001/screenshots/`), yielding 293 rows.
-- Eval script: [scripts/eval_with_original_om2w.py](../scripts/eval_with_original_om2w.py) with `--plain_text` action loader, `--num_worker 300`.
+- Archived eval script:
+  [`scripts/archive/2026-04/eval_with_original_om2w.py`](../scripts/archive/2026-04/eval_with_original_om2w.py)
+  with the `--plain_text` action loader and `--num_worker 300`.
   - The `load_screenshots` helper was relaxed in this session to accept any `*.png` (not only `final_execution_*`) so it handles op47's naming (`01_*`, `cp1_*`, `critical_point_*`).
 - Raw per-task results:
   - [0422_all_best_default_json_sum20_s300_final_resp_op47_N50_eval](../outputs/default/0422_all_best_default_json_sum20_s300_final_resp_op47_N50_eval/WebJudge_Online_Mind2Web_eval_o4-mini_score_threshold_3_auto_eval_results.json)

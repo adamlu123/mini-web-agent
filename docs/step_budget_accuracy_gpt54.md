@@ -35,7 +35,9 @@ Excludes tasks whose agent trajectories were missing from the run directory.
 
 - N=50..250 each have 299 / 300 tasks with trajectories; the one missing (in every run) is hard task `c03ee2be3d73556ab789c0ad1cbd3451` (AKC dog-groomer search).
 - N=300 has 298 rows: 299 materialized task folders minus 1 skip (`bf3b311cc8dce16d3de844f4b5875dfd` has no screenshots under its latest `run_*`). Plus the same missing benchmark id as above.
-- The eval script used is [scripts/eval_with_original_om2w.py](scripts/eval_with_original_om2w.py) with `--plain_text` action loader, 300 parallel workers.
+- The archived eval script used was
+  [`scripts/archive/2026-04/eval_with_original_om2w.py`](../scripts/archive/2026-04/eval_with_original_om2w.py)
+  with the `--plain_text` action loader and 300 parallel workers.
 - Raw per-task results:
   - [0421_all_best_default_json_sum20_s300_N50_eval](outputs/default/0421_all_best_default_json_sum20_s300_N50_eval/WebJudge_Online_Mind2Web_eval_o4-mini_score_threshold_3_auto_eval_results.json)
   - [0421_all_best_default_json_sum20_s300_N100_eval](outputs/default/0421_all_best_default_json_sum20_s300_N100_eval/WebJudge_Online_Mind2Web_eval_o4-mini_score_threshold_3_auto_eval_results.json)
@@ -60,5 +62,6 @@ Cost formula: `(input − cached) · $2.50 + cached · $0.25 + output · $15.00`
 | 250         |      436,899,060 |       34,420,480 |        13,064,434 | 1,456,330 |     43,548 |         **1,210.77** |                **4.0359** |
 | 300         |      446,738,012 |       36,241,792 |        13,312,053 | 1,489,127 |     44,374 |         **1,234.98** |                **4.1166** |
 
-- Script: [scripts/token_usage_by_step_budget.py](scripts/token_usage_by_step_budget.py)
+- Archived script:
+  [`scripts/archive/2026-04/token_usage_by_step_budget.py`](../scripts/archive/2026-04/token_usage_by_step_budget.py)
 - Per-task CSV: `/tmp/token_usage_by_budget.csv`

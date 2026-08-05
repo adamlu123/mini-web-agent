@@ -82,20 +82,20 @@ Two scripts do this; both are parameterized by env vars (see their headers).
 
 ```bash
 # 1. serve the checkpoint  (own tmux window -- see the pane-index gotcha below)
-CKPT=/path/to/ctx2-<variant>-hf-vlm GPUS=0 TP=1 bash scripts/serve_vllm_qwen35_local.sh
+CKPT=/path/to/ctx2-<variant>-hf-vlm GPUS=0 TP=1 bash scripts/local/om2w/serve_qwen35.sh
 
 # 2. run the benchmark against it
 CFG=eval/om2w_spb_vllm_sw10.yaml OUT=outputs/qwen35_4b_sw10 WORKERS=8 \
-  bash scripts/run_om2w_vllm_local.sh
+  bash scripts/local/om2w/run.sh
 ```
 
-`serve_vllm_qwen35_local.sh` carries the two flashinfer workarounds this host needs,
+`scripts/local/om2w/serve_qwen35.sh` carries the two flashinfer workarounds this host needs,
 enables prefix caching (opt-in for hybrid models like Qwen3.5), and passes the
 **train-aligned chat template**. Without that template vLLM falls back to the
 checkpoint's stock Qwen3.5 one, which strips `<think>` from every history assistant
 turn and prefills `<think>` into the generation prompt — both train/eval mismatches
 for SFT checkpoints (see the note in the script; `CHAT_TEMPLATE=` disables it).
-`run_om2w_vllm_local.sh` puts the venv on `PATH`, which the agent needs to resolve
+`scripts/local/om2w/run.sh` puts the venv on `PATH`, which the agent needs to resolve
 `python -m browser_session`.
 
 Configs (`src/miniswewebagent/config/eval/`) differ only in how history is fed to the
@@ -121,7 +121,7 @@ falls back to the server default (vLLM uses 1.0 when the checkpoint ships no
 `generation_config.json`).
 
 Non-default ports: the `eval/om2w_spb_vllm_*.yaml` configs hardcode
-`127.0.0.1:8000` in `environment.env`. `scripts/run_om2w_vllm_local.sh` takes
+`127.0.0.1:8000` in `environment.env`. `scripts/local/om2w/run.sh` takes
 `EXTRA_CFG` (space-separated dotted `-c` overrides) to repoint them, e.g. when
 sharding one benchmark across two servers.
 
@@ -212,7 +212,7 @@ beyond `pyproject.toml` (`openai` is imported by `phyagi_model.py` but is not de
 a dependency). Serving Qwen3.5 via the shared `phitrain` venv needs
 `FLASHINFER_DISABLE_VERSION_CHECK=1` and `VLLM_USE_FLASHINFER_SAMPLER=0` — flashinfer's
 sampling kernel does not compile against the installed CUB. Both are baked into
-`scripts/serve_vllm_qwen35_local.sh`.
+`scripts/local/om2w/serve_qwen35.sh`.
 
 Gotchas learned the hard way:
 

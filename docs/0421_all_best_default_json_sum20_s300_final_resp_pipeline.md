@@ -18,7 +18,8 @@ Companion docs (still current):
 
 ## 1. Launch command
 
-Taken verbatim from [scripts/run_command.sh](../scripts/run_command.sh#L56-L60):
+Taken verbatim from
+[`scripts/archive/2026-04/run_command.sh`](../scripts/archive/2026-04/run_command.sh#L56-L60):
 
 ```bash
 source /home/luyadong/cred.sh
@@ -238,7 +239,7 @@ Its only role is to unblock the `done: true` gate. Its verdict is cached in
 
 After (or after-the-fact for completed runs) the directory is scored with
 the upstream Online-Mind2Web judge via
-[scripts/eval_with_original_om2w.py](../scripts/eval_with_original_om2w.py).
+[`scripts/archive/2026-04/eval_with_original_om2w.py`](../scripts/archive/2026-04/eval_with_original_om2w.py).
 That script:
 
 1. Iterates every `<task_id>/` folder in
@@ -265,8 +266,8 @@ The pattern used downstream for this run was
 `outputs/default/0421_all_best_default_json_sum20_s300_final_resp_eval/`
 (or the step-budget snapshots `..._N<budget>_eval/` for
 partial-trajectory ablations; see the `_N50 / _N100 / _N150 / _N200 / _N250`
-series created by `scripts/materialize_budget_snapshots.py` +
-`scripts/eval_with_original_om2w.py`).
+series created by `scripts/archive/2026-04/materialize_budget_snapshots.py` +
+`scripts/archive/2026-04/eval_with_original_om2w.py`).
 
 An embedded `run.judge_script: om2w_judge/run.py` is wired via
 `run_online_mind2web_judge` so that per-task judging can also happen inline
@@ -310,7 +311,7 @@ per task_id/:
   steps/ · screenshots/ · debug/steps/ · trajectory/ · final_runs/run_*/ · result.json
         │
         ▼
-scripts/eval_with_original_om2w.py     (run separately, --model o4-mini --num_worker 300)
+scripts/archive/2026-04/eval_with_original_om2w.py     (run separately, --model o4-mini --num_worker 300)
         │  pulls last_actions + images_path from the latest final_runs/run_<id>/
         │  calls upstream WebJudge_Online_Mind2Web_eval
         ▼

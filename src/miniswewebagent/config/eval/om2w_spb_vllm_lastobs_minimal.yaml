@@ -97,7 +97,7 @@ run:
   # om2w_judge/run.py's WebJudge_Online_Mind2Web_Sandbox_eval mode globs for. With
   # the default judge every screenshot is silently dropped and tasks are scored on
   # action text alone, so point the scorer at the persistent-CLI evaluator.
-  judge_script: scripts/eval_persistent_cli_steps_with_original_om2w.py
+  judge_script: scripts/eval/persistent_cli_steps.py
   logs_root: logs
 
 agent:

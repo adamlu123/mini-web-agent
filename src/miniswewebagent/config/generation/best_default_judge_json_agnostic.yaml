@@ -104,7 +104,7 @@ agent:
   require_self_reflection_success: true
   # Completion-gate judge. "tool" = read final_runs/run_<id>/judge_result.json
   # written by miniswewebagent.tools.self_reflection. "om2w" = run the upstream
-  # WebJudge_Online_Mind2Web_eval (see scripts/eval_with_original_om2w.py) on
+  # WebJudge_Online_Mind2Web_eval (see scripts/eval/persistent_cli.py) on
   # the latest run's final_script_log.txt + screenshots and require
   # predicted_label == 1. Result cached at
   # final_runs/run_<id>/om2w_judge_result.json.

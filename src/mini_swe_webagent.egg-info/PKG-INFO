@@ -129,22 +129,23 @@ mini-web-review --runs-root outputs/sandbox --judge-root om2w_judge --port 8010
 Or use the repo helper that mirrors the remote viewer workflow:
 
 ```bash
-bash scripts/start_review_viewer.sh 8010
+bash scripts/review/viewer.sh 8010
 ```
 
 To launch it on a remote machine and keep it localhost-only:
 
 ```bash
-bash scripts/start_remote_review_viewer.sh 52870
+bash scripts/review/viewer.sh 52870
 ```
 
 Then, in a second terminal on that same machine:
 
 ```bash
-bash scripts/start_public_tunnel.sh 52870
+bash scripts/review/tunnel.sh 52870
 ```
 
 Share the `https://*.trycloudflare.com` URL printed by `cloudflared`.
+See [`scripts/README.md`](scripts/README.md) for the complete script command matrix.
 
 ## Docs
 
