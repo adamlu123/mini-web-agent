@@ -114,6 +114,8 @@ mini-web-compare --runs baseline,candidate --runs-root outputs/default
 
 Add `--baseline <run_id>` to pick the baseline explicitly, or `--json` to print the raw comparison payload instead of tables.
 
+`mini-web-traces` also has a **Compare** tab (next to Trace) that drives the same `/api/compare` endpoint from the browser: pick a baseline run and a candidate run, and it shows the leaderboard table plus a filterable task list (all / regressed / improved / same pass / same fail / unknown). Clicking a task opens a side-by-side view of that task's steps in both runs — screenshots, thought, action, and final response for run A and run B, each with its own step navigation — by reusing the same `/api/task` and `/artifact` endpoints the Trace tab uses.
+
 ## Review viewer
 
 To inspect sandbox runs alongside judge outputs:
