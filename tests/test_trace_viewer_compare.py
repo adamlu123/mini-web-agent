@@ -114,6 +114,24 @@ def test_api_compare_rejects_unknown_run_id(tmp_path: Path) -> None:
         server.server_close()
 
 
+def test_api_compare_rejects_baseline_not_in_runs(tmp_path: Path) -> None:
+    root = tmp_path / "outputs"
+    _write_task(root / "run_a", "task-1")
+    _write_task(root / "run_b", "task-1")
+
+    server = _start_server(root)
+    try:
+        try:
+            _get_json(f"http://127.0.0.1:{server.server_port}/api/compare?runs=run_a,run_b&baseline=run_c")
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 400
+        else:
+            raise AssertionError("Expected a 400 when baseline is not one of runs")
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_api_compare_uses_bundled_task_levels(tmp_path: Path) -> None:
     root = tmp_path / "outputs"
     known_task_id = "b7258ee05d75e6c50673a59914db412e_110325"  # bundled om2w_260220.json sample, level=medium
