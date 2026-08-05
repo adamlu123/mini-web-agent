@@ -26,6 +26,8 @@ EVAL_DIR_NAME="${EVAL_DIR_NAME:-outputs_eval_judgeonly_1}"
 JUDGE_MODEL="${JUDGE_MODEL:-o4-mini}"
 JUDGE_NUM_PROC="${JUDGE_NUM_PROC:-32}"
 JUDGE_ENDPOINT="${JUDGE_ENDPOINT:-http://gateway.phyagi.net/api/responses}"
+# "none" 表示直连官方 OpenAI(空 endpoint_target_uri,用 OPENAI_API_KEY)
+[[ "$JUDGE_ENDPOINT" == "none" ]] && JUDGE_ENDPOINT=""
 SCORE_THRESHOLD="${SCORE_THRESHOLD:-3}"
 CREDS_FILE="${CREDS_FILE:-/run/secrets/webchain-sampling/cred.sh}"
 
@@ -62,7 +64,13 @@ source "$CREDS_FILE"
 if [[ -n "${PHYAGI_API_KEY:-}" ]]; then
     export OPENAI_GATEWAY_API_KEY="${OPENAI_GATEWAY_API_KEY:-$PHYAGI_API_KEY}"
 fi
-: "${OPENAI_GATEWAY_API_KEY:?OPENAI_GATEWAY_API_KEY is not set by the credentials file}"
+if [[ -n "$JUDGE_ENDPOINT" ]]; then
+    : "${OPENAI_GATEWAY_API_KEY:?OPENAI_GATEWAY_API_KEY is not set by the credentials file}"
+    JUDGE_API_KEY="$OPENAI_GATEWAY_API_KEY"
+else
+    : "${OPENAI_API_KEY:?direct-OpenAI judge (JUDGE_ENDPOINT=none) needs OPENAI_API_KEY in the credentials file}"
+    JUDGE_API_KEY="$OPENAI_API_KEY"
+fi
 
 export PYTHONPATH="$REPO/agent_runtime${PYTHONPATH:+:$PYTHONPATH}"
 export TOKENIZERS_PARALLELISM=false
@@ -85,7 +93,7 @@ set +e
 python "$JUDGE_SCRIPT" \
     --model "$JUDGE_MODEL" \
     --trajectories_dir "$TRAJECTORIES_DIR" \
-    --api_key "$OPENAI_GATEWAY_API_KEY" \
+    --api_key "$JUDGE_API_KEY" \
     --output_path "$EVAL_OUTPUT_DIR" \
     --num_worker "$JUDGE_NUM_PROC" \
     --score_threshold "$SCORE_THRESHOLD" \
