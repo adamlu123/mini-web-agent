@@ -167,6 +167,126 @@ def _load_explore_history(explore_dir: Path, task_id: str) -> str:
         parts.append(f"[{role}]\n{content}")
     return "\n\n---\n\n".join(parts)
 
+
+def _truncate_guidance_field(value: object, max_chars: int) -> str:
+    text = str(value or "").strip()
+    if max_chars <= 0 or len(text) <= max_chars:
+        return text
+    marker = f"\n... [{len(text) - max_chars} characters omitted]"
+    keep = max(0, max_chars - len(marker))
+    return text[:keep].rstrip() + marker
+
+
+def _load_gold_trajectory_guidance(
+    gold_dir: Path,
+    task_id: str,
+    *,
+    max_chars: int = 32_000,
+) -> str:
+    """Render a compact, task-matched reference trajectory for prompt guidance.
+
+    Full OM2W trajectories contain large browser observations and regularly exceed
+    a local policy model's context window. The exported ``result.json`` already
+    contains the aligned reasoning/action route and final response, so use that
+    loss-minimized representation and uniformly shorten reasoning fields only
+    when the configured prompt budget requires it.
+    """
+    if not task_id:
+        raise ValueError("Gold trajectory guidance requires a task_id.")
+
+    task_dir = gold_dir.expanduser() / task_id
+    task_path = task_dir / "task.json"
+    result_path = task_dir / "result.json"
+    missing = [str(path) for path in (task_path, result_path) if not path.is_file()]
+    if missing:
+        raise FileNotFoundError(
+            f"Gold trajectory for task_id={task_id!r} is incomplete; missing: "
+            + ", ".join(missing)
+        )
+
+    task_record = json.loads(task_path.read_text(encoding="utf-8"))
+    gold_task_id = str(task_record.get("task_id") or "")
+    if gold_task_id != task_id:
+        raise ValueError(
+            f"Gold trajectory task mismatch: requested {task_id!r}, "
+            f"but {task_path} contains {gold_task_id!r}."
+        )
+
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    actions = [str(value or "").strip() for value in result.get("action_history") or []]
+    thoughts = [str(value or "").strip() for value in result.get("thoughts") or []]
+    if not actions:
+        raise ValueError(f"Gold trajectory for task_id={task_id!r} has no action history.")
+    if len(actions) != len(thoughts):
+        raise ValueError(
+            f"Gold trajectory for task_id={task_id!r} has {len(actions)} actions "
+            f"but {len(thoughts)} reasoning entries."
+        )
+
+    plan_path = task_dir / "plan.md"
+    plan = plan_path.read_text(encoding="utf-8").strip() if plan_path.is_file() else ""
+    final_response = str(
+        result.get("final_result_response") or result.get("submission") or ""
+    ).strip()
+
+    def render(reasoning_chars: int | None) -> str:
+        sections = [
+            f"Source task ID: {task_id}",
+            f"Source task: {str(task_record.get('task') or '').strip()}",
+            f"Source start URL: {str(task_record.get('start_url') or '').strip()}",
+            f"Source exit status: {str(result.get('exit_status') or '').strip()}",
+        ]
+        if plan:
+            sections.extend(["", "Reference plan:", plan])
+        sections.extend(["", "Reference trajectory:"])
+        for index, (thought, action) in enumerate(zip(thoughts, actions), start=1):
+            if reasoning_chars is None:
+                rendered_thought = thought
+            elif reasoning_chars > 0:
+                rendered_thought = _truncate_guidance_field(thought, reasoning_chars)
+            else:
+                rendered_thought = ""
+            sections.extend(["", f"Step {index}:"])
+            if rendered_thought:
+                sections.append(f"Reasoning: {rendered_thought}")
+            sections.append(f"Action: {action}")
+        sections.extend(
+            [
+                "",
+                "Reference final response:",
+                final_response or "(The reference run did not produce a final response.)",
+            ]
+        )
+        return "\n".join(sections).strip()
+
+    full = render(None)
+    if max_chars <= 0 or len(full) <= max_chars:
+        return full
+
+    # Preserve every action and the final response. Binary-search a uniform
+    # per-step reasoning allowance that fits the overall prompt budget.
+    without_reasoning = render(0)
+    if len(without_reasoning) > max_chars:
+        raise ValueError(
+            f"Gold trajectory guide for task_id={task_id!r} needs "
+            f"{len(without_reasoning)} characters even without reasoning, exceeding "
+            f"gold_trajectory_max_chars={max_chars}."
+        )
+
+    low = 0
+    high = max(len(thought) for thought in thoughts)
+    best = without_reasoning
+    while low <= high:
+        midpoint = (low + high) // 2
+        candidate = render(midpoint)
+        if len(candidate) <= max_chars:
+            best = candidate
+            low = midpoint + 1
+        else:
+            high = midpoint - 1
+    return best
+
+
 DEFAULT_CONFIG = "mini.yaml"
 
 app = typer.Typer(no_args_is_help=True)
@@ -305,6 +425,15 @@ def run_one(
             else []
         )
         available_cli_tools = "\n".join(available_cli_tools_list)
+        gold_trajectory_guidance = (
+            _load_gold_trajectory_guidance(
+                Path(run_config["gold_trajectory_dir"]),
+                resolved_task_id or "",
+                max_chars=int(run_config.get("gold_trajectory_max_chars") or 32_000),
+            )
+            if run_config.get("gold_trajectory_dir")
+            else ""
+        )
         result = agent.run(
             resolved_task,
             task_id=resolved_task_id or "",
@@ -319,6 +448,7 @@ def run_one(
             command_usage_instruction=command_usage_instruction,
             available_cli_tools=available_cli_tools,
             available_cli_tools_list=available_cli_tools_list,
+            gold_trajectory_guidance=gold_trajectory_guidance,
         )
     except Exception as exc:
         run_exception = exc

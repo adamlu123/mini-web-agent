@@ -1,0 +1,26 @@
+# Task-matched gold-trajectory guidance overlay.
+#
+# Layer this file after eval/om2w_spb_vllm_lastobs.yaml. It intentionally
+# changes only the per-task prompt and adds the gold source; all model,
+# environment, agent, and evaluation behavior comes from the baseline config.
+
+run:
+  gold_trajectory_dir: /data/yadonglu/eval/webwright_spb_0805/260718_xhigh/w150
+  # Keeps the guide safe for the local server's 32K context while preserving
+  # every reference action and the reference final response.
+  gold_trajectory_max_chars: 32000
+
+agent:
+  instance_template: |
+    Task: {{ task }}
+
+    ## Gold trajectory guidance
+
+    The following is a compact trajectory from the matching task in the gold set. Use its
+    reasoning, action sequence, and final result as guidance, but operate on the current live
+    website yourself. Current page state and current-run evidence take precedence. Do not claim
+    success from the reference alone; reproduce and verify the required state in this run.
+
+    {{ gold_trajectory_guidance }}
+
+    ## End gold trajectory guidance
