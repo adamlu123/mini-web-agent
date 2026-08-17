@@ -50,6 +50,12 @@ class AgentConfig(BaseModel):
     system_template: str
     instance_template: str
     step_limit: int = 15
+    # Abort after this many unparseable model responses. A FormatError does not
+    # advance n_calls, so without this cap a model that reliably returns no
+    # visible text (e.g. reasoning_effort exhausting max_output_tokens on hidden
+    # reasoning) retries forever and never reaches step_limit. 0 disables.
+    # 12 sits well above the p99 of 7 observed across healthy completed runs.
+    format_error_limit: int = 12
     debug_log: bool = True
     attach_instance_template_after_observation: bool = False
     attach_plan_md_after_observation: bool = False
@@ -944,6 +950,14 @@ class DefaultAgent:
                     role="exit",
                     content="Step limit exceeded.",
                     extra={"exit_status": "LimitsExceeded", "submission": ""},
+                )
+            )
+        if 0 < self.config.format_error_limit <= self.n_format_errors:
+            raise LimitsExceeded(
+                self.model.format_message(
+                    role="exit",
+                    content=f"Format error limit exceeded ({self.n_format_errors} unparseable responses).",
+                    extra={"exit_status": "FormatErrorLimitExceeded", "submission": ""},
                 )
             )
         message = self.model.query(self._fit_context(self.messages))

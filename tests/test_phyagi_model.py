@@ -8,8 +8,10 @@ import httpx
 
 from miniswewebagent.exceptions import FormatError
 from miniswewebagent.models.phyagi_model import (
+    MAX_JSON_PARSE_RETRIES,
     PhyagiModel,
     _extract_reasoning_summary,
+    _is_output_truncated,
     _serialize_response_input,
     parse_sft_state_output,
     parse_xml_output,
@@ -809,3 +811,83 @@ def test_reasoning_summary_is_not_replayed_into_model_context(monkeypatch, tmp_p
     model.query([{"role": "user", "content": "Task"}, assistant])
 
     assert "SECRET_REASONING" not in json.dumps(state["last_kwargs"]["input"])
+
+
+def _truncated_payload(max_output_tokens: int = 16000) -> dict:
+    return {
+        "status": "incomplete",
+        "incomplete_details": {"reason": "max_output_tokens"},
+        "output": [{"type": "reasoning", "summary": []}],
+        "usage": {
+            "input_tokens": 5000,
+            "output_tokens": max_output_tokens,
+            "total_tokens": 5000 + max_output_tokens,
+            "output_tokens_details": {"reasoning_tokens": max_output_tokens},
+        },
+    }
+
+
+def test_is_output_truncated_detects_budget_exhaustion() -> None:
+    assert _is_output_truncated(_truncated_payload(), 16000) is True
+    # same shape but without the status field: inferred from token accounting
+    payload = _truncated_payload()
+    del payload["status"], payload["incomplete_details"]
+    assert _is_output_truncated(payload, 16000) is True
+
+
+def test_is_output_truncated_ignores_normal_responses() -> None:
+    payload = {
+        "output": [{"type": "message", "content": [{"type": "output_text", "text": "{}"}]}],
+        "usage": {
+            "input_tokens": 10,
+            "output_tokens": 500,
+            "output_tokens_details": {"reasoning_tokens": 400},
+        },
+    }
+    assert _is_output_truncated(payload, 16000) is False
+    assert _is_output_truncated({}, 16000) is False
+
+
+def test_truncated_response_fails_fast_without_retrying(monkeypatch, tmp_path) -> None:
+    # A truncated response is unchanged by retrying, so the model must give up
+    # after a single call instead of burning MAX_JSON_PARSE_RETRIES more budgets.
+    fake_cls, state = _make_fake_async_openai(_truncated_payload())
+    monkeypatch.setattr("miniswewebagent.models.phyagi_model.AsyncOpenAI", fake_cls)
+
+    model = PhyagiModel(
+        openai_gateway_api_key="dummy",
+        response_mode="json_schema",
+        reasoning_effort="xhigh",
+        max_output_tokens=16000,
+        format_error_template="error: {{ error }}",
+        error_log_path=tmp_path / "runtime_errors.jsonl",
+    )
+    with pytest.raises(FormatError):
+        model.query([{"role": "user", "content": "Task"}])
+
+    assert state["calls"] == 1
+
+
+def test_unparseable_but_untruncated_response_still_retries(monkeypatch, tmp_path) -> None:
+    payload = {
+        "output": [{"type": "message", "content": [{"type": "output_text", "text": "not json"}]}],
+        "usage": {
+            "input_tokens": 10,
+            "output_tokens": 50,
+            "output_tokens_details": {"reasoning_tokens": 10},
+        },
+    }
+    fake_cls, state = _make_fake_async_openai(payload)
+    monkeypatch.setattr("miniswewebagent.models.phyagi_model.AsyncOpenAI", fake_cls)
+
+    model = PhyagiModel(
+        openai_gateway_api_key="dummy",
+        response_mode="json_schema",
+        max_output_tokens=16000,
+        format_error_template="error: {{ error }}",
+        error_log_path=tmp_path / "runtime_errors.jsonl",
+    )
+    with pytest.raises(FormatError):
+        model.query([{"role": "user", "content": "Task"}])
+
+    assert state["calls"] == MAX_JSON_PARSE_RETRIES + 1

@@ -6,6 +6,8 @@ import json
 from itertools import pairwise
 from pathlib import Path
 
+import pytest
+
 from miniswewebagent.agents.default import DefaultAgent
 from miniswewebagent.evaluation.om2w import runner as om2w_runner
 from miniswewebagent.models.openrouter_model import (
@@ -35,6 +37,9 @@ class _StubModel:
         self.calls += 1
         chars = sum(len(m.get("content") or "") for m in messages)
         return chars // 4 <= budget
+
+    def query(self, messages):
+        return self.format_message(role="assistant", content="ok", extra={"actions": []})
 
 
 class _StubEnvironment:
@@ -230,3 +235,34 @@ def test_discovery_keeps_first_on_duplicate_task_id(tmp_path: Path, capsys) -> N
     assert [a.task_id for a in artifacts] == ["abc123"]
     assert artifacts[0].task_dir == str((tmp_path / "abc123").resolve())
     assert "duplicate task ID" in capsys.readouterr().out
+
+
+def test_format_error_limit_terminates_unparseable_loop() -> None:
+    # A FormatError does not advance n_calls, so step_limit can never fire on a
+    # model that always returns unparseable output. Without format_error_limit
+    # the agent loops forever, re-billing a full output budget every attempt.
+    from miniswewebagent.exceptions import LimitsExceeded
+
+    agent = _make_agent(step_limit=100, format_error_limit=3)
+    agent.n_format_errors = 3
+
+    with pytest.raises(LimitsExceeded) as excinfo:
+        agent.query()
+
+    exit_message = excinfo.value.messages[0]
+    assert exit_message["extra"]["exit_status"] == "FormatErrorLimitExceeded"
+
+
+def test_format_error_limit_allows_recoverable_errors() -> None:
+    agent = _make_agent(step_limit=100, format_error_limit=12)
+    agent.n_format_errors = 11
+
+    # below the cap the agent keeps going (the stub model returns a message)
+    assert agent.query() is not None
+
+
+def test_format_error_limit_can_be_disabled() -> None:
+    agent = _make_agent(step_limit=100, format_error_limit=0)
+    agent.n_format_errors = 999
+
+    assert agent.query() is not None

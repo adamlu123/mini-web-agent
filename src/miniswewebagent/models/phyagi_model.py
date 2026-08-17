@@ -384,6 +384,28 @@ def _extract_reasoning_summary(payload: dict[str, Any]) -> str:
     return "\n\n".join(text for text in texts if text.strip())
 
 
+def _is_output_truncated(payload: dict[str, Any], max_output_tokens: int) -> bool:
+    """True when a response carries no message text because it ran out of budget.
+
+    At high reasoning effort the model can spend the whole ``max_output_tokens``
+    allowance on hidden reasoning and return zero visible tokens. Retrying such a
+    request is futile: the parameters are unchanged, so it truncates again and
+    burns another full output budget.
+    """
+    status = payload.get("status")
+    incomplete = payload.get("incomplete_details") or {}
+    if status == "incomplete" and incomplete.get("reason") == "max_output_tokens":
+        return True
+
+    usage = payload.get("usage") or {}
+    output_tokens = _safe_int(usage.get("output_tokens"))
+    details = usage.get("output_tokens_details") or {}
+    reasoning_tokens = _safe_int(details.get("reasoning_tokens"))
+    if output_tokens <= 0 or max_output_tokens <= 0:
+        return False
+    return output_tokens >= max_output_tokens and reasoning_tokens >= output_tokens
+
+
 def _safe_int(value: Any) -> int:
     try:
         return int(value)
@@ -749,6 +771,7 @@ class PhyagiModel:
         last_error: ValueError | None = None
         raw_text = ""
         reasoning_summary = ""
+        parsed: dict[str, Any] | None = None
         request_messages = list(messages)
         for attempt_index in range(MAX_JSON_PARSE_RETRIES + 1):
             payload = self._build_payload(request_messages)
@@ -831,6 +854,19 @@ class PhyagiModel:
                 break
             except ValueError as exc:
                 last_error = exc
+                if _is_output_truncated(response_payload, self.config.max_output_tokens):
+                    # The response carries no parseable text because the whole
+                    # output budget went to hidden reasoning. Retrying sends the
+                    # same request and burns another full max_output_tokens, so
+                    # fail fast and let the agent's format_error_limit apply.
+                    reasoning_tokens = self._last_usage_metrics.get("reasoning_output_tokens", 0)
+                    last_error = ValueError(
+                        f"Model returned no visible output: the response hit "
+                        f"max_output_tokens={self.config.max_output_tokens} with "
+                        f"{reasoning_tokens} reasoning tokens and no message content. "
+                        f"Lower reasoning_effort or raise max_output_tokens."
+                    )
+                    break
                 if attempt_index < MAX_JSON_PARSE_RETRIES:
                     request_messages.append(
                         self._format_repair_message(raw_text=raw_text, error=str(exc))
@@ -840,6 +876,9 @@ class PhyagiModel:
                 raw_text=raw_text,
                 error=str(last_error or ValueError("Unable to parse model output.")),
             )
+
+        if parsed is None:
+            raise self._format_error(raw_text=raw_text, error=str(last_error))
 
         actions = []
         bash_command = parsed.get("bash_command", "").strip()
