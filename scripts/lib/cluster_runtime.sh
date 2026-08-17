@@ -42,6 +42,49 @@ mwa_verify_sha256() {
     }
 }
 
+mwa_print_effective_config() {
+    local log_prefix="$1"
+    local config_file="$2"
+    shift 2
+
+    "${PYTHON_BIN:-python}" - "$log_prefix" "$config_file" "$@" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+from miniswewebagent.agents.default import AgentConfig
+from miniswewebagent.config import get_config_from_spec
+from miniswewebagent.utils.serialize import recursive_merge
+
+log_prefix = sys.argv[1]
+config_path = Path(sys.argv[2])
+overrides = sys.argv[3:]
+snapshot_text = config_path.read_text(encoding="utf-8")
+snapshot = yaml.safe_load(snapshot_text) or {}
+effective = recursive_merge(
+    snapshot,
+    *(get_config_from_spec(spec) for spec in overrides),
+)
+agent = AgentConfig.model_validate(effective.get("agent") or {})
+
+print(f"[{log_prefix}] ===== merged config snapshot: {config_path} =====", flush=True)
+print(snapshot_text.rstrip(), flush=True)
+print(f"[{log_prefix}] ===== runtime config overrides =====", flush=True)
+if overrides:
+    for spec in overrides:
+        print(f"- {spec}", flush=True)
+else:
+    print("(none)", flush=True)
+print(
+    f"[{log_prefix}] ===== effective agent config (defaults materialized) =====",
+    flush=True,
+)
+print(yaml.safe_dump(agent.model_dump(), sort_keys=False).rstrip(), flush=True)
+print(f"[{log_prefix}] ===== end effective config =====", flush=True)
+PY
+}
+
 mwa_stop_process() {
     local pid="${1:-}"
     if [[ -n "$pid" ]]; then

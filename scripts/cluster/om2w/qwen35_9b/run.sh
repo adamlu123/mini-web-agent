@@ -160,6 +160,16 @@ python -m pip install --no-deps -e "$REPO"
 python -m pip install --no-deps browserbase playwright pyee openai pillow backoff
 python -c 'import backoff, browserbase, openai, PIL, playwright, miniswewebagent, phitrain'
 
+EFFECTIVE_CONFIG_OVERRIDES=(
+    "model.max_output_tokens=$MAX_OUTPUT_TOKENS"
+    "agent.max_context_tokens=$MAX_CONTEXT_TOKENS"
+)
+for ((index = 1; index < ${#STEP_LIMIT_ARGS[@]}; index += 2)); do
+    EFFECTIVE_CONFIG_OVERRIDES+=("${STEP_LIMIT_ARGS[index]}")
+done
+mwa_print_effective_config \
+    qwen35-eval "$CONFIG_FILE" "${EFFECTIVE_CONFIG_OVERRIDES[@]}"
+
 hf_checkpoint_ready() {
     [[ -f "$HF_CKPT/.phitrain_conversion_complete.json" ]] &&
         [[ -f "$HF_CKPT/config.json" ]] &&

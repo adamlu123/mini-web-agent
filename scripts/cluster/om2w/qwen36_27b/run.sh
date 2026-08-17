@@ -118,6 +118,13 @@ python -m pip install --no-deps -e "$REPO"
 python -m pip install --no-deps browserbase playwright pyee openai pillow backoff
 python -c 'import backoff, browserbase, openai, PIL, playwright, miniswewebagent'
 
+EFFECTIVE_CONFIG_OVERRIDES=()
+for ((index = 1; index < ${#STEP_LIMIT_ARGS[@]}; index += 2)); do
+    EFFECTIVE_CONFIG_OVERRIDES+=("${STEP_LIMIT_ARGS[index]}")
+done
+mwa_print_effective_config \
+    qwen36-eval "$CONFIG_FILE" "${EFFECTIVE_CONFIG_OVERRIDES[@]}"
+
 echo "[qwen36-eval] model=$MODEL_ID tp=$TP max_model_len=$MAX_MODEL_LEN"
 echo "[qwen36-eval] run_id=$EVAL_RUN_ID tasks=$TASKS_FILE workers=$WORKERS"
 nvidia-smi -L

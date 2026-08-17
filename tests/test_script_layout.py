@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -16,6 +17,8 @@ CANONICAL_SHELL_SCRIPTS = (
     "cluster/om2w/qwen35_9b/submit.sh",
     "cluster/om2w/qwen36_27b/run.sh",
     "cluster/om2w/qwen36_27b/submit.sh",
+    "cluster/om2w/qwen38_27b/run.sh",
+    "cluster/om2w/qwen38_27b/submit.sh",
     "local/om2w/run.sh",
     "local/om2w/serve_qwen35.sh",
     "local/om2w/shards.sh",
@@ -89,6 +92,48 @@ def test_cluster_runtime_rejects_unsafe_staging_destination(
     assert completed.returncode != 0
     assert "refusing unsafe local staging path" in completed.stderr
     assert not unsafe_destination.exists()
+
+
+def test_cluster_runtime_prints_snapshot_and_materialized_agent_defaults(
+    tmp_path: Path,
+) -> None:
+    config = tmp_path / "merged_config.yaml"
+    config.write_text(
+        "agent:\n"
+        "  system_template: system\n"
+        "  instance_template: instance\n"
+        "  step_limit: 50\n"
+        "  summary_every_n_steps: 0\n"
+        "  history_context_mode: last_obs\n",
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(REPO_ROOT / "src")
+    project_python = REPO_ROOT / ".venv/bin/python"
+    env["PYTHON_BIN"] = str(project_python if project_python.exists() else sys.executable)
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'source "$1"; mwa_print_effective_config test-eval "$2" '
+            '"agent.max_context_tokens=28672"',
+            "bash",
+            str(SCRIPTS_DIR / "lib/cluster_runtime.sh"),
+            str(config),
+        ],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+    assert "===== merged config snapshot:" in completed.stdout
+    assert "summary_every_n_steps: 0" in completed.stdout
+    assert "===== runtime config overrides =====" in completed.stdout
+    assert "- agent.max_context_tokens=28672" in completed.stdout
+    assert "===== effective agent config (defaults materialized) =====" in completed.stdout
+    assert "history_context_mode: last_obs" in completed.stdout
+    assert "max_context_tokens: 28672" in completed.stdout
 
 
 def test_repo_does_not_ship_downloaded_cloudflared_binary() -> None:
