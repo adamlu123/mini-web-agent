@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import mimetypes
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -175,12 +174,6 @@ def _build_fallback_steps(task_dir: Path, result: dict[str, Any]) -> list[dict[s
             }
         )
     return steps
-
-
-@dataclass(frozen=True)
-class RunRef:
-    run_id: str
-    path: Path
 
 
 class TraceCatalog:

@@ -1,8 +1,7 @@
 """CLI for managing a long-lived, reusable local Chromium browser session.
 
-Local-browser counterpart to ``browserbase_session.py``. Launches a
-detached headless Chromium subprocess via the Playwright-bundled binary
-with ``--remote-debugging-port=0`` and a per-session ``--user-data-dir``,
+Launches a detached headless Chromium subprocess via the Playwright-bundled
+binary with ``--remote-debugging-port=0`` and a per-session ``--user-data-dir``,
 parses the printed ``DevTools listening on ws://...`` URL, and persists
 ``{id, pid, connectUrl, userDataDir}`` to a JSON file on disk so any
 later Python/bash step can attach via
