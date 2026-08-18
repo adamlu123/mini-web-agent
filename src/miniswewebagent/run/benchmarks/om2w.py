@@ -14,8 +14,7 @@ import typer
 from rich.console import Console
 
 from miniswewebagent.config import get_config_from_spec, snapshot_config_specs
-from miniswewebagent.run.mini import DEFAULT_CONFIG, _timestamped_output_dir
-from miniswewebagent.run.mini import run_one as run_one_default
+from miniswewebagent.run.mini import DEFAULT_CONFIG, run_one
 from miniswewebagent.utils.om2w_eval import (
     judge_result_file_path,
     run_online_mind2web_judge,
@@ -27,15 +26,18 @@ from miniswewebagent.utils.serialize import recursive_merge
 app = typer.Typer(no_args_is_help=False)
 console = Console(highlight=False)
 
-# Compatibility patch point retained for callers and tests that replaced the
-# pre-refactor module-level runner.
-run_one = run_one_default
-
+REPO_ROOT = Path(__file__).resolve().parents[4]
 DEFAULT_BENCHMARK_CONFIG = "archive/benchmark/om2w_hard_local_workspace.yaml"
 DEFAULT_OM2W_CONFIGS = [DEFAULT_CONFIG, DEFAULT_BENCHMARK_CONFIG]
-DEFAULT_LOG_ROOT = Path("/Users/lu/Documents/sandbox/mini-swe-agent/logs")
+DEFAULT_LOG_ROOT = REPO_ROOT / "logs"
 DEFAULT_JUDGE_PYTHON = Path(sys.executable)
-DEFAULT_JUDGE_SCRIPT = Path(__file__).resolve().parents[4] / "om2w_judge" / "run.py"
+# Both scripts/eval entry points read task.json + screenshots/ straight out of
+# each task directory and share one CLI. This one is layout-aware, so the batch
+# default is its own default layout, `step-scripts`: the judge reads the executed
+# steps/step_<id>.sh as the action history. Point run.judge_script at
+# scripts/eval/persistent_cli.py to score the browser-steps.jsonl natural-language
+# actions instead.
+DEFAULT_JUDGE_SCRIPT = REPO_ROOT / "scripts" / "eval" / "persistent_cli_steps.py"
 
 
 def _merged_config(config_spec: list[str]) -> dict[str, Any]:
@@ -128,13 +130,6 @@ def _resolve_judge_api_key(*, endpoint_target_uri: str) -> str:
     return os.environ.get("OPENAI_API_KEY", "")
 
 
-def _resolve_run_one(iterative: bool):
-    if iterative:
-        from miniswewebagent.run.iterative import run_one as run_one_iter
-        return run_one_iter
-    return run_one
-
-
 def _run_task_worker(
     *,
     task: dict[str, object],
@@ -142,7 +137,6 @@ def _run_task_worker(
     config_spec: list[str],
     output_root: Path,
     log_dir: Path,
-    iterative: bool = False,
     session_id_prefix: str | None = None,
     model_endpoint: str | None = None,
 ) -> dict[str, Any]:
@@ -151,7 +145,19 @@ def _run_task_worker(
     task_log_path = log_dir / f"{task_id}.log"
     task_log_path.parent.mkdir(parents=True, exist_ok=True)
 
-    run_one = _resolve_run_one(iterative)
+    def row(*, status: str, exit_status: str, error: str = "") -> dict[str, Any]:
+        return {
+            "task_id": task_id,
+            "task": str(task["task"]),
+            "level": str(task.get("level", "")),
+            "status": status,
+            "error": error,
+            "exit_status": exit_status,
+            "output_dir": str(task_output_dir),
+            "log_path": str(task_log_path),
+            "result_json": str(task_output_dir / "result.json"),
+            "model_endpoint": model_endpoint or "",
+        }
 
     auto_model_overrides: dict[str, Any] = {}
     if session_id_prefix:
@@ -177,40 +183,10 @@ def _run_task_worker(
                     auto_model_overrides=auto_model_overrides or None,
                     model_overrides=model_overrides or None,
                 )
-                row = {
-                    "task_id": task_id,
-                    "task": str(task["task"]),
-                    "level": str(task.get("level", "")),
-                    "status": "ok",
-                    "error": "",
-                    "exit_status": str(result.get("exit_status", "")),
-                    "output_dir": str(task_output_dir),
-                    "log_path": str(task_log_path),
-                    "result_json": str(task_output_dir / "result.json"),
-                    "model_endpoint": model_endpoint or "",
-                }
-                if iterative:
-                    row["iterative_success"] = bool(result.get("_iterative_success", False))
-                    row["iterative_rounds"] = int(result.get("_iterative_rounds", 0))
-                return row
+                return row(status="ok", exit_status=str(result.get("exit_status", "")))
             except Exception as exc:
                 print(traceback.format_exc())
-                row = {
-                    "task_id": task_id,
-                    "task": str(task["task"]),
-                    "level": str(task.get("level", "")),
-                    "status": "error",
-                    "error": str(exc),
-                    "exit_status": type(exc).__name__,
-                    "output_dir": str(task_output_dir),
-                    "log_path": str(task_log_path),
-                    "result_json": str(task_output_dir / "result.json"),
-                    "model_endpoint": model_endpoint or "",
-                }
-                if iterative:
-                    row["iterative_success"] = False
-                    row["iterative_rounds"] = 0
-                return row
+                return row(status="error", exit_status=type(exc).__name__, error=str(exc))
 
 
 @app.command()
@@ -231,7 +207,7 @@ def main(
     judge_runs: int = typer.Option(0, "--judge-runs", help="Number of parallel judge runs. Defaults from config or 3."),
     judge_num_proc: int = typer.Option(0, "--judge-num-proc", help="Judge worker processes. Defaults from config."),
     judge_python: Path | None = typer.Option(None, "--judge-python", help="Python executable for Online-Mind2Web judge."),
-    judge_script: Path | None = typer.Option(None, "--judge-script", help="Path to Online-Mind2Web src/run.py."),
+    judge_script: Path | None = typer.Option(None, "--judge-script", help="Path to the Online-Mind2Web judge entry point."),
     judge_endpoint: str | None = typer.Option(
         None,
         "--judge-endpoint",
@@ -246,7 +222,6 @@ def main(
     agent_config = config.get("agent", {})
     env_config = config.get("environment", {})
     model_config = config.get("model", {})
-    is_iterative = bool(config.get("iterative"))
 
     resolved_tasks_file_value = tasks_file or run_config.get("tasks_file")
     if not resolved_tasks_file_value:
@@ -258,18 +233,18 @@ def main(
     resolved_evaluate = bool(run_config.get("judge_enabled", False)) if evaluate is None else evaluate
     resolved_judge_model = str(judge_model or run_config.get("judge_model") or "gpt-4o")
     resolved_judge_runs = max(1, int(judge_runs or run_config.get("judge_runs") or 3))
-    resolved_judge_num_proc = max(1, int(judge_num_proc or run_config.get("judge_num_proc") or resolved_workers))
     resolved_judge_python = Path(judge_python or run_config.get("judge_python") or DEFAULT_JUDGE_PYTHON)
     resolved_judge_script = Path(judge_script or run_config.get("judge_script") or DEFAULT_JUDGE_SCRIPT)
     resolved_judge_endpoint = str(judge_endpoint or run_config.get("judge_endpoint") or "")
     resolved_log_root = Path(log_root or run_config.get("logs_root") or DEFAULT_LOG_ROOT).expanduser()
+    resolved_offset = max(0, int(offset or run_config.get("task_offset") or 0))
 
     tasks = _select_tasks(
         resolved_tasks_file,
         task_id,
         limit,
         resolved_task_level,
-        offset=max(0, int(offset or run_config.get("task_offset") or 0)),
+        offset=resolved_offset,
     )
 
     resolved_model_endpoints = [
@@ -279,18 +254,19 @@ def main(
     ]
     endpoint_assignments = _assign_model_endpoints(tasks, resolved_model_endpoints)
 
-    # Default judge parallelism to the number of tasks when not explicitly set
-    if not (judge_num_proc or run_config.get("judge_num_proc")):
-        resolved_judge_num_proc = max(1, len(tasks))
+    # Judge parallelism defaults to one worker per task, not to the generation
+    # worker count: judging is IO-bound on the judge endpoint, not on browsers.
+    resolved_judge_num_proc = max(
+        1, int(judge_num_proc or run_config.get("judge_num_proc") or len(tasks))
+    )
 
     model_name = str(model_config.get("model_name", "model"))
     step_limit = int(agent_config.get("step_limit", 0) or 0)
     session_slug = "bb" if env_config.get("browserbase_enabled") else "local"
-    iter_slug = f"_iter_r{config.get('iterative', {}).get('max_rounds', 5)}" if is_iterative else ""
     batch_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     batch_name = (
         f"om2w_260220_{resolved_task_level or 'all'}_"
-        f"{_model_slug(model_name)}_step{step_limit}{iter_slug}_p{resolved_workers}_{session_slug}_{batch_stamp}"
+        f"{_model_slug(model_name)}_step{step_limit}_p{resolved_workers}_{session_slug}_{batch_stamp}"
     )
 
     base_output_root = Path(output_dir or env_config.get("output_dir") or "outputs").expanduser()
@@ -329,8 +305,7 @@ def main(
         )
         console.print(f"Endpoint distribution: {endpoint_counts}")
 
-    mode_label = "iterative" if is_iterative else "standard"
-    console.print(f"Running {len(tasks)} Online-Mind2Web task(s) ({mode_label} mode)")
+    console.print(f"Running {len(tasks)} Online-Mind2Web task(s)")
     console.print(f"Outputs: [bold green]{batch_output_dir}[/bold green]")
     console.print(f"Logs: [bold green]{batch_log_dir}[/bold green]")
 
@@ -343,7 +318,6 @@ def main(
                 config_spec=config_spec,
                 output_root=batch_output_dir,
                 log_dir=batch_log_dir,
-                iterative=is_iterative,
                 session_id_prefix=batch_name,
                 model_endpoint=endpoint_assignments.get(str(task["task_id"])),
             )
@@ -360,7 +334,6 @@ def main(
                     config_spec=config_spec,
                     output_root=batch_output_dir,
                     log_dir=batch_log_dir,
-                    iterative=is_iterative,
                     session_id_prefix=batch_name,
                     model_endpoint=endpoint_assignments.get(str(task["task_id"])),
                 ): task
@@ -382,41 +355,31 @@ def main(
         "tasks_file": str(resolved_tasks_file),
         "task_level": resolved_task_level,
         "workers": resolved_workers,
-        "iterative": is_iterative,
         "output_dir": str(batch_output_dir),
         "config_snapshot_dir": str(config_snapshot_dir),
         "log_dir": str(batch_log_dir),
         "n_tasks": len(tasks),
-        "task_offset": max(0, int(offset or run_config.get("task_offset") or 0)),
+        "task_offset": resolved_offset,
         "model_endpoints": resolved_model_endpoints,
         "model_endpoint_counts": endpoint_counts,
         "n_failed_generation": sum(1 for row in generation_rows if row["status"] != "ok"),
         "judge_enabled": resolved_evaluate,
         "judge_model": resolved_judge_model,
+        "judge_script": str(resolved_judge_script),
         "judge_runs": resolved_judge_runs,
         "judge_num_proc": resolved_judge_num_proc,
         "judge_endpoint": resolved_judge_endpoint,
     }
 
-    if is_iterative:
-        n_iter_success = sum(1 for r in generation_rows if r.get("iterative_success"))
-        avg_rounds = (
-            sum(r.get("iterative_rounds", 0) for r in generation_rows) / len(generation_rows)
-            if generation_rows else 0
-        )
-        summary["iterative_success"] = n_iter_success
-        summary["iterative_success_rate"] = f"{(n_iter_success / len(tasks) * 100):.1f}%" if tasks else "0%"
-        summary["iterative_avg_rounds"] = round(avg_rounds, 2)
-        summary["iterative_max_rounds"] = int(config.get("iterative", {}).get("max_rounds", 5))
-
-    if resolved_evaluate and not is_iterative:
+    if resolved_evaluate:
         api_key = _resolve_judge_api_key(endpoint_target_uri=resolved_judge_endpoint)
         if not api_key:
-            if resolved_judge_endpoint:
-                raise RuntimeError(
-                    "OPENAI_GATEWAY_API_KEY, PHYAGI_API_KEY, or OPENAI_API_KEY is required to run the Online-Mind2Web judge with a gateway endpoint."
-                )
-            raise RuntimeError("OPENAI_API_KEY is required to run the Online-Mind2Web judge.")
+            required = (
+                "OPENAI_GATEWAY_API_KEY, PHYAGI_API_KEY, or OPENAI_API_KEY"
+                if resolved_judge_endpoint
+                else "OPENAI_API_KEY"
+            )
+            raise RuntimeError(f"{required} is required to run the Online-Mind2Web judge.")
 
         def run_single_judge(run_index: int) -> dict[str, Any]:
             eval_output_dir = batch_output_dir.parent / f"{batch_output_dir.name}_eval_{run_index}"
@@ -432,11 +395,7 @@ def main(
                 endpoint_target_uri=resolved_judge_endpoint,
                 log_path=run_log_path,
             )
-            result_file = judge_result_file_path(
-                eval_output_dir,
-                resolved_judge_model,
-                judge_script=resolved_judge_script,
-            )
+            result_file = judge_result_file_path(eval_output_dir, resolved_judge_model)
             eval_rows = _read_eval_rows(result_file)
             return {
                 "run_index": run_index,

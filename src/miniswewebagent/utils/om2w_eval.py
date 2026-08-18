@@ -4,7 +4,6 @@ import json
 import re
 import shutil
 import subprocess
-from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -28,8 +27,6 @@ _MISSING_HISTORY_MARKERS = (
 )
 
 _FINAL_SCRIPT_ACTION_RE = re.compile(r"^\s*step\s+\d+\s+action:\s*.+\s*$", re.IGNORECASE)
-_FINAL_RUN_DIR_RE = re.compile(r"^run_(\d+)$", re.IGNORECASE)
-_FINAL_EXECUTION_SCREENSHOT_RE = re.compile(r"final_execution_(\d+)_", re.IGNORECASE)
 
 
 def _load_debug_steps(output_dir: Path) -> list[dict[str, Any]]:
@@ -91,57 +88,6 @@ def _load_final_script_action_history(output_dir: Path) -> list[str]:
     return actions
 
 
-def _resolve_latest_final_run_dir(output_dir: Path) -> Path | None:
-    final_runs_dir = output_dir / "final_runs"
-    if not final_runs_dir.is_dir():
-        return None
-
-    candidates: list[tuple[int, str, Path]] = []
-    for path in final_runs_dir.iterdir():
-        if not path.is_dir():
-            continue
-        match = _FINAL_RUN_DIR_RE.fullmatch(path.name)
-        if not match:
-            continue
-        log_path = path / "final_script_log.txt"
-        screenshots_dir = path / "screenshots"
-        if not log_path.exists() and not screenshots_dir.is_dir():
-            continue
-        candidates.append((int(match.group(1)), path.name, path))
-
-    if not candidates:
-        return None
-
-    candidates.sort(key=lambda item: (item[0], item[1]))
-    return candidates[-1][2]
-
-
-def _resolve_sandbox_artifact_dir(output_dir: Path) -> Path:
-    return _resolve_latest_final_run_dir(output_dir) or output_dir
-
-
-def _all_final_execution_screenshots(output_dir: Path) -> tuple[list[Path], str]:
-    latest_final_run_dir = _resolve_latest_final_run_dir(output_dir)
-    if latest_final_run_dir is not None:
-        screenshots_dir = latest_final_run_dir / "screenshots"
-        source = "latest_final_run_all_final_execution"
-    else:
-        screenshots_dir = output_dir / "screenshots"
-        source = "root_all_final_execution"
-
-    if not screenshots_dir.is_dir():
-        return [], source
-
-    screenshots = [path for path in screenshots_dir.glob("final_execution_*.png") if path.is_file()]
-    screenshots.sort(key=lambda path: (_final_execution_screenshot_num(path), path.name))
-    return screenshots, source
-
-
-def _final_execution_screenshot_num(path: Path) -> int:
-    match = _FINAL_EXECUTION_SCREENSHOT_RE.search(path.name)
-    return int(match.group(1)) if match else 10**9
-
-
 def _has_recorded_action_history(row: dict[str, Any]) -> bool:
     action_history = row.get("action_history", [])
     if isinstance(action_history, list):
@@ -175,68 +121,12 @@ def _build_missing_history_failure_response(row: dict[str, Any]) -> str:
     )
 
 
-SANDBOX_JUDGE_MODE = "WebJudge_Online_Mind2Web_Sandbox_eval"
-PERSISTENT_CLI_JUDGE_MODE = "WebJudge_Online_Mind2Web_eval"
+JUDGE_MODE = "WebJudge_Online_Mind2Web_eval"
 
 
-class JudgeInterface(str, Enum):
-    """Command-line contracts supported by the OM2W judge launcher."""
-
-    SANDBOX = "sandbox"
-    PERSISTENT_CLI = "persistent-cli"
-
-
-_PERSISTENT_CLI_SCRIPT_NAMES = frozenset(
-    {
-        "persistent_cli.py",
-        "persistent_cli_steps.py",
-    }
-)
-
-
-def is_persistent_cli_judge_script(judge_script: Path) -> bool:
-    """Return whether a canonical persistent CLI was selected.
-
-    Callers should pass :class:`JudgeInterface` explicitly. Exact filename
-    matching supports callers that only provide a script path.
-    """
-    return judge_script.name in _PERSISTENT_CLI_SCRIPT_NAMES
-
-
-def resolve_judge_interface(
-    *,
-    judge_interface: JudgeInterface | str | None = None,
-    judge_script: Path | None = None,
-) -> JudgeInterface:
-    """Resolve the judge CLI contract, preferring an explicit selection."""
-    if judge_interface is not None:
-        return JudgeInterface(judge_interface)
-    if judge_script is not None and is_persistent_cli_judge_script(judge_script):
-        return JudgeInterface.PERSISTENT_CLI
-    return JudgeInterface.SANDBOX
-
-
-def judge_result_file_path(
-    output_dir: Path,
-    judge_model: str,
-    *,
-    judge_script: Path | None = None,
-    judge_interface: JudgeInterface | str | None = None,
-) -> Path:
-    interface = resolve_judge_interface(
-        judge_interface=judge_interface,
-        judge_script=judge_script,
-    )
-    mode = (
-        PERSISTENT_CLI_JUDGE_MODE
-        if interface is JudgeInterface.PERSISTENT_CLI
-        else SANDBOX_JUDGE_MODE
-    )
-    return output_dir / f"{mode}_{judge_model}_score_threshold_3_auto_eval_results.json"
-
-
-def _judge_result_file_path(output_dir: Path, judge_model: str) -> Path:
-    return judge_result_file_path(output_dir, judge_model)
+def judge_result_file_path(output_dir: Path, judge_model: str) -> Path:
+    """Return the JSONL results file the judge writes for this model."""
+    return output_dir / f"{JUDGE_MODE}_{judge_model}_score_threshold_3_auto_eval_results.json"
 
 
 def _ordered_step_stems(output_dir: Path) -> list[str]:
@@ -448,73 +338,6 @@ def export_online_mind2web_artifacts(
     }
 
 
-def export_online_mind2web_artifacts_all_final_execution(
-    *,
-    output_dir: Path,
-    task: str,
-    task_id: str | None,
-    start_url: str | None,
-    agent_result: dict[str, Any],
-) -> dict[str, Any]:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    trajectory_dir = output_dir / "trajectory"
-    trajectory_dir.mkdir(parents=True, exist_ok=True)
-    for stale_path in trajectory_dir.glob("*_full_screenshot.*"):
-        stale_path.unlink()
-
-    screenshots, _ = _all_final_execution_screenshots(output_dir)
-    copied_screenshots: list[str] = []
-    for index, src in enumerate(screenshots):
-        dst = trajectory_dir / f"{index}_full_screenshot.png"
-        if src.resolve() != dst.resolve():
-            shutil.copy2(src, dst)
-        copied_screenshots.append(str(dst))
-
-    debug_steps = _load_debug_steps(output_dir)
-    action_history: list[str] = []
-    thoughts: list[str] = []
-    for row in debug_steps:
-        python_code = str(row.get("python_code", "")).strip()
-        if not python_code:
-            continue
-        action_history.append(python_code)
-        thoughts.append(str(row.get("thought", "")).strip())
-
-    if not action_history:
-        action_history, thoughts = _fallback_actions_and_thoughts(output_dir / "trajectory.json")
-
-    final_script_actions = _load_final_script_action_history(output_dir)
-    if final_script_actions:
-        action_history = final_script_actions
-
-    action_history_source = "final_script_log" if final_script_actions else ("debug_steps" if debug_steps else "trajectory")
-
-    result_payload = {
-        "task_id": task_id or output_dir.name,
-        "task": task,
-        "start_url": start_url or "",
-        "action_history": action_history,
-        "action_history_source": action_history_source,
-        "thoughts": thoughts,
-        "final_result_response": str(agent_result.get("final_response") or agent_result.get("submission") or ""),
-        "exit_status": str(agent_result.get("exit_status", "")),
-        "submission": str(agent_result.get("submission", "")),
-        "trajectory_source": "mini-swe-webagent",
-        "trajectory_file": str(output_dir / "trajectory.json"),
-        "debug_steps_dir": str(output_dir / "debug" / "steps"),
-        "screenshot_paths": copied_screenshots,
-    }
-    if agent_result.get("run_exception"):
-        result_payload["run_exception"] = str(agent_result["run_exception"])
-
-    result_path = output_dir / "result.json"
-    result_path.write_text(json.dumps(result_payload, indent=2), encoding="utf-8")
-    return {
-        "result_json": str(result_path),
-        "trajectory_dir": str(trajectory_dir),
-    }
-
-
 def run_online_mind2web_judge(
     *,
     judge_python: Path,
@@ -526,54 +349,34 @@ def run_online_mind2web_judge(
     api_key: str,
     endpoint_target_uri: str = "",
     log_path: Path | None = None,
-    judge_interface: JudgeInterface | str | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    """Judge ``trajectories_dir`` in a subprocess, then normalize the results.
+
+    ``judge_script`` is one of the ``scripts/eval/`` entry points into
+    :mod:`miniswewebagent.evaluation.om2w.runner`; they share this CLI.
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
-    interface = resolve_judge_interface(
-        judge_interface=judge_interface,
-        judge_script=judge_script,
-    )
-    if interface is JudgeInterface.PERSISTENT_CLI:
-        cmd = [
-            str(judge_python),
-            str(judge_script),
-            "--model",
-            judge_model,
-            "--trajectories_dir",
-            str(trajectories_dir),
-            "--api_key",
-            api_key,
-            "--output_path",
-            str(output_dir),
-            "--num_worker",
-            str(num_proc),
-            "--score_threshold",
-            "3",
-            # The evaluator hard-fails when the discovered task count differs
-            # from this; 0 disables the check so --limit / --task-level subsets
-            # can be scored.
-            "--expected_tasks",
-            "0",
-        ]
-    else:
-        cmd = [
-            str(judge_python),
-            str(judge_script),
-            "--mode",
-            SANDBOX_JUDGE_MODE,
-            "--model",
-            judge_model,
-            "--trajectories_dir",
-            str(trajectories_dir),
-            "--api_key",
-            api_key,
-            "--output_path",
-            str(output_dir),
-            "--num_proc",
-            str(num_proc),
-            "--score_threshold",
-            "3",
-        ]
+    cmd = [
+        str(judge_python),
+        str(judge_script),
+        "--model",
+        judge_model,
+        "--trajectories_dir",
+        str(trajectories_dir),
+        "--api_key",
+        api_key,
+        "--output_path",
+        str(output_dir),
+        "--num_worker",
+        str(num_proc),
+        "--score_threshold",
+        "3",
+        # The evaluator hard-fails when the discovered task count differs
+        # from this; 0 disables the check so --limit / --task-level subsets
+        # can be scored.
+        "--expected_tasks",
+        "0",
+    ]
     if endpoint_target_uri:
         cmd.extend(["--endpoint_target_uri", endpoint_target_uri])
     completed = subprocess.run(  # noqa: PLW1510 - caller inspects the completed status
@@ -588,11 +391,6 @@ def run_online_mind2web_judge(
             encoding="utf-8",
         )
     normalize_online_mind2web_judge_results(
-        result_file=judge_result_file_path(
-            output_dir,
-            judge_model,
-            judge_script=judge_script,
-            judge_interface=interface,
-        ),
+        result_file=judge_result_file_path(output_dir, judge_model),
     )
     return completed

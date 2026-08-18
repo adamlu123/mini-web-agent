@@ -26,6 +26,8 @@ only this guide.
 | Qwen3.5 cluster runtime | `bash scripts/cluster/om2w/qwen35_9b/run.sh` | Internal entry point used inside the Qwen3.5 job. |
 | Qwen3.6 cluster eval | `bash scripts/cluster/om2w/qwen36_27b/submit.sh [--dry-run]` | Submit the Qwen3.6-27B evaluation. |
 | Qwen3.6 cluster runtime | `bash scripts/cluster/om2w/qwen36_27b/run.sh` | Internal entry point used inside the Qwen3.6 job. |
+| Qwen3.8 cluster eval | `bash scripts/cluster/om2w/qwen38_27b/submit.sh [--dry-run]` | Submit the stock Qwen3.8-27B evaluation. |
+| Qwen3.8 cluster runtime | `bash scripts/cluster/om2w/qwen38_27b/run.sh` | Internal entry point used inside the Qwen3.8 job. |
 | Judge-only cluster eval | `bash scripts/cluster/om2w/judge_only/submit.sh [--dry-run]` | Submit judging for existing run artifacts. |
 | Judge-only cluster runtime | `bash scripts/cluster/om2w/judge_only/run.sh` | Internal entry point used inside the judge-only job. |
 | Persistent evaluation | `python scripts/eval/persistent_cli.py --help` | Evaluate `browser-steps.jsonl` trajectories. |

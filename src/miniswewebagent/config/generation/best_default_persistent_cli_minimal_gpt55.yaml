@@ -92,10 +92,6 @@ run:
   judge_model: o4-mini
   judge_endpoint: http://gateway.phyagi.net/api/responses
   judge_python: /home/luyadong/.venv/bin/python
-  # Persistent-CLI runs write browser-steps.jsonl + screenshots/*.png, not the
-  # final_script_log.txt layout om2w_judge/run.py globs for, so score them with
-  # the steps-based evaluator or every screenshot is silently dropped.
-  judge_script: scripts/eval/persistent_cli_steps.py
 
 agent:
   agent_class: default

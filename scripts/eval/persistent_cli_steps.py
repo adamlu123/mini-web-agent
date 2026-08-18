@@ -12,7 +12,7 @@ for import_root in (SRC_DIR, REPO_ROOT):
     if str(import_root) not in sys.path:
         sys.path.insert(0, str(import_root))
 
-from miniswewebagent.evaluation.om2w.artifacts import main
+from miniswewebagent.evaluation.om2w.runner import layout_main as main
 
 if __name__ == "__main__":
     main()

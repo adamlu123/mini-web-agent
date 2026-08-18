@@ -25,7 +25,7 @@ from typing import Any
 from jinja2 import StrictUndefined
 from jinja2 import Template as JinjaTemplate
 
-from miniswewebagent.agents.iterative import (
+from miniswewebagent.agents.archive.iterative import (
     IterativeRunner,
     RoundArtifacts,
     _IterativeInnerAgent,

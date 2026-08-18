@@ -27,10 +27,29 @@ JUDGE_MODEL="${JUDGE_MODEL:-o4-mini}"
 JUDGE_NUM_PROC="${JUDGE_NUM_PROC:-32}"
 JUDGE_ENDPOINT="${JUDGE_ENDPOINT:-http://gateway.phyagi.net/api/responses}"
 SCORE_THRESHOLD="${SCORE_THRESHOLD:-3}"
+# Which evaluator to run, as a bare name under scripts/eval or an absolute path:
+#   persistent_cli_steps.py  steps/*.sh or result.json action histories (default)
+#   persistent_cli.py        browser-steps.jsonl actions + root screenshots
+# Both share one CLI, so the result filename and the normalization below are
+# identical either way.
+JUDGE_SCRIPT_NAME="${JUDGE_SCRIPT_NAME:-persistent_cli_steps.py}"
+# Remaining judge knobs, all passed straight through to the evaluator.
+MAX_IN_FLIGHT="${MAX_IN_FLIGHT:-75}"
+TASK_MAX_ATTEMPTS="${TASK_MAX_ATTEMPTS:-8}"
+DEFAULT_MAX_OUTPUT_TOKENS="${DEFAULT_MAX_OUTPUT_TOKENS:-8192}"
+# 0 disables the "did every task get scored" completeness assertion.
+EXPECTED_TASKS="${EXPECTED_TASKS:-0}"
 CREDS_FILE="${CREDS_FILE:-/run/secrets/webchain-sampling/cred.sh}"
 
-[[ "$JUDGE_NUM_PROC" =~ ^[1-9][0-9]*$ ]] || {
-    echo "[judge-only][error] JUDGE_NUM_PROC must be a positive integer: $JUDGE_NUM_PROC" >&2
+for numeric_name in JUDGE_NUM_PROC MAX_IN_FLIGHT TASK_MAX_ATTEMPTS DEFAULT_MAX_OUTPUT_TOKENS; do
+    numeric_value="${!numeric_name}"
+    [[ "$numeric_value" =~ ^[1-9][0-9]*$ ]] || {
+        echo "[judge-only][error] $numeric_name must be a positive integer: $numeric_value" >&2
+        exit 2
+    }
+done
+[[ "$EXPECTED_TASKS" =~ ^[0-9]+$ ]] || {
+    echo "[judge-only][error] EXPECTED_TASKS must be a non-negative integer: $EXPECTED_TASKS" >&2
     exit 2
 }
 [[ -d "$UPLOAD_REPO" ]] || {
@@ -48,7 +67,11 @@ CREDS_FILE="${CREDS_FILE:-/run/secrets/webchain-sampling/cred.sh}"
 
 mwa_copy_staged_repo "$UPLOAD_REPO" "$LOCAL_REPO"
 REPO="$LOCAL_REPO"
-JUDGE_SCRIPT="$REPO/scripts/eval/persistent_cli_steps.py"
+if [[ "$JUDGE_SCRIPT_NAME" == /* ]]; then
+    JUDGE_SCRIPT="$JUDGE_SCRIPT_NAME"
+else
+    JUDGE_SCRIPT="$REPO/scripts/eval/$JUDGE_SCRIPT_NAME"
+fi
 [[ -f "$JUDGE_SCRIPT" ]] || {
     echo "[judge-only][error] judge script is missing: $JUDGE_SCRIPT" >&2
     exit 1
@@ -77,7 +100,9 @@ python -c 'import backoff, httpx, openai, PIL, miniswewebagent'
 TASK_DIR_COUNT="$(find "$TRAJECTORIES_DIR" -mindepth 2 -maxdepth 2 -name task.json | wc -l)"
 echo "[judge-only] run_root=$RUN_ROOT"
 echo "[judge-only] trajectories=$TRAJECTORIES_DIR task_dirs=$TASK_DIR_COUNT"
+echo "[judge-only] judge_script=$JUDGE_SCRIPT"
 echo "[judge-only] model=$JUDGE_MODEL num_proc=$JUDGE_NUM_PROC endpoint=$JUDGE_ENDPOINT"
+echo "[judge-only] max_in_flight=$MAX_IN_FLIGHT attempts=$TASK_MAX_ATTEMPTS expected_tasks=$EXPECTED_TASKS"
 echo "[judge-only] eval_output=$EVAL_OUTPUT_DIR"
 
 cd "$REPO"
@@ -89,7 +114,10 @@ python "$JUDGE_SCRIPT" \
     --output_path "$EVAL_OUTPUT_DIR" \
     --num_worker "$JUDGE_NUM_PROC" \
     --score_threshold "$SCORE_THRESHOLD" \
-    --expected_tasks 0 \
+    --max_in_flight "$MAX_IN_FLIGHT" \
+    --task_max_attempts "$TASK_MAX_ATTEMPTS" \
+    --default_max_output_tokens "$DEFAULT_MAX_OUTPUT_TOKENS" \
+    --expected_tasks "$EXPECTED_TASKS" \
     --endpoint_target_uri "$JUDGE_ENDPOINT" 2>&1 | tee "$LOGS_DIR/judge.log"
 JUDGE_RC=${PIPESTATUS[0]}
 set -e
@@ -105,17 +133,12 @@ import sys
 from pathlib import Path
 
 from miniswewebagent.utils.om2w_eval import (
-    JudgeInterface,
     judge_result_file_path,
     normalize_online_mind2web_judge_results,
 )
 
 eval_dir, judge_model = sys.argv[1:]
-result_file = judge_result_file_path(
-    Path(eval_dir),
-    judge_model,
-    judge_interface=JudgeInterface.PERSISTENT_CLI,
-)
+result_file = judge_result_file_path(Path(eval_dir), judge_model)
 print(f"[judge-only] result_file={result_file} exists={result_file.exists()}")
 normalize_online_mind2web_judge_results(result_file=result_file)
 PY

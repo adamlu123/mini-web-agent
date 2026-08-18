@@ -76,7 +76,6 @@ run:
   judge_model: o4-mini
   judge_endpoint: ""
   judge_python: /home/luyadong/.venv/bin/python
-  judge_script: /home/luyadong/sandbox/mini-web-agent/om2w_judge/run.py
 
 agent:
   agent_class: default

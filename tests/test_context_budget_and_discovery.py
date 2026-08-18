@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from miniswewebagent.agents.default import DefaultAgent
-from miniswewebagent.evaluation.om2w import runner as om2w_runner
+from miniswewebagent.evaluation.om2w import artifacts as om2w_artifacts
 from miniswewebagent.models.openrouter_model import (
     MIN_CHARS_PER_TOKEN,
     TEMPLATE_TOKENS_PER_MESSAGE,
@@ -219,7 +219,7 @@ def test_discovery_skips_agent_created_symlink(tmp_path: Path) -> None:
     # Reproduces `ln -sfn /workspace /workspace_backup` run inside the task dir.
     (tmp_path / "abc123_backup").symlink_to(task_dir, target_is_directory=True)
 
-    artifacts = om2w_runner.discover_task_artifacts(tmp_path)
+    artifacts = om2w_artifacts.discover_task_artifacts(tmp_path)
     assert [a.task_id for a in artifacts] == ["abc123"]
 
 
@@ -231,10 +231,121 @@ def test_discovery_keeps_first_on_duplicate_task_id(tmp_path: Path, capsys) -> N
         json.dumps({"task_id": "abc123", "task": "do a thing"}), encoding="utf-8"
     )
 
-    artifacts = om2w_runner.discover_task_artifacts(tmp_path)
+    artifacts = om2w_artifacts.discover_task_artifacts(tmp_path)
     assert [a.task_id for a in artifacts] == ["abc123"]
     assert artifacts[0].task_dir == str((tmp_path / "abc123").resolve())
     assert "duplicate task ID" in capsys.readouterr().out
+
+
+def _write_result_task_dir(root: Path, task_id: str, actions: list[object]) -> Path:
+    task_dir = root / task_id
+    (task_dir / "screenshots").mkdir(parents=True)
+    (task_dir / "screenshots" / "shot_1.png").write_bytes(b"png")
+    (task_dir / "result.json").write_text(
+        json.dumps({"task_id": task_id, "task": "do a thing", "action_history": actions}),
+        encoding="utf-8",
+    )
+    return task_dir
+
+
+def test_step_scripts_layout_reads_steps_from_the_task_dir(tmp_path: Path) -> None:
+    # The loader is handed the task directory, not a browser-steps.jsonl path.
+    task_dir = _write_task_dir(tmp_path, "abc123")
+    (task_dir / "steps").mkdir()
+    for name, body in (("step_2.sh", "click"), ("step_10.sh", "type"), ("step_1.sh", "goto")):
+        (task_dir / "steps" / name).write_text(body, encoding="utf-8")
+
+    spec = om2w_artifacts.resolve_artifact_spec(tmp_path)
+    artifacts = spec.loader(tmp_path)
+    # Ordered by numeric step ID, so step_10 sorts after step_2.
+    assert artifacts[0].action_history == ["goto", "click", "type"]
+    assert spec.action_history_source == om2w_artifacts.STEP_ACTION_HISTORY_SOURCE
+    # Screenshot provenance is inherited, not restated per layout.
+    assert spec.screenshot_source == om2w_artifacts.DEFAULT_SCREENSHOT_SOURCE
+
+
+def test_result_json_layout_trims_after_the_final_arrow(tmp_path: Path) -> None:
+    _write_result_task_dir(tmp_path, "abc123", [{"action": "click a -> ok"}, "type b -> done"])
+
+    trimmed = om2w_artifacts.resolve_artifact_spec(tmp_path)
+    assert trimmed.loader(tmp_path)[0].action_history == ["click a", "type b"]
+
+    raw = om2w_artifacts.resolve_artifact_spec(tmp_path, result_action_history_mode="raw")
+    assert raw.loader(tmp_path)[0].action_history == ["click a -> ok", "type b -> done"]
+    assert raw.action_history_source == om2w_artifacts.RAW_RESULT_ACTION_HISTORY_SOURCE
+
+
+def test_result_json_discovery_skips_agent_created_symlink(tmp_path: Path) -> None:
+    task_dir = _write_result_task_dir(tmp_path, "abc123", ["click a"])
+    (tmp_path / "abc123_backup").symlink_to(task_dir, target_is_directory=True)
+
+    spec = om2w_artifacts.resolve_artifact_spec(tmp_path)
+    assert [a.task_id for a in spec.loader(tmp_path)] == ["abc123"]
+
+
+def test_result_json_discovery_raises_on_duplicate_task_id(tmp_path: Path) -> None:
+    _write_result_task_dir(tmp_path, "abc123", ["click a"])
+    other = tmp_path / "abc123_copy"
+    (other / "screenshots").mkdir(parents=True)
+    (other / "result.json").write_text(
+        json.dumps({"task_id": "abc123", "task": "do a thing", "action_history": []}),
+        encoding="utf-8",
+    )
+
+    spec = om2w_artifacts.resolve_artifact_spec(tmp_path)
+    with pytest.raises(ValueError, match="Duplicate task IDs"):
+        spec.loader(tmp_path)
+
+
+def test_result_json_discovery_rejects_a_run_without_screenshots(tmp_path: Path) -> None:
+    task_dir = _write_result_task_dir(tmp_path, "abc123", ["click a"])
+    (task_dir / "screenshots" / "shot_1.png").unlink()
+
+    spec = om2w_artifacts.resolve_artifact_spec(tmp_path)
+    with pytest.raises(ValueError, match="judged without images"):
+        spec.loader(tmp_path)
+
+
+def test_artifact_layout_auto_detection_prefers_task_json(tmp_path: Path) -> None:
+    task_dir = _write_task_dir(tmp_path, "abc123")
+    (task_dir / "result.json").write_text(
+        json.dumps({"task_id": "abc123", "task": "do a thing", "action_history": []}),
+        encoding="utf-8",
+    )
+
+    auto = om2w_artifacts.resolve_artifact_spec(tmp_path)
+    assert auto.task_source == om2w_artifacts.DEFAULT_TASK_SOURCE
+
+    forced = om2w_artifacts.resolve_artifact_spec(tmp_path, layout="result-json")
+    assert forced.task_source == om2w_artifacts.RESULT_TASK_SOURCE
+
+
+def test_browser_steps_layout_reads_actions_not_step_scripts(tmp_path: Path) -> None:
+    # A persistent-CLI run writes both artifacts, so the layout -- not the run --
+    # decides whether the judge sees the agent's natural-language actions or the
+    # shell commands it executed.
+    task_dir = _write_task_dir(tmp_path, "abc123")
+    (task_dir / "browser-steps.jsonl").write_text(
+        json.dumps({"action": "Open the filters drawer"}) + "\n", encoding="utf-8"
+    )
+    (task_dir / "steps").mkdir()
+    (task_dir / "steps" / "step_1.sh").write_text(
+        "python -m browser_session step --action 'Open the filters drawer'\n",
+        encoding="utf-8",
+    )
+
+    browser_steps = om2w_artifacts.resolve_artifact_spec(tmp_path, layout="browser-steps")
+    assert browser_steps is om2w_artifacts.DEFAULT_ARTIFACT_SPEC
+    assert browser_steps.action_history_source == om2w_artifacts.DEFAULT_ACTION_HISTORY_SOURCE
+    assert browser_steps.loader(tmp_path)[0].action_history == ["Open the filters drawer"]
+
+    # `auto` never resolves to it: both artifacts are present, so the legacy
+    # detection would otherwise change what existing callers score.
+    auto = om2w_artifacts.resolve_artifact_spec(tmp_path)
+    assert auto.action_history_source == om2w_artifacts.STEP_ACTION_HISTORY_SOURCE
+    assert auto.loader(tmp_path)[0].action_history == [
+        "python -m browser_session step --action 'Open the filters drawer'"
+    ]
 
 
 def test_format_error_limit_terminates_unparseable_loop() -> None:

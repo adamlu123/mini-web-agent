@@ -22,7 +22,7 @@ from typing import Any
 import typer
 from rich.console import Console
 
-from miniswewebagent.agents.iterative import IterativeRunner
+from miniswewebagent.agents.archive.iterative import IterativeRunner
 from miniswewebagent.config import get_config_from_spec, snapshot_config_specs
 from miniswewebagent.environments import get_environment
 from miniswewebagent.models import get_model
@@ -124,7 +124,7 @@ def run_one(
 
     runner_class_name = str(iterative_config.pop("runner_class", "default")).lower()
     if runner_class_name == "strict":
-        from miniswewebagent.agents.iterative_strict import StrictIterativeRunner
+        from miniswewebagent.agents.archive.iterative_strict import StrictIterativeRunner
         runner_cls = StrictIterativeRunner
     else:
         runner_cls = IterativeRunner

@@ -17,8 +17,9 @@ Required environment:
 
 Environment overrides:
   JOB_SUFFIX, JOB_NAME, TASKS_SOURCE, EVAL_DIR_NAME, JUDGE_MODEL,
-  JUDGE_NUM_PROC, JUDGE_ENDPOINT, EVAL_CPU, EVAL_MEMORY, FOLLOW_LOGS,
-  CREDENTIALS_FILE, AIFSDK_ROOT.
+  JUDGE_NUM_PROC, JUDGE_ENDPOINT, JUDGE_SCRIPT_NAME, SCORE_THRESHOLD,
+  MAX_IN_FLIGHT, TASK_MAX_ATTEMPTS, DEFAULT_MAX_OUTPUT_TOKENS, EXPECTED_TASKS,
+  EVAL_CPU, EVAL_MEMORY, FOLLOW_LOGS, CREDENTIALS_FILE, AIFSDK_ROOT.
 EOF
 }
 
@@ -47,7 +48,29 @@ EVAL_DIR_NAME="${EVAL_DIR_NAME:-outputs_eval_judgeonly_1}"
 JUDGE_MODEL="${JUDGE_MODEL:-o4-mini}"
 JUDGE_NUM_PROC="${JUDGE_NUM_PROC:-32}"
 JUDGE_ENDPOINT="${JUDGE_ENDPOINT:-http://gateway.phyagi.net/api/responses}"
+# persistent_cli_steps.py (steps/result.json) or persistent_cli.py
+# (browser-steps.jsonl + root screenshots).
+JUDGE_SCRIPT_NAME="${JUDGE_SCRIPT_NAME:-persistent_cli_steps.py}"
+SCORE_THRESHOLD="${SCORE_THRESHOLD:-3}"
+MAX_IN_FLIGHT="${MAX_IN_FLIGHT:-75}"
+TASK_MAX_ATTEMPTS="${TASK_MAX_ATTEMPTS:-8}"
+DEFAULT_MAX_OUTPUT_TOKENS="${DEFAULT_MAX_OUTPUT_TOKENS:-8192}"
+EXPECTED_TASKS="${EXPECTED_TASKS:-0}"
 FOLLOW_LOGS="${FOLLOW_LOGS:-0}"
+
+case "$JUDGE_SCRIPT_NAME" in
+    /*) ;;
+    persistent_cli.py|persistent_cli_steps.py)
+        [[ -f "$MINI_WEB_AGENT_DIR/scripts/eval/$JUDGE_SCRIPT_NAME" ]] || {
+            echo "[error] judge script is missing: scripts/eval/$JUDGE_SCRIPT_NAME" >&2
+            exit 1
+        }
+        ;;
+    *)
+        echo "[error] JUDGE_SCRIPT_NAME must be persistent_cli.py, persistent_cli_steps.py, or an absolute path: $JUDGE_SCRIPT_NAME" >&2
+        exit 2
+        ;;
+esac
 
 export USER_ALIAS="${USER_ALIAS:-${USER%@*}}"
 export PROJECT_NAME="${PROJECT_NAME:-agenticbrain-sft}"
@@ -87,7 +110,9 @@ done
 
 echo "[judge-submit] run_root=$RUN_ROOT"
 echo "[judge-submit] job=$JOB_NAME eval_dir=$EVAL_DIR_NAME"
+echo "[judge-submit] judge_script=$JUDGE_SCRIPT_NAME"
 echo "[judge-submit] judge=$JUDGE_MODEL num_proc=$JUDGE_NUM_PROC endpoint=$JUDGE_ENDPOINT"
+echo "[judge-submit] max_in_flight=$MAX_IN_FLIGHT attempts=$TASK_MAX_ATTEMPTS expected_tasks=$EXPECTED_TASKS"
 echo "[judge-submit] node=1 gpus=0 (CPU only) priority=$PRIORITY class=$PRIORITY_CLASS_NAME"
 
 if [[ "$DRY_RUN" == "1" ]]; then
@@ -116,6 +141,10 @@ mwa_apply_credentials_secret "$NAMESPACE" "$CREDENTIALS_SECRET" "$CREDENTIALS_FI
 EXTRA_ENV="RUN_ROOT=$RUN_ROOT,EVAL_DIR_NAME=$EVAL_DIR_NAME"
 EXTRA_ENV+=",JUDGE_MODEL=$JUDGE_MODEL,JUDGE_NUM_PROC=$JUDGE_NUM_PROC"
 EXTRA_ENV+=",JUDGE_ENDPOINT=$JUDGE_ENDPOINT"
+EXTRA_ENV+=",JUDGE_SCRIPT_NAME=$JUDGE_SCRIPT_NAME,SCORE_THRESHOLD=$SCORE_THRESHOLD"
+EXTRA_ENV+=",MAX_IN_FLIGHT=$MAX_IN_FLIGHT,TASK_MAX_ATTEMPTS=$TASK_MAX_ATTEMPTS"
+EXTRA_ENV+=",DEFAULT_MAX_OUTPUT_TOKENS=$DEFAULT_MAX_OUTPUT_TOKENS"
+EXTRA_ENV+=",EXPECTED_TASKS=$EXPECTED_TASKS"
 
 FOLLOW_ARGS=()
 [[ "$FOLLOW_LOGS" == "1" ]] && FOLLOW_ARGS=(--follow-logs)

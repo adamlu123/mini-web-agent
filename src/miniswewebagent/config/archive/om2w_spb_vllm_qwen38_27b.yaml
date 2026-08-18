@@ -1,0 +1,68 @@
+# Qwen3.8-27B (stock instruct VLM, https://huggingface.co/Qwen/Qwen3.8-27B) on the
+# SPB persistent-browser OM2W eval.
+#
+# This is an OVERLAY. Apply it after the frozen qwen36_27b lastobs_minimal
+# snapshot so the system/instance prompts, observation truncation, history
+# construction, step limit and judge stay byte-identical to the Qwen3.6-27B
+# baseline and only the policy under test changes:
+#
+#   -c <frozen merged_config.yaml> -c eval/om2w_spb_vllm_qwen38_27b.yaml
+#
+# scripts/cluster/om2w/qwen38_27b/{submit,run}.sh wire exactly that.
+#
+# Why a stock instruct model needs different settings than an SFT checkpoint:
+#
+#   * No train-aligned chat template. qwen3_5_train_aligned.jinja exists because
+#     an SFT checkpoint must see the tokenization it was trained on; Qwen3.8 was
+#     not trained by us, so its own template is the correct one. Serve it with
+#     CHAT_TEMPLATE= (empty) -- the launcher defaults to that.
+#   * The stock template prefills "<think>\n" into the generation prompt, so the
+#     reply omits the opening tag and starts inside the think block.
+#     parse_sft_state_output's prefill fallback (_extract_sft_think_values)
+#     already handles exactly this shape, so response_mode stays sft_state.
+#   * Do NOT serve with a reasoning parser. One would move the think block into
+#     `reasoning_content` and strip it from `content`, and the harness stores
+#     `content` as extra.raw_response -- the sft_state history replay would then
+#     lose every past thought.
+model:
+  model_class: openai_compatible
+  model_name: qwen38_27b
+  api_key: dummy
+  response_mode: sft_state
+  # Instruction-tuned models continue the few-shot pattern in the SPB system
+  # prompt and emit several imagined <think>/<bash>/<done> blocks against
+  # observations they never saw. Only the first block is grounded in real state,
+  # and the harness executes one command per turn, so discard the rest.
+  sft_state_first_block: true
+  # Thinking mode needs far more headroom than the 4096 the SFT checkpoints used.
+  # Too small and reasoning exhausts the budget, no <bash> is emitted, and
+  # agent.format_error_limit aborts the episode after 12 unparseable replies.
+  max_output_tokens: 16384
+  # Thinking + a shared server under many workers makes generations slow.
+  request_timeout_seconds: 900
+  # Kept off to stay comparable with the text-only Qwen3.6-27B baseline. Qwen3.8
+  # is natively vision-capable, so flipping this to true is a valid experiment --
+  # just not the same experiment.
+  attach_observation_screenshot: false
+  # Qwen's recommended thinking-mode sampling. generation_config.json ships
+  # temperature 1.0 / top_p 0.95 / top_k 20; top_k has no first-class config
+  # field, so it rides along in extra_body.
+  temperature: 1.0
+  top_p: 0.95
+  extra_body:
+    top_k: 20
+    chat_template_kwargs:
+      enable_thinking: true
+      # History assistant turns are replayed by the sft_state path as raw text
+      # that ALREADY contains <think>...</think>. With preserve_thinking on, the
+      # template would prepend a SECOND, empty <think></think> block (our
+      # messages carry no `reasoning_content` field) to every history turn.
+      preserve_thinking: false
+      # xhigh (the template default) burns the token budget on a 30-step agentic
+      # loop; medium is the accuracy/latency balance. Also accepts low.
+      reasoning_effort: xhigh
+
+run:
+  # The frozen snapshot still points at scripts/eval_persistent_cli_steps_with_original_om2w.py,
+  # a pre-refactor root wrapper deleted in e475213.
+  judge_script: scripts/eval/persistent_cli_steps.py

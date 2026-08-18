@@ -188,6 +188,8 @@ async def robust_webjudge_online_mind2web_eval(
     score_threshold,
 ):
     """Build the final WebJudge request with retry-hardened image scoring."""
+    # Keep this adapter-local copy aligned with the official OSU implementation.
+    # Tests compare the complete requests produced by both evaluator paths.
     system_msg = """You are an expert in evaluating the performance of a web navigation agent. The agent is designed to help a human user navigate a website to complete a task. Given the user's task, the agent's action history, key points for task completion, some potentially important web pages in the agent's trajectory and their reasons, your goal is to determine whether the agent has completed the task and achieved all requirements.
 
 Your response must strictly follow the following evaluation criteria!
@@ -201,7 +203,7 @@ Examples of Failure Cases:
 - If the requirement is $1500-$2500, but the applied filter is $2000-$2500, it is a failure.
 - If the requirement is $25-$200, but the applied filter is $0-$200, it is a failure.
 - If the required years are 2004-2012, but the filter applied is 2001-2012, it is a failure.
-- If the required years are before 2015, but the filter applied is 2000-2014, it is a failure.
+- If the required years are before 2015, but the applied filter is 2000-2014, it is a failure.
 - If the task requires exactly 2 beds, but the filter applied is 2+ beds, it is a failure.
 5: Some tasks require a submission action or a display of results to be considered successful.
 6: If the retrieved information is invalid or empty(e.g., No match was found), but the agent has correctly performed the required action, it should still be considered successful.
@@ -232,10 +234,7 @@ The potentially important snapshots of the webpage in the agent's trajectory and
     key_points = "\n".join(line.lstrip() for line in key_points.splitlines())
 
     image_records = await asyncio.gather(
-        *[
-            judge_image_with_retry(task, image_path, key_points, model)
-            for image_path in images_path
-        ]
+        *[judge_image_with_retry(task, image_path, key_points, model) for image_path in images_path]
     )
 
     whole_content_img = []
@@ -272,13 +271,11 @@ Action History:
     text = prompt.format(
         task=task,
         last_actions="\n".join(
-            f"{index + 1}. {action}"
-            for index, action in enumerate(last_actions)
+            f"{index + 1}. {action}" for index, action in enumerate(last_actions)
         ),
         key_points=key_points,
         thoughts="\n".join(
-            f"{index + 1}. {thought}"
-            for index, thought in enumerate(whole_thoughts)
+            f"{index + 1}. {thought}" for index, thought in enumerate(whole_thoughts)
         ),
     )
     messages = [

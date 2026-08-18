@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from miniswewebagent.models.phyagi_model import (
     DEFAULT_OBSERVATION_TEMPLATE,
@@ -188,6 +188,11 @@ class OpenRouterModelConfig(BaseModel):
     temperature: float | None = 1.0
     top_p: float | None = None
     seed: int | None = None
+    # Verbatim extra chat-completions payload fields, for server-specific knobs
+    # the config has no first-class setting for (vLLM `top_k`, `reasoning_effort`,
+    # `chat_template_kwargs`, ...). Merged last, so it also overrides the fields
+    # above when a key collides.
+    extra_body: dict[str, Any] = Field(default_factory=dict)
     error_log_path: Path | None = None
     observation_template: str = DEFAULT_OBSERVATION_TEMPLATE
     response_mode: str = "xml"
@@ -271,6 +276,9 @@ class OpenRouterModel(PhyagiModel):
             "messages": serialized,
             "add_generation_prompt": True,
         }
+        chat_template_kwargs = self.config.extra_body.get("chat_template_kwargs")
+        if isinstance(chat_template_kwargs, dict):
+            payload["chat_template_kwargs"] = chat_template_kwargs
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.config.openrouter_api_key}",
@@ -333,6 +341,7 @@ class OpenRouterModel(PhyagiModel):
             value = getattr(self.config, key, None)
             if value is not None:
                 payload[key] = value
+        payload.update(self.config.extra_body)
         return payload
 
     async def _query_async(self, messages: list[dict[str, Any]]) -> dict[str, Any]:

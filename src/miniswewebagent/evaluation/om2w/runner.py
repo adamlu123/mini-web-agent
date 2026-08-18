@@ -1,18 +1,16 @@
-"""Evaluate persistent-browser trajectories with Online-Mind2Web WebJudge.
+"""Judge Online-Mind2Web trajectories with the upstream WebJudge evaluator.
 
-This adapter is for runs produced by
-``generation/best_default_judge_json_persistent_cli.yaml``.  For every task directory it
-uses:
+This module is the judging engine: it fans tasks out across worker processes,
+throttles requests to the model endpoint, retries a failed task, and writes a
+manifest, a resumable results file, and a summary. Successful judge rows are
+skipped on a subsequent invocation, while rows that contain ``evaluation_error``
+are retried.
 
-* ``task.json["task"]`` as the task description;
-* every non-empty ``action`` in ``browser-steps.jsonl``, in file order, as the
-  complete action history; and
-* every PNG directly under ``screenshots/``, in browser-step order.
-
-The judging implementation and prompts come from the packaged adapter around
-the upstream ``WebJudge_Online_Mind2Web_eval`` implementation. The output is resumable:
-successful judge rows are skipped on a subsequent invocation, while rows that
-contain ``evaluation_error`` are retried.
+Reading trajectories off disk belongs to
+:mod:`miniswewebagent.evaluation.om2w.artifacts`; this module only consumes the
+:class:`~miniswewebagent.evaluation.om2w.artifacts.ArtifactSpec` it hands back.
+The judging implementation and prompts come from the packaged adapter around the
+upstream ``WebJudge_Online_Mind2Web_eval`` implementation.
 """
 
 from __future__ import annotations
@@ -23,13 +21,11 @@ import json
 import multiprocessing
 import os
 import random
-import re
 import sys
 import threading
 import time
 import traceback
-from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -38,6 +34,13 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from miniswewebagent.evaluation.om2w.artifacts import (
+    DEFAULT_ARTIFACT_SPEC,
+    ArtifactLayout,
+    ArtifactSpec,
+    TaskArtifacts,
+    resolve_artifact_spec,
+)
 from miniswewebagent.evaluation.om2w.judge import (
     robust_webjudge_online_mind2web_eval,
 )
@@ -45,29 +48,6 @@ from om2w_judge.utils import OpenaiEngine, extract_predication
 
 MODE = "WebJudge_Online_Mind2Web_eval"
 DEFAULT_TASKS_DIR = REPO_ROOT / "outputs/default/260717_persistent_cli_full/w150"
-DEFAULT_TASK_SOURCE = "task.json.task"
-DEFAULT_ACTION_HISTORY_SOURCE = "browser-steps.jsonl.action"
-DEFAULT_ACTION_HISTORY_CONTRACT = "every non-empty browser-steps.jsonl.action in file order"
-DEFAULT_SCREENSHOT_SOURCE = "screenshots/*.png"
-DEFAULT_SCREENSHOT_CONTRACT = "every root-level screenshots/*.png in browser-step order"
-_TRAILING_NUMBER_RE = re.compile(r"(\d+)(?!.*\d)")
-
-
-@dataclass(frozen=True)
-class TaskArtifacts:
-    task_id: str
-    task_dir: str
-    task: str
-    action_history: list[str]
-    screenshot_paths: list[str]
-
-    @property
-    def action_count(self) -> int:
-        return len(self.action_history)
-
-    @property
-    def screenshot_count(self) -> int:
-        return len(self.screenshot_paths)
 
 
 class ThrottledOpenaiEngine(OpenaiEngine):
@@ -80,11 +60,13 @@ class ThrottledOpenaiEngine(OpenaiEngine):
         default_max_output_tokens: int = 8192,
         **kwargs: Any,
     ) -> None:
+        """Wrap the upstream engine with an optional shared request semaphore."""
         super().__init__(*args, **kwargs)
         self.request_semaphore = request_semaphore
         self.default_max_output_tokens = default_max_output_tokens
 
     def generate(self, *args: Any, **kwargs: Any) -> list[str]:
+        """Generate one completion, blocking while the in-flight cap is reached."""
         if len(args) < 2 and "max_new_tokens" not in kwargs:
             kwargs["max_new_tokens"] = self.default_max_output_tokens
         if self.request_semaphore is None:
@@ -96,125 +78,14 @@ class ThrottledOpenaiEngine(OpenaiEngine):
             self.request_semaphore.release()
 
 
-def _screenshot_sort_key(path: Path) -> tuple[int, str]:
-    match = _TRAILING_NUMBER_RE.search(path.stem)
-    return (int(match.group(1)) if match else 10**9, path.name.lower())
-
-
-def load_action_history(path: Path) -> list[str]:
-    """Return only the natural-language ``action`` field from each JSONL row."""
-    actions: list[str] = []
-    if not path.exists():
-        return actions
-
-    with path.open(encoding="utf-8") as handle:
-        for line_number, raw_line in enumerate(handle, 1):
-            if not raw_line.strip():
-                continue
-            try:
-                row = json.loads(raw_line)
-            except json.JSONDecodeError as exc:
-                raise ValueError(f"{path}:{line_number}: invalid JSON: {exc}") from exc
-            action = str(row.get("action") or "").strip()
-            if action:
-                actions.append(action)
-    return actions
-
-
-def load_screenshot_paths(path: Path) -> list[str]:
-    """Return every root-level PNG in chronological browser-step order."""
-    if not path.is_dir():
-        return []
-    screenshots = [item.resolve() for item in path.iterdir() if item.is_file() and item.suffix.lower() == ".png"]
-    screenshots.sort(key=_screenshot_sort_key)
-    return [str(item) for item in screenshots]
-
-
-def _load_json_mapping(path: Path) -> dict[str, Any]:
-    """Return the JSON object at ``path``, or an empty mapping if unusable."""
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return payload if isinstance(payload, dict) else {}
-
-
-def _task_description(payload: dict[str, Any]) -> str:
-    return str(payload.get("task") or payload.get("confirmed_task") or "").strip()
-
-
-def load_task_artifacts(
-    task_dir: Path,
-    *,
-    action_history_loader: Callable[[Path], list[str]] = load_action_history,
-) -> TaskArtifacts:
-    task_path = task_dir / "task.json"
-    task_payload = _load_json_mapping(task_path)
-    task_id = str(task_payload.get("task_id") or task_dir.name).strip()
-    task = _task_description(task_payload)
-    if not task:
-        # The agent's workspace is rooted at the task directory, so a step that
-        # writes its answer to "task.json" clobbers the harness descriptor. The
-        # harness writes result.json after the episode with the same task text,
-        # so recover from it instead of failing the whole judge run: one bad
-        # directory used to abort discovery and leave every task unscored.
-        result_payload = _load_json_mapping(task_dir / "result.json")
-        task = _task_description(result_payload)
-        task_id = str(result_payload.get("task_id") or task_id).strip()
-    if not task:
-        raise ValueError(f"{task_path}: missing task description")
-
-    return TaskArtifacts(
-        task_id=task_id,
-        task_dir=str(task_dir.resolve()),
-        task=task,
-        action_history=action_history_loader(task_dir / "browser-steps.jsonl"),
-        screenshot_paths=load_screenshot_paths(task_dir / "screenshots"),
-    )
-
-
-def discover_task_artifacts(
-    trajectories_dir: Path,
-    *,
-    action_history_loader: Callable[[Path], list[str]] = load_action_history,
-) -> list[TaskArtifacts]:
-    # Symlinks are skipped because the agent's workspace is rooted at its own
-    # task directory, so a step running e.g. `ln -sfn /workspace /workspace_backup`
-    # drops a sibling link in the trajectories dir that points back at the task.
-    # Path.is_dir() follows symlinks, so such a link used to be discovered as a
-    # second copy of the same task.
-    task_dirs = sorted(
-        path
-        for path in trajectories_dir.iterdir()
-        if path.is_dir() and not path.is_symlink() and (path / "task.json").is_file()
-    )
-    artifacts = []
-    seen: dict[str, TaskArtifacts] = {}
-    for task_dir in task_dirs:
-        artifact = load_task_artifacts(
-            task_dir,
-            action_history_loader=action_history_loader,
-        )
-        previous = seen.get(artifact.task_id)
-        if previous is not None:
-            # Keep the first directory rather than aborting: a duplicate is one
-            # unusable task, but raising here leaves every task unscored.
-            print(
-                f"[warn] duplicate task ID {artifact.task_id}: keeping "
-                f"{previous.task_dir}, skipping {artifact.task_dir}",
-                flush=True,
-            )
-            continue
-        seen[artifact.task_id] = artifact
-        artifacts.append(artifact)
-    return artifacts
-
 
 def output_results_path(output_path: Path, model: str, score_threshold: int) -> Path:
+    """Return the resumable JSONL results file for this model/threshold pair."""
     return output_path / f"{MODE}_{model}_score_threshold_{score_threshold}_auto_eval_results.json"
 
 
 def _read_result_rows(path: Path) -> list[dict[str, Any]]:
+    """Return every well-formed JSON object in a results file, skipping bad lines."""
     if not path.exists():
         return []
     rows: list[dict[str, Any]] = []
@@ -232,6 +103,7 @@ def _read_result_rows(path: Path) -> list[dict[str, Any]]:
 
 
 def completed_task_ids(path: Path) -> set[str]:
+    """Return task IDs already scored without error, so a rerun can skip them."""
     completed: set[str] = set()
     for row in _read_result_rows(path):
         task_id = str(row.get("task_id") or "")
@@ -243,6 +115,7 @@ def completed_task_ids(path: Path) -> set[str]:
 
 
 def append_result(path: Path, row: dict[str, Any], lock: Any) -> None:
+    """Append one JSONL result row under ``lock``, shared across judge workers."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with lock, path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(row, ensure_ascii=False) + "\n")
@@ -251,6 +124,7 @@ def append_result(path: Path, row: dict[str, Any], lock: Any) -> None:
 def evaluate_subset(
     artifacts: Iterable[TaskArtifacts],
     args: argparse.Namespace,
+    spec: ArtifactSpec,
     results_path: Path,
     completed: set[str],
     labels: Any,
@@ -258,6 +132,12 @@ def evaluate_subset(
     lock: Any,
     request_semaphore: Any,
 ) -> None:
+    """Judge one worker's share of the tasks, appending a row per finished task.
+
+    Each task is retried up to ``args.task_max_attempts`` times with backoff; a
+    task that never succeeds gets an ``evaluation_error`` row so a later run
+    retries just that one.
+    """
     model = ThrottledOpenaiEngine(
         model=args.model,
         api_key=args.api_key,
@@ -294,13 +174,9 @@ def evaluate_subset(
                     "mode": MODE,
                     "task_dir": artifact.task_dir,
                     "action_history": artifact.action_history,
-                    "action_history_source": getattr(
-                        args, "action_history_source", DEFAULT_ACTION_HISTORY_SOURCE
-                    ),
+                    "action_history_source": spec.action_history_source,
                     "screenshot_paths": artifact.screenshot_paths,
-                    "screenshot_source": getattr(
-                        args, "screenshot_source", DEFAULT_SCREENSHOT_SOURCE
-                    ),
+                    "screenshot_source": spec.screenshot_source,
                     "image_judge_record": image_record,
                     "key_points": key_points,
                     "input_text": input_text,
@@ -337,13 +213,9 @@ def evaluate_subset(
                     "mode": MODE,
                     "task_dir": artifact.task_dir,
                     "action_history": artifact.action_history,
-                    "action_history_source": getattr(
-                        args, "action_history_source", DEFAULT_ACTION_HISTORY_SOURCE
-                    ),
+                    "action_history_source": spec.action_history_source,
                     "screenshot_paths": artifact.screenshot_paths,
-                    "screenshot_source": getattr(
-                        args, "screenshot_source", DEFAULT_SCREENSHOT_SOURCE
-                    ),
+                    "screenshot_source": spec.screenshot_source,
                     "task_attempts": task_attempt,
                     "evaluation_error": f"{type(exc).__name__}: {exc}",
                     "evaluation_traceback": traceback.format_exc(),
@@ -357,7 +229,13 @@ def evaluate_subset(
                 )
 
 
-def build_manifest(args: argparse.Namespace, artifacts: list[TaskArtifacts], workers: int) -> dict[str, Any]:
+def build_manifest(
+    args: argparse.Namespace,
+    artifacts: list[TaskArtifacts],
+    workers: int,
+    spec: ArtifactSpec,
+) -> dict[str, Any]:
+    """Describe the run and the artifacts it will judge, before any judging starts."""
     return {
         "created_at": datetime.now(timezone.utc).isoformat(),
         "mode": MODE,
@@ -370,13 +248,9 @@ def build_manifest(args: argparse.Namespace, artifacts: list[TaskArtifacts], wor
         "endpoint_mode": "gateway" if args.endpoint_target_uri else "openai",
         "trajectories_dir": str(Path(args.trajectories_dir).resolve()),
         "artifact_contract": {
-            "task": getattr(args, "task_source", DEFAULT_TASK_SOURCE),
-            "action_history": getattr(
-                args, "action_history_contract", DEFAULT_ACTION_HISTORY_CONTRACT
-            ),
-            "screenshots": getattr(
-                args, "screenshot_contract", DEFAULT_SCREENSHOT_CONTRACT
-            ),
+            "task": spec.task_source,
+            "action_history": spec.action_history_contract,
+            "screenshots": spec.screenshot_contract,
         },
         "n_tasks": len(artifacts),
         "n_actions": sum(item.action_count for item in artifacts),
@@ -397,6 +271,7 @@ def build_manifest(args: argparse.Namespace, artifacts: list[TaskArtifacts], wor
 
 
 def summarize_results(results_path: Path, expected_task_ids: set[str]) -> dict[str, Any]:
+    """Roll the results file up into counts, keeping only the last row per task."""
     latest_by_task: dict[str, dict[str, Any]] = {}
     for row in _read_result_rows(results_path):
         task_id = str(row.get("task_id") or "")
@@ -423,26 +298,30 @@ def summarize_results(results_path: Path, expected_task_ids: set[str]) -> dict[s
     }
 
 
-ArtifactLoader = Callable[[Path], list[TaskArtifacts]]
-
-
 def parallel_eval(
     args: argparse.Namespace,
     *,
-    artifact_loader: ArtifactLoader = discover_task_artifacts,
+    spec: ArtifactSpec = DEFAULT_ARTIFACT_SPEC,
 ) -> None:
+    """Judge every task under ``args.trajectories_dir``, resuming a partial run.
+
+    Writes ``eval_manifest.json`` up front, appends judge rows to a resumable
+    results file, and finishes with ``eval_summary.json``. ``spec`` selects the
+    on-disk layout to read; it defaults to the ``task.json`` layout.
+    """
     trajectories_dir = Path(args.trajectories_dir).resolve()
     output_path = Path(args.output_path).resolve()
     output_path.mkdir(parents=True, exist_ok=True)
 
-    artifacts = artifact_loader(trajectories_dir)
+    artifacts = spec.loader(trajectories_dir)
     if args.expected_tasks and len(artifacts) != args.expected_tasks:
         raise SystemExit(
-            f"Expected {args.expected_tasks} task directories with task.json, found {len(artifacts)}"
+            f"Expected {args.expected_tasks} task directories for the "
+            f"{spec.task_source} layout, found {len(artifacts)}"
         )
 
     workers = max(1, min(args.num_worker, len(artifacts))) if artifacts else 0
-    manifest = build_manifest(args, artifacts, workers)
+    manifest = build_manifest(args, artifacts, workers, spec)
     manifest_path = output_path / "eval_manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     print(json.dumps({key: value for key, value in manifest.items() if key != "tasks"}, indent=2), flush=True)
@@ -469,6 +348,7 @@ def parallel_eval(
             evaluate_subset(
                 subsets[0],
                 args,
+                spec,
                 results_path,
                 completed,
                 labels,
@@ -488,6 +368,7 @@ def parallel_eval(
                         args=(
                             subset,
                             args,
+                            spec,
                             results_path,
                             completed,
                             labels,
@@ -514,6 +395,11 @@ def parse_args(
     *,
     include_artifact_layout: bool = False,
 ) -> argparse.Namespace:
+    """Parse the judge CLI, resolving the API key from the environment if unset.
+
+    ``include_artifact_layout`` adds the layout-selection flags; leave it off for
+    an entry point that always reads one fixed layout.
+    """
     parser = argparse.ArgumentParser(
         description=description
         or (
@@ -535,22 +421,30 @@ def parse_args(
     parser.add_argument("--task_max_attempts", type=int, default=8)
     parser.add_argument("--default_max_output_tokens", type=int, default=8192)
     parser.add_argument("--expected_tasks", type=int, default=300)
-    parser.add_argument(
-        "--result_action_history_mode",
-        "--result-action-history-mode",
-        choices=("raw", "last-arrow"),
-        default=None,
-        help=(
-            "For compatible evaluator variants, load result.json action_history "
-            "unchanged or trim each entry after its final '->'."
-        ),
-    )
+    # Both flags below only mean something to a caller that resolves a layout,
+    # so they are registered together: advertising them on a single-layout CLI
+    # would accept values that are then silently ignored.
     if include_artifact_layout:
         parser.add_argument(
             "--artifact-layout",
-            choices=("auto", "step-scripts", "result-json"),
-            default="auto",
-            help="Artifact layout. 'auto' retains the legacy detection behavior.",
+            choices=("auto", "browser-steps", "step-scripts", "result-json"),
+            default="step-scripts",
+            help=(
+                "Artifact layout, i.e. which files are read as the action "
+                "history. 'browser-steps' is the persistent-CLI default that "
+                "scripts/eval/persistent_cli.py is hardwired to; 'auto' retains "
+                "the legacy detection behavior and never picks it."
+            ),
+        )
+        parser.add_argument(
+            "--result_action_history_mode",
+            "--result-action-history-mode",
+            choices=("raw", "last-arrow"),
+            default=None,
+            help=(
+                "For the result-json layout, load result.json action_history "
+                "unchanged or trim each entry after its final '->'."
+            ),
         )
     parser.add_argument("--api_key", default="")
     parser.add_argument(
@@ -577,7 +471,30 @@ def parse_args(
 
 
 def main() -> None:
+    """Judge a trajectories directory using the default ``task.json`` layout."""
     parallel_eval(parse_args())
+
+
+def layout_main() -> None:
+    """Judge a trajectories directory using a selected (or auto-detected) layout.
+
+    The layout-aware entry point: adds ``--artifact-layout`` and
+    ``--result_action_history_mode`` and resolves them into an ``ArtifactSpec``
+    before judging.
+    """
+    args = parse_args(
+        description=(
+            "Run upstream WebJudge_Online_Mind2Web_eval over persistent-browser "
+            "step scripts or result.json low-level actions."
+        ),
+        include_artifact_layout=True,
+    )
+    spec = resolve_artifact_spec(
+        Path(args.trajectories_dir).resolve(),
+        layout=ArtifactLayout(args.artifact_layout),
+        result_action_history_mode=args.result_action_history_mode,
+    )
+    parallel_eval(args, spec=spec)
 
 
 if __name__ == "__main__":

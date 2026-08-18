@@ -6,7 +6,6 @@ from pathlib import Path
 
 from miniswewebagent.utils.om2w_eval import (
     export_online_mind2web_artifacts,
-    export_online_mind2web_artifacts_all_final_execution,
     normalize_online_mind2web_judge_results,
     split_jsonl_lines,
 )
@@ -204,51 +203,6 @@ def test_export_online_mind2web_artifacts_prefers_final_script_log_for_action_hi
     assert payload["action_history_source"] == "final_script_log"
 
 
-def test_export_online_mind2web_artifacts_all_final_execution_uses_latest_final_run(tmp_path) -> None:
-    output_dir = tmp_path / "task"
-    run_dir = output_dir / "final_runs" / "run_007" / "screenshots"
-    run_dir.mkdir(parents=True)
-    (run_dir / "final_execution_10_done.png").write_bytes(b"ten")
-    (run_dir / "final_execution_2_done.png").write_bytes(b"two")
-
-    artifacts = export_online_mind2web_artifacts_all_final_execution(
-        output_dir=output_dir,
-        task="Example task",
-        task_id="task-1",
-        start_url="https://example.com",
-        agent_result={"final_response": "Done", "exit_status": "Submitted", "submission": "Done"},
-    )
-
-    payload = json.loads((output_dir / "result.json").read_text(encoding="utf-8"))
-    assert artifacts["trajectory_dir"] == str(output_dir / "trajectory")
-    assert payload["screenshot_paths"] == [
-        str(output_dir / "trajectory" / "0_full_screenshot.png"),
-        str(output_dir / "trajectory" / "1_full_screenshot.png"),
-    ]
-    assert Path(payload["screenshot_paths"][0]).read_bytes() == b"two"
-    assert Path(payload["screenshot_paths"][1]).read_bytes() == b"ten"
-
-
-def test_export_online_mind2web_artifacts_all_final_execution_falls_back_to_root_screenshots(tmp_path) -> None:
-    output_dir = tmp_path / "task"
-    screenshots_dir = output_dir / "screenshots"
-    screenshots_dir.mkdir(parents=True)
-    (screenshots_dir / "final_execution_3_done.png").write_bytes(b"three")
-    (screenshots_dir / "final_execution_1_done.png").write_bytes(b"one")
-
-    export_online_mind2web_artifacts_all_final_execution(
-        output_dir=output_dir,
-        task="Example task",
-        task_id="task-1",
-        start_url="https://example.com",
-        agent_result={"final_response": "Done", "exit_status": "Submitted", "submission": "Done"},
-    )
-
-    payload = json.loads((output_dir / "result.json").read_text(encoding="utf-8"))
-    assert Path(payload["screenshot_paths"][0]).read_bytes() == b"one"
-    assert Path(payload["screenshot_paths"][1]).read_bytes() == b"three"
-
-
 def test_normalize_online_mind2web_judge_results_rewrites_missing_history_prompt(tmp_path) -> None:
     result_file = tmp_path / "judge_results.json"
     result_file.write_text(
@@ -360,33 +314,7 @@ def test_split_jsonl_lines_only_breaks_on_newline() -> None:
     assert len(text.splitlines()) > 2
 
 
-def test_run_online_mind2web_judge_defaults_to_sandbox_eval(tmp_path, monkeypatch) -> None:
-    from miniswewebagent.utils import om2w_eval
-
-    captured = {}
-
-    def fake_run(cmd, text, capture_output):
-        captured["cmd"] = cmd
-        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
-
-    monkeypatch.setattr(om2w_eval.subprocess, "run", fake_run)
-
-    om2w_eval.run_online_mind2web_judge(
-        judge_python=tmp_path / "python",
-        judge_script=tmp_path / "run.py",
-        trajectories_dir=tmp_path / "traj",
-        output_dir=tmp_path / "out",
-        judge_model="o4-mini",
-        num_proc=4,
-        api_key="key",
-    )
-
-    cmd = captured["cmd"]
-    assert cmd[2] == "--mode"
-    assert cmd[3] == "WebJudge_Online_Mind2Web_Sandbox_eval"
-
-
-def test_canonical_persistent_judge_script_uses_persistent_cli_contract(
+def test_run_online_mind2web_judge_uses_the_evaluation_runner_contract(
     tmp_path,
     monkeypatch,
 ) -> None:
@@ -412,23 +340,8 @@ def test_canonical_persistent_judge_script_uses_persistent_cli_contract(
     )
 
     cmd = captured["cmd"]
+    assert cmd[:2] == [str(tmp_path / "python"), str(judge_script)]
     assert "--mode" not in cmd
     assert cmd[cmd.index("--num_worker") + 1] == "4"
-    assert om2w_eval.judge_result_file_path(
-        tmp_path,
-        "o4-mini",
-        judge_script=judge_script,
-    ).name.startswith(om2w_eval.PERSISTENT_CLI_JUDGE_MODE)
-
-
-def test_explicit_judge_interface_overrides_script_name(tmp_path) -> None:
-    from miniswewebagent.utils import om2w_eval
-
-    result_path = om2w_eval.judge_result_file_path(
-        tmp_path,
-        "o4-mini",
-        judge_script=tmp_path / "unknown-name.py",
-        judge_interface=om2w_eval.JudgeInterface.PERSISTENT_CLI,
-    )
-
-    assert result_path.name.startswith(om2w_eval.PERSISTENT_CLI_JUDGE_MODE)
+    assert cmd[cmd.index("--expected_tasks") + 1] == "0"
+    assert om2w_eval.judge_result_file_path(tmp_path, "o4-mini").name.startswith(om2w_eval.JUDGE_MODE)

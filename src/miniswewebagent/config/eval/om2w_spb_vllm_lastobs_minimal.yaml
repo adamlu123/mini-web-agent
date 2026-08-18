@@ -92,12 +92,6 @@ run:
   judge_model: o4-mini
   judge_endpoint: http://gateway.phyagi.net/api/responses
   judge_runs: 1
-  # The persistent browser CLI writes browser-steps.jsonl + screenshots/*.png, not
-  # the final_script_log.txt + screenshots/final_execution_*.png layout that
-  # om2w_judge/run.py's WebJudge_Online_Mind2Web_Sandbox_eval mode globs for. With
-  # the default judge every screenshot is silently dropped and tasks are scored on
-  # action text alone, so point the scorer at the persistent-CLI evaluator.
-  judge_script: scripts/eval/persistent_cli_steps.py
   logs_root: logs
 
 agent:
