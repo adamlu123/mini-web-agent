@@ -24,6 +24,12 @@ only this guide.
 | Local OM2W | `bash scripts/local/om2w/shards.sh <start\|stop\|status\|logs\|sessions>` | Split and manage a run across local vLLM ports. |
 | Qwen3.5 cluster eval | `bash scripts/cluster/om2w/qwen35_9b/submit.sh [--dry-run]` | Submit the Qwen3.5-9B checkpoint evaluation. |
 | Qwen3.5 cluster runtime | `bash scripts/cluster/om2w/qwen35_9b/run.sh` | Internal entry point used inside the Qwen3.5 job. |
+| Qwen3.5-4B cluster eval | `bash scripts/cluster/om2w/qwen35_4b/submit.sh [--dry-run]` | Submit the Qwen3.5-4B RL actor checkpoint evaluation. |
+| Qwen3.5-4B cluster runtime | `bash scripts/cluster/om2w/qwen35_4b/run.sh` | Internal entry point used inside the Qwen3.5-4B job. |
+| Qwen3.5-4B base cluster eval | `bash scripts/cluster/om2w/qwen35_4b_base/submit.sh [--dry-run]` | Submit the untrained Qwen3.5-4B student baseline evaluation. |
+| Qwen3.5-4B base cluster runtime | `bash scripts/cluster/om2w/qwen35_4b_base/run.sh` | Internal entry point used inside the Qwen3.5-4B base job. |
+| Phi-4-14B cluster eval | `bash scripts/cluster/om2w/phi4_14b/submit.sh [--dry-run]` | Submit the Phi-4-14B webwright SFT checkpoint evaluation. |
+| Phi-4-14B cluster runtime | `bash scripts/cluster/om2w/phi4_14b/run.sh` | Internal entry point used inside the Phi-4-14B job. |
 | Qwen3.6 cluster eval | `bash scripts/cluster/om2w/qwen36_27b/submit.sh [--dry-run]` | Submit the Qwen3.6-27B evaluation. |
 | Qwen3.6 cluster runtime | `bash scripts/cluster/om2w/qwen36_27b/run.sh` | Internal entry point used inside the Qwen3.6 job. |
 | Qwen3.8 cluster eval | `bash scripts/cluster/om2w/qwen38_27b/submit.sh [--dry-run]` | Submit the stock Qwen3.8-27B evaluation. |

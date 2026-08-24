@@ -9,12 +9,16 @@ model:
   model_name: gpt-5.4
   openai_gateway_endpoint: http://gateway.phyagi.net/api/responses
   openai_gateway_tier: base
+  openai_gateway_infrastructure: aiservices
+  # Pin each task's session to one backend replica. Prompt caches are per-replica,
+  # so without this a task's next turn often lands on a replica that never saw its
+  # prefix (measured: sporadic 0% reuse across a 150-worker run).
+  strict_session: true
   reasoning_effort: xhigh
   request_timeout_seconds: 120
   max_output_tokens: 16000
   response_mode: json_schema
   attach_observation_screenshot: false
-  cache_ttl: 1209600
   observation_template: |
     Observation:
     Status: {{ 'ok' if observation.success else 'error' }}
@@ -55,8 +59,6 @@ environment:
     LESS: -R
     PIP_PROGRESS_BAR: 'off'
     TQDM_DISABLE: '1'
-    OPENAI_GATEWAY_ENDPOINT: http://gateway.phyagi.net/api/responses
-    OPENAI_GATEWAY_MODEL: gpt-5.4
     PYTHONPATH: /home/luyadong/sandbox/mini-web-agent/agent_runtime
 
 run:
@@ -64,7 +66,7 @@ run:
   logs_root: /home/luyadong/sandbox/mini-web-agent/logs
   judge_enabled: true
   judge_model: o4-mini
-  judge_endpoint: ""
+  judge_endpoint: http://gateway.phyagi.net/api/responses
   judge_python: /home/luyadong/.venv/bin/python
 
 agent:
@@ -74,11 +76,15 @@ agent:
   step_limit: 100
   require_self_reflection_success: true
   judge_mode: trajectory
+  # Judge with the policy model itself: the agent mirrors model.openai_gateway_*
+  # into the workspace env, so the in-workspace self_reflection tool needs no
+  # OPENAI_GATEWAY_ENDPOINT / _MODEL / _INFRASTRUCTURE entries below.
+  judge_model: policy
   trajectory_manifest: browser-steps.jsonl
   trajectory_judge_result: reflection/judge_result.json
   trajectory_plan_file: plan.md
   trajectory_judge_config: judge_config.json
-  summary_every_n_steps: 10
+  summary_every_n_steps: 20
   # history_context_mode: last_obs  # history obs stubbed, latest obs full
   summary_user_prompt: |
     Summarize the complete incremental task state for a fresh agent context. Include the task,
@@ -186,7 +192,7 @@ agent:
 
     Reflect over ALL screenshots saved by every prior incremental browser step:
 
-      python -m self_reflection --scope trajectory --trajectory-manifest browser-steps.jsonl --config "{{ workspace_dir }}/judge_config.json" --workspace-dir "{{ workspace_dir }}" --output reflection/judge_result.json
+      python -m self_reflection --scope trajectory --action-history-source step-scripts --config "{{ workspace_dir }}/judge_config.json" --workspace-dir "{{ workspace_dir }}" --output reflection/judge_result.json
 
     Per-image judgments are cached. A successful result is invalidated by any later browser step,
     changed screenshot, plan.md change, or judge_config.json change.

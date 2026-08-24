@@ -9,6 +9,7 @@ import re
 import subprocess
 from pathlib import Path
 from typing import Any, Literal
+import uuid
 
 import httpx
 import openai
@@ -461,19 +462,34 @@ def _usage_metrics_from_response_payload(payload: dict[str, Any]) -> dict[str, i
     }
 
 
+def _normalize_infrastructure_value(value: Any) -> str | list[str] | None:
+    """Accept "aiservices", "a,b", or ["a", "b"]; return None when empty."""
+    if value is None:
+        return None
+    items = value if isinstance(value, (list, tuple)) else str(value).split(",")
+    cleaned = [str(item).strip() for item in items if str(item).strip()]
+    if not cleaned:
+        return None
+    return cleaned[0] if len(cleaned) == 1 else cleaned
+
+
 class PhyagiModelConfig(BaseModel):
     model_name: str = "gpt-5.4"
     openai_gateway_api_key: str = ""
     openai_gateway_endpoint: str = "https://gateway.phyagi.net/api"
     openai_gateway_tier: str = "base"
+    # Restrict routing to gateway endpoints hosted on the given infrastructure:
+    # "aiservices", "trapi", or "openrouter" (a list allows several). The filter
+    # combines with the requested operation and tier. None considers all.
+    openai_gateway_infrastructure: str | list[str] | None = None
     reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh"] | None = None
     # Ask the gateway to return a natural-language summary of the hidden reasoning.
     # Without this the API returns reasoning items with an empty summary list, so the
     # reasoning tokens are billed and then discarded. Set to None to disable.
     reasoning_summary: Literal["auto", "concise", "detailed"] | None = "auto"
     cache_ttl: int | None = None
-    session_id: str = ""
-    strict_session: bool = False
+    session_id: str = f"om2w-{uuid.uuid4().hex}"
+    strict_session: bool = True
     max_output_tokens: int = 4000
     request_timeout_seconds: int = 120
     error_log_path: Path | None = None
@@ -718,6 +734,8 @@ class PhyagiModel:
 
     def _build_payload(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
         extra_body: dict[str, Any] = {"tier": self.config.openai_gateway_tier}
+        if self.config.openai_gateway_infrastructure:
+            extra_body["infrastructure"] = self.config.openai_gateway_infrastructure
         if self.config.cache_ttl is not None:
             extra_body["cache_ttl"] = self.config.cache_ttl
         if self.config.session_id:

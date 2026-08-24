@@ -26,6 +26,7 @@ from dataclasses import dataclass
 
 JUDGE_ENDPOINT_ENV = "OPENAI_GATEWAY_ENDPOINT"
 JUDGE_MODEL_ENV = "OPENAI_GATEWAY_MODEL"
+GATEWAY_INFRASTRUCTURE_ENV = "OPENAI_GATEWAY_INFRASTRUCTURE"
 
 # Sentinel value for "judge with the policy server under evaluation".
 POLICY_JUDGE_SENTINEL = "policy"
@@ -114,6 +115,18 @@ def normalize_chat_completions_url(endpoint: str) -> str:
     if endpoint.endswith("/v1"):
         return f"{endpoint}/chat/completions"
     return f"{endpoint}/v1/chat/completions"
+
+
+def normalize_responses_url(endpoint: str) -> str:
+    """Accept ``.../api`` and ``.../api/responses`` alike.
+
+    ``PhyagiModel`` drives the OpenAI SDK, which appends ``/responses`` itself, so
+    a model config may carry either form. The judge tools POST the raw URL.
+    """
+    endpoint = endpoint.strip().rstrip("/")
+    if endpoint.endswith("/responses"):
+        return endpoint
+    return f"{endpoint}/responses"
 
 
 def _first_env(names: tuple[str, ...]) -> str:

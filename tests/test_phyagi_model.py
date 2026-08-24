@@ -251,7 +251,11 @@ await page.title()
     assert "input" in kwargs
     assert "text" not in kwargs  # xml mode does not request json_schema
     assert kwargs["max_output_tokens"] == 4000
-    assert kwargs["extra_body"] == {"tier": "base"}
+    assert kwargs["extra_body"] == {
+        "tier": "base",
+        "session_id": model.config.session_id,
+        "strict_session": True,
+    }
 
 
 def test_phyagi_model_query_parses_xml_mode_with_bash_command(monkeypatch) -> None:

@@ -20,11 +20,13 @@ from miniswewebagent.utils.browser_evidence import (
     trajectory_evidence_digest,
 )
 from miniswewebagent.utils.judge_gateway import (
+    GATEWAY_INFRASTRUCTURE_ENV,
     JUDGE_ENDPOINT_ENV,
     JUDGE_MODEL_ENV,
     POLICY_ONLY_ENV,
     POLICY_JUDGE_SENTINEL,
     is_policy_judge,
+    normalize_responses_url,
     resolve_policy_judge,
 )
 from miniswewebagent.utils.serialize import recursive_merge
@@ -63,9 +65,10 @@ class AgentConfig(BaseModel):
     judge_mode: str = "tool"
     judge_upstream_src: str = "/home/luyadong/sandbox/Online-Mind2Web/src"
     # Judge model for the completion gate. "policy" is a sentinel meaning "judge
-    # with the policy server under evaluation": it is mirrored into the workspace
+    # with the model under evaluation": it is mirrored into the workspace
     # environment so the in-workspace self_reflection / image_qa tools talk to
-    # model.endpoint over chat-completions instead of the /responses gateway.
+    # model.endpoint over chat-completions (vLLM), or to model.openai_gateway_*
+    # over /responses when the policy is served by a gateway.
     judge_model: str = "o4-mini"
     judge_gateway_endpoint: str = ""
     judge_score_threshold: int = 3
@@ -247,9 +250,11 @@ class DefaultAgent:
 
         ``self_reflection`` / ``image_qa`` run as subprocesses inside the workspace,
         so the selection has to travel through the environment rather than the agent
-        config. ``model.endpoint`` is the single source of truth for where the policy
-        is served (the launch scripts override it per shard), so it wins over any
-        pre-existing ``OPENAI_COMPATIBLE_*`` entries in ``environment.env``.
+        config. A gateway-backed policy (``model.openai_gateway_endpoint``) is handled
+        by ``_apply_responses_policy_judge_env``; otherwise ``model.endpoint`` is the
+        single source of truth for where the policy is served (the launch scripts
+        override it per shard), so it wins over any pre-existing
+        ``OPENAI_COMPATIBLE_*`` entries in ``environment.env``.
         ``OPENAI_GATEWAY_ENDPOINT`` is deliberately left alone: it still describes the
         real judge gateway for an explicit ``--model`` override.
         """
@@ -263,6 +268,14 @@ class DefaultAgent:
                 "cannot reach the in-workspace tools otherwise."
             )
         model_config = getattr(self.model, "config", None)
+        gateway_endpoint = str(getattr(model_config, "openai_gateway_endpoint", "") or "")
+        if gateway_endpoint:
+            self._apply_responses_policy_judge_env(
+                env,
+                model_config,
+                endpoint=str(self.config.judge_gateway_endpoint or gateway_endpoint),
+            )
+            return
         target = resolve_policy_judge(
             endpoint=(
                 self.config.judge_gateway_endpoint
@@ -291,6 +304,33 @@ class DefaultAgent:
         # /responses or TRAPI default.
         env[POLICY_ONLY_ENV] = "1"
         env.pop(JUDGE_ENDPOINT_ENV, None)
+
+    def _apply_responses_policy_judge_env(
+        self, env: dict[str, Any], model_config: Any, *, endpoint: str
+    ) -> None:
+        """Mirror a ``/responses`` policy model into the in-workspace judge env.
+
+        ``resolve_policy_judge`` targets a vLLM server over chat-completions; a
+        gateway-backed policy speaks the Responses API instead, so judging with the
+        policy model means pointing the tools at the same gateway, model, and
+        infrastructure. The tools then take their normal responses path, which is
+        why ``POLICY_ONLY_ENV`` stays unset: nothing can silently reroute here.
+        """
+        model_name = str(getattr(model_config, "model_name", "") or "")
+        if not model_name:
+            raise ValueError(
+                f"agent.judge_model={POLICY_JUDGE_SENTINEL!r} needs the policy model name, "
+                f"but {type(model_config).__name__} exposes no model_name."
+            )
+        env[JUDGE_ENDPOINT_ENV] = normalize_responses_url(endpoint)
+        env[JUDGE_MODEL_ENV] = model_name
+        infrastructure = getattr(model_config, "openai_gateway_infrastructure", None)
+        if infrastructure:
+            env[GATEWAY_INFRASTRUCTURE_ENV] = (
+                ",".join(str(item) for item in infrastructure)
+                if isinstance(infrastructure, list)
+                else str(infrastructure)
+            )
 
     def _debug_dir(self) -> Path | None:
         if self.config.output_path is None:

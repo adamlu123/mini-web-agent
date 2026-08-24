@@ -71,7 +71,12 @@ from typing import Any
 
 import httpx
 
-from miniswewebagent.models.phyagi_model import _extract_response_text, text_part
+from miniswewebagent.evaluation.om2w.artifacts import load_step_action_history
+from miniswewebagent.models.phyagi_model import (
+    _extract_response_text,
+    _normalize_infrastructure_value,
+    text_part,
+)
 from miniswewebagent.utils.browser_evidence import (
     DEFAULT_BROWSER_STEPS_FILE,
     format_action_history,
@@ -87,12 +92,16 @@ from miniswewebagent.utils.chat_completions import (
 )
 from miniswewebagent.utils.judge_gateway import (
     ensure_policy_only_not_bypassed,
+    GATEWAY_INFRASTRUCTURE_ENV,
     POLICY_JUDGE_SENTINEL,
     ensure_responses_endpoint,
     policy_judge_requested,
     resolve_judge_endpoint,
     resolve_policy_judge,
 )
+
+ACTION_HISTORY_BROWSER_STEPS = "browser-steps"
+ACTION_HISTORY_STEP_SCRIPTS = "step-scripts"
 
 DEFAULT_RESPONSES_MODEL = "gpt-5.4"
 DEFAULT_RESPONSES_ENDPOINT = "http://gateway.phyagi.net/api/responses"
@@ -245,19 +254,33 @@ def _load_action_history_log(artifact_dir: Path | None) -> str:
     return log_path.read_text(encoding="utf-8").rstrip()
 
 
+def _format_step_script_action_history(actions: list[str]) -> str:
+    """Render steps/step_<id>.sh exactly as the OM2W judge renders last_actions."""
+    return "\n".join(f"{index}. {action}" for index, action in enumerate(actions, start=1))
+
+
 def _load_trajectory_scope(
     workspace_dir: Path,
     manifest: str | Path = DEFAULT_BROWSER_STEPS_FILE,
+    action_history_source: str = ACTION_HISTORY_BROWSER_STEPS,
 ) -> dict[str, Any]:
     rows = load_browser_steps(workspace_dir, manifest)
     image_entries = trajectory_images(workspace_dir, rows)
     images = [path for path, _row in image_entries]
     contexts = {str(path): image_context(row) for path, row in image_entries}
+    if action_history_source == ACTION_HISTORY_STEP_SCRIPTS:
+        # Same contract as scripts/eval/persistent_cli_steps.py, so the completion
+        # gate reasons over the commands the official judge will be shown.
+        action_history_log = _format_step_script_action_history(
+            load_step_action_history(workspace_dir)
+        )
+    else:
+        action_history_log = format_action_history(rows)
     return {
         "rows": rows,
         "images": images,
         "image_contexts": contexts,
-        "action_history_log": format_action_history(rows),
+        "action_history_log": action_history_log,
         "evidence_digest": trajectory_evidence_digest(workspace_dir, rows),
         "covered_through_browser_step": max(
             (int(row.get("browser_step") or 0) for row in rows), default=0
@@ -551,6 +574,11 @@ def _call_responses_gateway(
         ],
         "max_output_tokens": max_new_tokens,
     }
+    infrastructure = _normalize_infrastructure_value(
+        os.environ.get(GATEWAY_INFRASTRUCTURE_ENV, "")
+    )
+    if infrastructure:
+        payload["infrastructure"] = infrastructure
 
     with httpx.Client(timeout=timeout_seconds) as client:
         response = _post_with_retry(
@@ -956,6 +984,18 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"Trajectory JSONL path (default: {DEFAULT_BROWSER_STEPS_FILE}).",
     )
     parser.add_argument(
+        "--action-history-source",
+        choices=(ACTION_HISTORY_BROWSER_STEPS, ACTION_HISTORY_STEP_SCRIPTS),
+        default=ACTION_HISTORY_BROWSER_STEPS,
+        help=(
+            "Trajectory scope only. Which artifact becomes {action_history_log}: "
+            f"'{ACTION_HISTORY_BROWSER_STEPS}' uses each manifest row's natural-language "
+            f"action (default); '{ACTION_HISTORY_STEP_SCRIPTS}' uses the full text of every "
+            "non-empty steps/step_<id>.sh, matching the OM2W judge's step-scripts contract. "
+            "Screenshots are unaffected."
+        ),
+    )
+    parser.add_argument(
         "--image-cache",
         default="",
         help="Cache per-image judgments. Trajectory scope defaults to reflection/image-cache.json.",
@@ -1032,7 +1072,9 @@ def main(argv: list[str] | None = None) -> int:
     trajectory_scope: dict[str, Any] | None = None
     image_contexts: dict[str, str] = {}
     if args.scope == "trajectory":
-        trajectory_scope = _load_trajectory_scope(base_dir, args.trajectory_manifest)
+        trajectory_scope = _load_trajectory_scope(
+            base_dir, args.trajectory_manifest, args.action_history_source
+        )
         resolved_images = trajectory_scope["images"]
         image_contexts = trajectory_scope["image_contexts"]
         action_history_log = trajectory_scope["action_history_log"]
@@ -1189,6 +1231,7 @@ def main(argv: list[str] | None = None) -> int:
         payload.update(
             {
                 "scope": "trajectory",
+                "action_history_source": args.action_history_source,
                 "trajectory_manifest": str(args.trajectory_manifest),
                 "covered_through_browser_step": trajectory_scope[
                     "covered_through_browser_step"

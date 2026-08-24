@@ -1,0 +1,52 @@
+# Overlay for eval/om2w_spb_vllm_lastobs.yaml: judge the in-workspace trajectory
+# reflection with o4-mini over the phyagi gateway instead of with the served policy.
+#
+# WHY THIS EXISTS
+#
+# The base config sets `agent.judge_model: policy`, which points
+# `python -m self_reflection` (and `python -m image_qa`) at model.endpoint. That is
+# the right default for a multimodal policy, but it is unusable for a TEXT-ONLY
+# checkpoint. The Phi-4-14B webwright checkpoint is `LlamaForCausalLM`: no vision
+# tower, no `vision_config`, and no `preprocessor_config.json` anywhere in the
+# serving directory. vLLM therefore rejects any chat request carrying an
+# `image_url` part, and self_reflection attaches one per screenshot
+# (`_high_detail_image_part_from_path`).
+#
+# That rejection is fatal rather than degrading:
+#   - `_judge_one_image` calls `_call_gateway` OUTSIDE its try/except -- only
+#     PARSE failures are caught -- so the HTTP error escapes the coroutine.
+#   - HTTP 400 is not in `_RETRYABLE_STATUS_CODES`, so `_post_with_retry` goes
+#     straight to `raise_for_status()`.
+#   - `python -m self_reflection` then exits non-zero, and with
+#     `agent.require_self_reflection_success: true` the completion gate never
+#     opens, so the agent can never legally emit <done>true</done>. Every task
+#     that saves even one screenshot burns all 50 steps and is scored a failure
+#     no matter how well the agent actually did.
+#
+# WHAT THIS CHANGES
+#
+# Selecting a non-policy judge makes `DefaultAgent._apply_policy_judge_env()` a
+# no-op (it early-returns unless judge_model is the `policy` sentinel), so
+# MWA_JUDGE_POLICY_ONLY is never set and the judge tools are free to reach the
+# gateway. The model and endpoint have to travel through the workspace
+# environment because the system prompt invokes `python -m self_reflection` with
+# no `--model`; left unset, the tool would fall back to its built-in TRAPI
+# Kimi-K2.5 default rather than o4-mini.
+#
+# The endpoint must be the `/responses` URL: `ensure_responses_endpoint()`
+# rejects a chat-completions URL for a judge that speaks the responses API.
+#
+# OPENAI_GATEWAY_API_KEY is deliberately NOT set here. It comes from
+# `environment.credentials_file`, and local_workspace layers the credential env
+# over `config.env`, so a value written here would be overridden anyway.
+#
+# The policy itself is untouched: the agent still talks to the vLLM server
+# through model.endpoint. Only the judge moves off the checkpoint.
+
+environment:
+  env:
+    OPENAI_GATEWAY_ENDPOINT: http://gateway.phyagi.net/api/responses
+    OPENAI_GATEWAY_MODEL: o4-mini
+
+agent:
+  judge_model: o4-mini
