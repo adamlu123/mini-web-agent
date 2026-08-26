@@ -1,0 +1,19 @@
+# Judge overlay: route the `self_reflect` shim at Azure OpenAI.
+#
+# Without this, self_reflection falls back to its TRAPI Kimi default, which needs
+# `az login --scope api://trapi` and fails on a machine that has only an
+# AZURE_OPENAI_API_KEY.
+#
+# Layer it after generation/terminal_rst.yaml, alongside model_azure_gpt54.yaml:
+#
+#   -c generation/terminal_rst.yaml \
+#   -c generation/model_azure_gpt54.yaml \
+#   -c generation/judge_azure_gpt54.yaml
+#
+# AZURE_OPENAI_ENDPOINT is not interpolated here, so the full URL is spelled out;
+# override it with -c environment.judge_endpoint=... for a different resource.
+
+environment:
+  judge_endpoint: https://yifeili-aoai-eus2.openai.azure.com/openai/v1/chat/completions
+  judge_model: gpt-5.4
+  judge_api_key_env: AZURE_OPENAI_API_KEY

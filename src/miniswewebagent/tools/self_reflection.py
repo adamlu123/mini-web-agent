@@ -350,13 +350,14 @@ def _render_final_verdict_user_prompt(
                 image_reasonings=image_reasonings,
                 action_history_log=action_history_log,
             )
-        except KeyError as exc:
-            raise ValueError(
-                "Unknown placeholder in final_verdict_user_prompt: "
-                f"{exc.args[0]!r}. Supported placeholders are "
-                "{image_reasonings} and {action_history_log}; double any literal "
-                "braces as {{ and }}."
-            ) from exc
+        except (KeyError, IndexError, ValueError):
+            # A terminal-task prompt embeds verifier source, JSON reports and shell
+            # snippets, so unescaped braces are the norm rather than an authoring
+            # mistake. str.format() cannot survive those, so fall back to replacing
+            # only the two supported placeholders and leave every other brace alone.
+            rendered = template.replace(
+                "{image_reasonings}", image_reasonings
+            ).replace("{action_history_log}", action_history_log)
 
     additions: list[str] = []
     if "{action_history_log}" not in template and action_history_log:
@@ -621,8 +622,14 @@ def _call_chat_completions(
                 "content": serialize_chat_user_content(user_content),
             },
         ],
-        "max_tokens": max_new_tokens,
     }
+    # Azure's gpt-5 family rejects max_tokens outright ("Unsupported parameter:
+    # 'max_tokens' is not supported with this model"); TRAPI and vLLM want it.
+    endpoint_lower = (gateway_config.endpoint or "").lower()
+    if ".openai.azure.com" in endpoint_lower or "/openai/v1/" in endpoint_lower:
+        payload["max_completion_tokens"] = max_new_tokens
+    else:
+        payload["max_tokens"] = max_new_tokens
     # TRAPI selects the deployment from the URL path and ignores a body model;
     # an OpenAI-compatible server (vLLM) requires it.
     if gateway_config.backend != "trapi_kimi":

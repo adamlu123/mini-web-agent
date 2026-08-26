@@ -1,0 +1,17 @@
+# Judge overlay: route the `self_reflect` shim at the phyagi gateway.
+#
+# Without an explicit judge endpoint, self_reflection falls back to its TRAPI Kimi
+# default, which needs `az login --scope api://trapi`. Batch hosts generally do not
+# have that, so point it at the same gateway the policy uses.
+#
+#   -c generation/terminal_rst.yaml \
+#   -c generation/judge_phyagi.yaml
+#
+# The /responses URL selects self_reflection's `responses` backend, which reads the
+# key from OPENAI_GATEWAY_API_KEY (exported by cred.sh).
+
+environment:
+  judge_endpoint: http://gateway.phyagi.net/api/responses
+  judge_model: gpt-5.4
+  judge_api_key_env: OPENAI_GATEWAY_API_KEY
+  judge_backend: responses

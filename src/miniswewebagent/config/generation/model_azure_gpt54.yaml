@@ -1,0 +1,22 @@
+# Model overlay: Azure OpenAI (API-key auth) instead of the phyagi gateway.
+#
+# Layer it AFTER a base config; later -c specs win:
+#
+#   python -m miniswewebagent.run.benchmarks.rst \
+#     -c generation/terminal_rst.yaml \
+#     -c generation/model_azure_gpt54.yaml
+#
+# Requires AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY in the environment.
+# `model_name` is the Azure *deployment* name, not a catalog model id.
+#
+# Intended for local development only; production batches keep the phyagi gateway
+# config in generation/terminal_rst.yaml.
+
+model:
+  model_class: azure_openai
+  model_name: gpt-5.4
+  response_mode: json_schema
+  max_output_tokens: 16000
+  request_timeout_seconds: 240
+  attach_observation_screenshot: false
+  temperature: null

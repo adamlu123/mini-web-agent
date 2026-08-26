@@ -8,6 +8,7 @@ from miniswewebagent import Environment
 _ENVIRONMENT_MAPPING = {
     "local_browser": "miniswewebagent.environments.local_browser.LocalBrowserEnvironment",
     "local_workspace": "miniswewebagent.environments.local_workspace.LocalWorkspaceEnvironment",
+    "terminal_docker": "miniswewebagent.environments.terminal_docker.TerminalDockerEnvironment",
 }
 
 

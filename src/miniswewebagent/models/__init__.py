@@ -8,6 +8,7 @@ from miniswewebagent import Model
 _MODEL_MAPPING = {
     "phyagi": "miniswewebagent.models.phyagi_model.PhyagiModel",
     "azure_responses": "miniswewebagent.models.azure_responses_model.AzureResponsesModel",
+    "azure_openai": "miniswewebagent.models.azure_openai_model.AzureOpenAIModel",
     "openrouter": "miniswewebagent.models.openrouter_model.OpenRouterModel",
     "openai_compatible": "miniswewebagent.models.openai_compatible_model.OpenAICompatibleModel",
     "vllm": "miniswewebagent.models.openai_compatible_model.OpenAICompatibleModel",
