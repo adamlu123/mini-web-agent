@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import concurrent.futures
 import json
+import multiprocessing
+import subprocess
 import time
 import traceback
 from pathlib import Path
@@ -40,6 +42,19 @@ from miniswewebagent.utils.serialize import recursive_merge
 
 app = typer.Typer(add_completion=False, pretty_exceptions_enable=False)
 console = Console()
+
+# Builds and agent episodes bottleneck on different resources: a build saturates
+# host CPU, disk and the registry link, while an episode is almost entirely idle
+# waiting on the gateway. Sizing one pool for both caps agent concurrency at
+# whatever the daemon can survive building. Instead the process pool sizes the
+# agent side, and this semaphore independently caps concurrent builds, so the two
+# overlap continuously rather than running in phases.
+_BUILD_SEMAPHORE = None
+
+
+def _init_worker(semaphore) -> None:
+    global _BUILD_SEMAPHORE
+    _BUILD_SEMAPHORE = semaphore
 
 
 def _load_config(config_spec: list[str]) -> dict[str, Any]:
@@ -85,7 +100,14 @@ def _run_one(config: dict[str, Any], record: dict[str, Any], output_root: Path) 
         env = get_environment(env_config, default_type="terminal_docker")
         agent = get_agent(model, env, agent_config, default_type="default")
 
-        env.prepare(task=instruction, task_id=task_id, task_record=record)
+        if _BUILD_SEMAPHORE is not None:
+            with _BUILD_SEMAPHORE:
+                env.prepare(task=instruction, task_id=task_id, task_record=record)
+        else:
+            env.prepare(task=instruction, task_id=task_id, task_record=record)
+        env_info = env.serialize().get("environment", {})
+        summary["build_seconds"] = env_info.get("build_seconds")
+        summary["image_was_cached"] = env_info.get("image_was_cached")
         result = agent.run(instruction, task_id=task_id)
         summary["exit_status"] = result.get("exit_status", "")
         summary["n_steps"] = getattr(agent, "n_calls", None)
@@ -122,7 +144,20 @@ def main(
     output_dir: Path = typer.Option(None, "--output-dir", help="Root output directory."),
     group: int = typer.Option(0, "--group", help="Only tasks with this group id (0 = all)."),
     limit: int = typer.Option(0, "--limit", help="Run only the first N selected tasks."),
-    workers: int = typer.Option(1, "--workers", help="Parallel worker processes."),
+    workers: int = typer.Option(1, "--workers", help="Concurrent agent episodes (process pool size)."),
+    build_workers: int = typer.Option(
+        0, "--build-workers",
+        help="Max concurrent docker builds. 0 = min(workers, 8). Keep well below "
+             "--workers: builds are host-bound, episodes are gateway-bound.",
+    ),
+    prune_every: int = typer.Option(
+        0, "--prune-every",
+        help="Run `docker builder prune` after this many finished tasks (0 = never). "
+             "Build cache grows ~0.8 GB per build and nothing else reclaims it.",
+    ),
+    prune_keep_storage: str = typer.Option(
+        "20GB", "--prune-keep-storage", help="Build cache to retain when pruning."
+    ),
 ) -> None:
     config = _load_config(config_spec)
     run_config = config.get("run", {})
@@ -139,19 +174,37 @@ def main(
     output_root = (output_dir or Path(str(config.get("environment", {}).get("output_dir", "outputs/terminal")))).expanduser()
     output_root.mkdir(parents=True, exist_ok=True)
 
-    console.print(f"[bold]RST[/bold] {len(tasks)} tasks, {workers} workers -> {output_root}")
+    resolved_build_workers = build_workers or min(workers, 8)
+    console.print(
+        f"[bold]RST[/bold] {len(tasks)} tasks, {workers} agent workers, "
+        f"{resolved_build_workers} concurrent builds -> {output_root}"
+    )
+
+    def maybe_prune(done: int) -> None:
+        if prune_every and done and done % prune_every == 0:
+            subprocess.run(
+                ["docker", "builder", "prune", "-f", "--keep-storage", prune_keep_storage],
+                capture_output=True, text=True,
+            )
+            console.print(f"[dim]pruned build cache after {done} tasks[/dim]")
+
     started = time.time()
     summaries: list[dict[str, Any]] = []
     if workers <= 1:
         for record in tasks:
             summaries.append(_run_one(config, record, output_root))
             console.print(summaries[-1])
+            maybe_prune(len(summaries))
     else:
-        with concurrent.futures.ProcessPoolExecutor(max_workers=workers) as executor:
+        semaphore = multiprocessing.Semaphore(resolved_build_workers)
+        with concurrent.futures.ProcessPoolExecutor(
+            max_workers=workers, initializer=_init_worker, initargs=(semaphore,)
+        ) as executor:
             futures = {executor.submit(_run_one, config, r, output_root): r for r in tasks}
             for future in concurrent.futures.as_completed(futures):
                 summaries.append(future.result())
                 console.print(summaries[-1])
+                maybe_prune(len(summaries))
 
     scored = [s for s in summaries if isinstance(s.get("score"), int)]
     payload = {
@@ -161,6 +214,8 @@ def main(
         "skipped": sum(1 for s in summaries if s.get("skipped")),
         "errors": sum(1 for s in summaries if s.get("error")),
         "seconds": round(time.time() - started, 1),
+        "agent_workers": workers,
+        "build_workers": resolved_build_workers,
         "summaries": summaries,
     }
     (output_root / "batch_summary.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")

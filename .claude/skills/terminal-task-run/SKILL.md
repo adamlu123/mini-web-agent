@@ -272,6 +272,43 @@ cache hit rate, not output length.** Cache hit rates were 42% and 78% on these t
 Treat these as a floor for the higher bands: `g10` tasks have reference solutions
 3–4× longer than `g01` and will use more steps.
 
+## When a batch is slow
+
+Throughput has three independent causes that need opposite fixes, so measure before
+changing anything:
+
+```bash
+python .claude/skills/terminal-task-run/scripts/diagnose_throughput.py \
+  --output-dir $OUT --workers <N> --step-limit 80
+```
+
+Read it in this order:
+
+| what the report shows | cause | fix |
+|---|---|---|
+| `FormatErrorRetry` > 0 | the prompt's output shape and `model.response_mode` disagree; every retry is a wasted round trip and is **invisible in `n_steps`** | align `model.response_mode` with `agent.system_template` (`sft_state` for `<think>/<bash>` tags, `json_schema` for a JSON object) |
+| build is a large share of task time, few cache hits | image builds | raise `--workers`, lower `--build-workers`; builds are host-bound, episodes are gateway-bound |
+| `at step_limit` high, `self_reflect calls` ≥ 3 | episodes not converging; the reflection gate keeps rejecting | see below |
+| `sec/step` ≥ 30 with normal step counts | gateway queueing | **lower** concurrency; more workers only lengthens the queue |
+| real wall clock ≫ `ideal wall at Nw` | workers starved | check the disk line: >85% used makes the daemon slow at both build and exec |
+| docker disk climbing run over run | images or build cache leaking | `remove_image_on_close: true` (default in this config) and `--prune-every 50` |
+
+**A quick sanity number**: worker-seconds per task is `wall_clock × workers ÷ tasks`.
+At `g01` a healthy value is 250–400 s. Much above that, something in the table applies.
+
+**If it is reflection churn**: the gate exists because the web harness has no ground
+truth. Here `tests/test.sh` is ground truth, so the gate does not improve label
+quality — it only helps the agent self-correct, at the cost of a judge round trip
+plus the steps spent reacting to each rejection. Turning it off is a real option:
+
+```bash
+-c agent.require_self_reflection_success=false -c agent.step_limit=40
+```
+
+That trades yield (fewer positives per task) for cost (far fewer steps per task).
+Which wins is empirical: A/B a band and compare **seconds per accepted trajectory**,
+not pass rate.
+
 ## Prompts
 
 All agent-facing prompt text lives in

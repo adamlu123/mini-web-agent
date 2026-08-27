@@ -74,6 +74,12 @@ environment:
   output_dir: outputs/terminal/default
   # Built images are cached by content hash of environment/; set false to force rebuild.
   reuse_images: true
+  # Drop each task's image once its episode ends. Band-internal image reuse is only
+  # ~3%, while images plus build cache run 0.5-1.5 GB apiece, so keeping them turns a
+  # 500-task band into hundreds of GB and slows the daemon long before the disk fills.
+  # Set false with -c environment.remove_image_on_close=false while iterating locally,
+  # where rebuilding the same task every run costs more than the disk.
+  remove_image_on_close: true
   build_timeout_seconds: 900
   command_timeout_seconds: 240
   # Force the image architecture so local Apple-silicon development matches the

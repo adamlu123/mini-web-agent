@@ -43,6 +43,7 @@ import os
 import shlex
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -62,6 +63,17 @@ class TerminalDockerEnvironmentConfig(BaseModel):
     command_timeout_seconds: int = 240
     output_truncation_chars: int = 24000
     recent_files_limit: int = 40
+    # Bounds on the per-step workspace file listing. It runs after every command,
+    # so an unbounded walk of a tree containing a venv or node_modules costs more
+    # than the command itself.
+    file_scan_max_depth: int = 4
+    file_scan_timeout_seconds: int = 15
+    file_scan_prune: list[str] = Field(
+        default_factory=lambda: [
+            ".git", "node_modules", "__pycache__", "site-packages",
+            ".venv", "venv", ".tox", ".mypy_cache", ".cache", "target",
+        ]
+    )
     shell: str = "/bin/bash"
     env: dict[str, str] = Field(default_factory=dict)
     docker_binary: str = "docker"
@@ -85,6 +97,12 @@ class TerminalDockerEnvironmentConfig(BaseModel):
     judge_backend: str = ""
     container_name_prefix: str = "rst"
     remove_container_on_close: bool = True
+    # Each task builds its own image (band-internal reuse is only ~3%), and images
+    # plus their build cache run 0.5-1.5 GB apiece. Keeping them all is fine for a
+    # handful of tasks and fills the disk on a batch, which slows the daemon down
+    # long before it fails outright. Batch configs turn this on; leave it off while
+    # iterating locally so reruns skip the rebuild.
+    remove_image_on_close: bool = False
 
 
 class TerminalDockerEnvironment:
@@ -102,6 +120,8 @@ class TerminalDockerEnvironment:
         self._image_tag: str = ""
         self._container: str = ""
         self._task_workspace: str = self.config.default_task_workspace
+        self._build_seconds: float = 0.0
+        self._image_was_cached: bool = False
 
     # ---------------------------------------------------------------- helpers
 
@@ -174,7 +194,9 @@ class TerminalDockerEnvironment:
 
         # --- build ---------------------------------------------------------
         self._image_tag = f"{self.config.container_name_prefix}:{self._environment_digest(environment_dir)}"
-        if not (self.config.reuse_images and self._image_exists(self._image_tag)):
+        self._image_was_cached = self.config.reuse_images and self._image_exists(self._image_tag)
+        if not self._image_was_cached:
+            build_started = time.monotonic()
             build = self._docker(
                 "build",
                 "--platform", self.config.platform,
@@ -183,6 +205,7 @@ class TerminalDockerEnvironment:
                 str(environment_dir),
                 timeout=self.config.build_timeout_seconds,
             )
+            self._build_seconds = round(time.monotonic() - build_started, 1)
             (workspace_dir / "docker_build.log").write_text(
                 (build.stdout or "") + (build.stderr or ""), encoding="utf-8"
             )
@@ -345,11 +368,20 @@ class TerminalDockerEnvironment:
         }
 
     def _recent_task_files(self) -> list[str]:
-        """Newest files in the task workspace, so the model sees what it changed."""
+        """Newest files in the task workspace, so the model sees what it changed.
+
+        Runs after every command, so it must stay cheap. An unbounded `find` walks
+        the whole tree each step: once a task installs a venv or node_modules, or
+        its WORKDIR is /root, that is tens of thousands of stat calls per step for
+        a list that is truncated to 40 entries anyway. Depth-limited and pruned.
+        """
+        pruned = " -o ".join(f"-name {shlex.quote(name)}" for name in self.config.file_scan_prune)
         result = self._docker(
             "exec", self._container, "/bin/sh", "-c",
-            f"find {shlex.quote(self._task_workspace)} -type f -printf '%T@ %p\\n' 2>/dev/null "
+            f"find {shlex.quote(self._task_workspace)} -maxdepth {self.config.file_scan_max_depth} "
+            f"\\( {pruned} \\) -prune -o -type f -printf '%T@ %p\\n' 2>/dev/null "
             f"| sort -rn | head -n {self.config.recent_files_limit} | cut -d' ' -f2-",
+            timeout=self.config.file_scan_timeout_seconds,
         )
         if result.returncode != 0:
             return []
@@ -450,6 +482,8 @@ class TerminalDockerEnvironment:
                 "task_workspace": self._task_workspace,
                 "image": self._image_tag,
                 "container": self._container,
+                "build_seconds": self._build_seconds,
+                "image_was_cached": self._image_was_cached,
             }
         }
 
@@ -457,3 +491,9 @@ class TerminalDockerEnvironment:
         if self._container and self.config.remove_container_on_close:
             self._docker("rm", "-f", self._container)
             self._container = ""
+        if self._image_tag and self.config.remove_image_on_close:
+            # Best effort: another worker may still hold a container on a shared
+            # image, in which case docker refuses and the image stays until that
+            # task closes. Untagging is enough for the disk to be reclaimed.
+            self._docker("image", "rm", "-f", self._image_tag)
+            self._image_tag = ""
