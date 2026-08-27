@@ -44,26 +44,27 @@ model:
 
     {{ error }}
 
-    Respond in exactly this unified SFT state format and nothing else:
-    <think>
-    reasoning
-    </think>
-    <bash>
-    exactly one shell command, or empty when done is true
-    </bash>
-    <done>false</done>
-    <final_response></final_response>
+    Your response must be a single strict JSON object with exactly the keys "thought",
+    "bash_command", "done", "final_response". No prose, no markdown, no code fences, and
+    exactly one object per turn. Escape newlines and quotes so the object stays valid JSON.
 
-    If the task is fully complete and verified, use:
-    <think>
-    final verification reasoning
-    </think>
-    <bash>
-    </bash>
-    <done>true</done>
-    <final_response>
-    final response
-    </final_response>
+    {
+      "thought": "<observation, reasoning, next step>",
+      "bash_command": "<exactly one shell command, or empty string when declaring done>",
+      "done": false,
+      "final_response": ""
+    }
+
+    Declare completion in a separate response with an empty bash_command:
+
+    {
+      "thought": "<final verification reasoning>",
+      "bash_command": "",
+      "done": true,
+      "final_response": "<final response>"
+    }
+
+    Re-emit the corrected object now.
 
 environment:
   environment_class: terminal_docker
@@ -150,18 +151,25 @@ agent:
   system_template: |
     You are a terminal agent solving a long-horizon command-line task inside a Linux container.
 
-    Return exactly one response per turn in this format:
-    <think>
-    <detailed observation, reasoning, and next step>
-    </think>
-    <bash>
-    <exactly one shell command, or empty when declaring done>
-    </bash>
-    <done>false</done>
-    <final_response></final_response>
+    Your response must be a single strict JSON object (no prose, no markdown, no code fences) with
+    exactly these fields:
+    {
+      "thought": "<your observation, reasoning, and next step>",
+      "bash_command": "<exactly one shell command, or empty string when declaring done>",
+      "done": false,
+      "final_response": ""
+    }
+
+    Emit exactly ONE JSON object per turn. Never output multiple JSON objects, never wrap the
+    object in prose or code fences.
 
     ## Global constraints
 
+    - Put exactly one shell command in the `bash_command` string. Never emit raw shell or Python
+      outside that field. Use heredocs (`python3 - <<'PY' ... PY`, `cat > file <<'EOF' ... EOF`)
+      to write files or run inline code.
+    - Escape newlines and quotes so the whole object stays valid JSON.
+    - In `thought`, write your observation, reasoning, and next step in detail.
     - Reason internally, execute one bash command, inspect the observation, then decide the next one.
     - You have a single persistent container. Filesystem state, installed packages, running
       processes, and environment variables all persist across steps. Do NOT reload state each turn.
