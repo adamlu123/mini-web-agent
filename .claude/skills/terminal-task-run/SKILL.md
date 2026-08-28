@@ -134,10 +134,12 @@ tmux split-window -t inference -v \
    cd /home/luyadong/sandbox/mini-web-agent && \
    /home/luyadong/.venv/bin/python -m miniswewebagent.run.benchmarks.rst \
      -c generation/terminal_rst.yaml \
+     -c generation/terminal_rst_noverify.yaml \
      -c generation/judge_phyagi.yaml \
      -c environment.tasks_root=$DATA/tasks/tasks \
      -c environment.build_timeout_seconds=1200 \
-     -c agent.step_limit=100 \
+     -c agent.require_self_reflection_success=false \
+     -c agent.step_limit=50 \
      --tasks-file $DATA/${BAND}.jsonl \
      --workers 8 \
      --output-dir $OUT 2>&1 | tee $OUT/run.log; \
@@ -147,6 +149,11 @@ tmux select-layout -t inference tiled
 
 **Always smoke-test first**: add `--limit 2 --workers 2` and confirm two tasks reach
 `summary.json` with a non-null `score` before launching the full band.
+
+This is the measured-cheapest configuration (see "What the ablations showed"). Drop
+`terminal_rst_noverify.yaml` and the two `agent.*` overrides to get the full
+self-verification prompt with the completion gate; it produces the same positives at
+about three times the cost.
 
 Two flags are not optional:
 
@@ -164,6 +171,7 @@ Later `-c` specs win, so overlays compose:
 | spec | purpose |
 |---|---|
 | `generation/terminal_rst.yaml` | base: prompts, `terminal_docker`, phyagi policy |
+| `generation/terminal_rst_noverify.yaml` | drops the verification contract (agent-authored `verify_state.py`) |
 | `generation/judge_phyagi.yaml` | judge → phyagi `/responses` |
 | `generation/model_azure_gpt54.yaml` | policy → Azure (local dev only) |
 | `generation/judge_azure_gpt54.yaml` | judge → Azure (local dev only) |
@@ -172,13 +180,9 @@ Later `-c` specs win, so overlays compose:
 
 - `--limit N` — first N tasks of the band.
 - `--group N` — filter by the `group` field, for running from `all.jsonl`.
-- `-c agent.step_limit=100` — matches `persistent_cli`; 60 is too tight, tasks finish
-  the work and then run out of steps inside the reflection loop.
-- `-c agent.require_self_reflection_success=false -c agent.step_limit=50` — disable
-  the completion gate. On 20 `g01` tasks this produced the same 11 positives as the
-  gated run at 285 s per positive instead of 508 (the gate lost 1–3 correct runs to
-  the step limit and passed 4 wrong ones). Labels come from `tests/test.sh` either
-  way, so for rejection sampling this is the cheaper setting.
+- `-c agent.step_limit=100` when the completion gate is on (matches `persistent_cli`;
+  60 is too tight, tasks finish the work and then run out of steps inside the
+  reflection loop). 50 is enough with the gate off.
 - `-c environment.reuse_images=false` — force rebuilds after editing a Dockerfile.
 - `-c environment.command_timeout_seconds=...` — per-command ceiling, default 240 s.
 
@@ -203,7 +207,8 @@ Per-task artifacts land in `$OUT/<task_id>/`:
 | `summary.json` | steps, exit_status, score, partial_credit, seconds |
 | `verifier_log.txt` | raw output of the private `tests/test.sh` |
 | `verifier_result.json` | `{score, returncode, tests_passed, partial_credit}` |
-| `plan.md`, `judge_config.json`, `final_runs/run_<id>/` | what the agent authored |
+| `plan.md`, `judge_config.json`, `reflection/judge_result.json` | what the agent authored; `verify_state.py` too under the full prompt |
+| `terminal-steps.jsonl` | step manifest the completion gate checks against |
 | `steps/`, `logs/` | one file per executed command and its output |
 | `docker_build.log` | image build output; only worth reading on failure |
 
@@ -279,62 +284,47 @@ Images are cached by a content hash of `environment/`, so a full band leaves sev
 hundred images. Reclaim with `docker image prune -a` only when no run is active — a
 rebuild costs roughly two minutes per task.
 
+## What the ablations showed
+
+Same 20 `g01` tasks, four configurations, gpt-5.4. All four passed the identical 11
+tasks; they differ only in what a positive costs.
+
+| configuration | steps (median) | s per positive |
+|---|---|---|
+| full prompt: verification contract + completion gate | 20 | 508 |
+| gate off | 17 | 285 |
+| verification contract off | 14 | 227 |
+| both off, mounted client | 12 | 167 |
+
+The self-verification apparatus does not change which tasks pass. Every task that
+failed under all four failed on one detail the instruction does not state: two are
+specified only in the private tests (unsolvable by design), two are documented in
+workspace files the agent did not read, one has an ambiguous spec. Reflection audits
+the agent's own checklist, so a requirement missing from that checklist is invisible
+to it. Labels come from `tests/test.sh` regardless, so for rejection sampling the
+cheapest configuration is the right default; the exploration depth of the agent is
+where the remaining headroom is.
+
+A static scan suggests up to 22% of the 5,000 tasks assert a path that appears in
+neither the instruction nor any public workspace file (an upper bound — build-time
+clones are invisible to the scan). Expect a floor of unsolvable tasks in every band.
+
 ## Cost and duration
 
-Measured with `gpt-5.4` on two `g01` tasks, on the local dev host (Azure policy,
-Apple-silicon emulation, cold image cache):
+Measured with `gpt-5.4` on 17 runnable `g01` tasks (3 of 20 were multi-container and
+skipped), recommended configuration, 4 workers, local dev host (Azure policy, Apple
+silicon emulation, images cached):
 
-| task | steps | wall | billed input | cached input | output |
-|---|---:|---:|---:|---:|---:|
-| pandas dropna → csv | 19 | 134 s | 124,661 | 90,368 | 5,134 |
-| openssl RSA/AES | 26 | 323 s | 66,236 | 233,728 | 19,051 |
+| | |
+|---|---|
+| wall clock, 17 tasks | 7 min |
+| per task (median) | 86 s, 12 steps |
+| per positive | 167 s |
+| pass rate | 10/17 |
 
-Roughly **230 s, 95 k billed input, 12 k output per task** at `g01`, with a first-time
-image build worth about 130 s of that.
-
-Input dominates and grows quadratically with step count: every step resends the whole
-history, so 26 steps accumulates 300 k input tokens. **Cost tracks step count and
-cache hit rate, not output length.** Cache hit rates were 42% and 78% on these two.
-
-Treat these as a floor for the higher bands: `g10` tasks have reference solutions
-3–4× longer than `g01` and will use more steps.
-
-## When a batch is slow
-
-Throughput has three independent causes that need opposite fixes, so measure before
-changing anything:
-
-```bash
-python .claude/skills/terminal-task-run/scripts/diagnose_throughput.py \
-  --output-dir $OUT --workers <N> --step-limit 80
-```
-
-Read it in this order:
-
-| what the report shows | cause | fix |
-|---|---|---|
-| `FormatErrorRetry` > 0 | the prompt's output shape and `model.response_mode` disagree; every retry is a wasted round trip and is **invisible in `n_steps`** | align `model.response_mode` with `agent.system_template` (`sft_state` for `<think>/<bash>` tags, `json_schema` for a JSON object) |
-| build is a large share of task time, few cache hits | image builds | raise `--workers`, lower `--build-workers`; builds are host-bound, episodes are gateway-bound |
-| `at step_limit` high, `self_reflect calls` ≥ 3 | episodes not converging; the reflection gate keeps rejecting | see below |
-| `sec/step` ≥ 30 with normal step counts | gateway queueing | **lower** concurrency; more workers only lengthens the queue |
-| real wall clock ≫ `ideal wall at Nw` | workers starved | check the disk line: >85% used makes the daemon slow at both build and exec |
-| docker disk climbing run over run | images or build cache leaking | `remove_image_on_close: true` (default in this config) and `--prune-every 50` |
-
-**A quick sanity number**: worker-seconds per task is `wall_clock × workers ÷ tasks`.
-At `g01` a healthy value is 250–400 s. Much above that, something in the table applies.
-
-**If it is reflection churn**: the gate exists because the web harness has no ground
-truth. Here `tests/test.sh` is ground truth, so the gate does not improve label
-quality — it only helps the agent self-correct, at the cost of a judge round trip
-plus the steps spent reacting to each rejection. Turning it off is a real option:
-
-```bash
--c agent.require_self_reflection_success=false -c agent.step_limit=40
-```
-
-That trades yield (fewer positives per task) for cost (far fewer steps per task).
-Which wins is empirical: A/B a band and compare **seconds per accepted trajectory**,
-not pass rate.
+Input tokens dominate and grow with step count: every step resends the whole history.
+Cost tracks step count and cache hit rate, not output length. Higher bands have
+reference solutions 3–4× longer than `g01` and will use more steps.
 
 ## Prompts
 
@@ -343,7 +333,8 @@ All agent-facing prompt text lives in
 
 - `agent.system_template` — the main prompt. Contains the JSON response contract, the
   task-workspace / harness-workspace split, the workflow, the verification contract
-  (the assertion categories the agent's own `verify_state.py` must cover), and the
+  (the assertion categories the agent's own `verify_state.py` must cover — omitted by
+  the `noverify` overlay), and the
   self-reflection spec.
 - `agent.instance_template` — per-task injection: instruction, paths, done checklist.
 - `agent.summary_user_prompt` — compaction. Overridden here because the default in
@@ -376,7 +367,7 @@ agent at runtime, constrained by the `## Self-reflection` section of
   URL with a real model name silently routes to the responses backend). The
   environment infers this from the endpoint; `judge_backend: responses|policy_chat`
   forces it. Verify on the first `--limit 2` run that
-  `final_runs/run_*/judge_result.json` exists and has `predicted_label` set.
+  `reflection/judge_result.json` exists and has `predicted_label` set.
 - **`/logs/verifier` is created by the harness** before running `test.sh`. 4,960 of
   the 5,000 RST tasks create it themselves, so a regression here would show up only
   on the remaining 40 — as `verifier_log.txt` ending in `No such file or directory`
