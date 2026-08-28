@@ -98,7 +98,7 @@ def main() -> None:
     for r in done:
         steps_dir = r["_dir"] / "steps"
         if steps_dir.is_dir():
-            n = sum(1 for p in steps_dir.glob("*.sh") if p.read_text(errors="replace").lstrip().startswith("self_reflect"))
+            n = sum(1 for p in steps_dir.glob("*.sh") if "python -m self_reflection" in p.read_text(errors="replace"))
             reflect.append(n)
     # Format-error retries are invisible in n_steps: a FormatError does not advance
     # the step counter, but it still costs a full model round trip. A prompt that

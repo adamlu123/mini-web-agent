@@ -43,19 +43,34 @@ import os
 import shlex
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
 
-SELF_REFLECT_SHIM = "self_reflect"
+from miniswewebagent.utils.browser_evidence import DEFAULT_BROWSER_STEPS_FILE, append_jsonl
+
+# The judge is invoked from inside the container as a normal command, but it
+# cannot run there: the container has no harness repo, no dependencies, and no
+# judge credentials. So the container gets a POSIX-sh client mounted read-only at
+# /usr/local/bin/self_reflection. It writes its argv to <harness>/.reflect/<id>.req
+# and waits; a watcher thread on the host runs the real tool and answers with
+# <id>.out and <id>.rc. Credentials never leave the host, the image is not
+# rebuilt, and no interpreter is required in the container.
+CLIENT_SCRIPT = Path(__file__).with_name("container_bin") / "self_reflection"
+CLIENT_MOUNT = "/usr/local/bin/self_reflection"
+REFLECT_DIR = ".reflect"
 
 
 class TerminalDockerEnvironmentConfig(BaseModel):
     tasks_root: Path = Path(".")
     output_dir: Path = Path("outputs/terminal/default")
     harness_mount: str = "/harness"
+    # Step manifest consumed by judge_mode: trajectory. Field names come from
+    # browser_evidence.py and are fixed; only the filename is configurable.
+    step_manifest: str = DEFAULT_BROWSER_STEPS_FILE
     private_dirs: list[str] = Field(default_factory=lambda: ["tests", "solution"])
     platform: str = "linux/amd64"
     reuse_images: bool = True
@@ -79,10 +94,11 @@ class TerminalDockerEnvironmentConfig(BaseModel):
     docker_binary: str = "docker"
     # Fallback when the built image declares no WORKDIR.
     default_task_workspace: str = "/app"
-    # Interpreter used for the host-side self_reflect shim. Defaults to the
-    # interpreter running the harness, so it inherits the same venv.
+    # Interpreter used to run the judge on the host. Defaults to the interpreter
+    # running the harness, so it inherits the same venv.
     host_python: str = ""
-    # Judge routing for the self_reflect shim. self_reflection defaults to TRAPI
+    reflect_poll_seconds: float = 0.5
+    # Judge routing for host-side reflection. self_reflection defaults to TRAPI
     # Kimi (needs `az login --scope api://trapi`), which a laptop will not have.
     # Setting judge_endpoint + judge_model routes it through the OpenAI
     # chat-completions path instead, via the `policy` sentinel.
@@ -122,6 +138,9 @@ class TerminalDockerEnvironment:
         self._task_workspace: str = self.config.default_task_workspace
         self._build_seconds: float = 0.0
         self._image_was_cached: bool = False
+        self._watcher: threading.Thread | None = None
+        self._watcher_stop = threading.Event()
+        self._reflected_this_step = False
 
     # ---------------------------------------------------------------- helpers
 
@@ -230,6 +249,7 @@ class TerminalDockerEnvironment:
             "--name", self._container,
             "--platform", self.config.platform,
             "-v", f"{workspace_dir.resolve()}:{self.config.harness_mount}",
+            "-v", f"{CLIENT_SCRIPT.resolve()}:{CLIENT_MOUNT}:ro",
             "-w", self._task_workspace,
             "--entrypoint", "/bin/sh",
         ]
@@ -245,15 +265,35 @@ class TerminalDockerEnvironment:
         # The private verifier and reference solution are deliberately absent from
         # the container: nothing mounts task_dir itself, only the harness dir.
 
+        (workspace_dir / REFLECT_DIR).mkdir(exist_ok=True)
+        self._watcher_stop.clear()
+        self._watcher = threading.Thread(
+            target=self._serve_reflection_requests, name=f"reflect-{self._task_id[-8:]}", daemon=True
+        )
+        self._watcher.start()
+
     # ---------------------------------------------------------------- execute
 
-    def _run_self_reflect_on_host(self, command: str) -> tuple[str, int]:
-        """Execute the self_reflect shim on the host, not in the container."""
+    def _serve_reflection_requests(self) -> None:
+        """Host side of the in-container `self_reflection` client (see module doc)."""
+        reflect_dir = self._workspace_dir() / REFLECT_DIR
+        while not self._watcher_stop.is_set():
+            for req in sorted(reflect_dir.glob("*.req")):
+                stem = req.stem
+                try:
+                    argv = req.read_text(encoding="utf-8").splitlines()
+                except OSError:
+                    continue
+                output, rc = self._run_reflection_on_host(argv)
+                self._reflected_this_step = True
+                (reflect_dir / f"{stem}.out").write_text(output, encoding="utf-8")
+                # .rc last: the client treats it as "response complete".
+                (reflect_dir / f"{stem}.rc").write_text(str(rc), encoding="utf-8")
+                req.unlink(missing_ok=True)
+            self._watcher_stop.wait(self.config.reflect_poll_seconds)
+
+    def _run_reflection_on_host(self, argv: list[str]) -> tuple[str, int]:
         host_workspace = str(self._workspace_dir().resolve())
-        try:
-            argv = shlex.split(command)[1:]
-        except ValueError as exc:
-            return f"self_reflect: could not parse arguments: {exc}", 2
         argv = [arg.replace(self.config.harness_mount, host_workspace) for arg in argv]
 
         python = self.config.host_python or sys.executable
@@ -262,6 +302,11 @@ class TerminalDockerEnvironment:
             full += ["--config", f"{host_workspace}/judge_config.json"]
         if not any(a == "--workspace-dir" for a in argv):
             full += ["--workspace-dir", host_workspace]
+        # self_reflection defaults --trajectory-manifest to browser-steps.jsonl;
+        # without the terminal manifest name it reads an empty trajectory, reports
+        # covered_through_browser_step 0, and the completion gate can never match.
+        if not any(a == "--trajectory-manifest" for a in argv):
+            full += ["--trajectory-manifest", self.config.step_manifest]
         # Route the judge explicitly when configured. `--model policy` is the
         # sentinel that selects the chat-completions backend; the real deployment
         # name comes from OPENAI_COMPATIBLE_MODEL below.
@@ -273,14 +318,11 @@ class TerminalDockerEnvironment:
             full += ["--endpoint", self.config.judge_endpoint]
             key = os.environ.get(self.config.judge_api_key_env, "") if self.config.judge_api_key_env else ""
             if backend == "responses":
-                # phyagi gateway: real deployment name, key from OPENAI_GATEWAY_API_KEY.
                 if self.config.judge_model:
                     full += ["--model", self.config.judge_model]
                 if key:
                     full += ["--api-key", key]
             else:
-                # OpenAI chat-completions (Azure, vLLM): the sentinel selects that
-                # backend; the served model name comes from the environment.
                 full += ["--model", "policy"]
                 judge_env["OPENAI_COMPATIBLE_ENDPOINT"] = self.config.judge_endpoint
                 if self.config.judge_model:
@@ -296,7 +338,7 @@ class TerminalDockerEnvironment:
                 encoding="utf-8", errors="replace", env=judge_env,
             )
         except Exception as exc:  # noqa: BLE001
-            return f"self_reflect failed on host: {exc}", -1
+            return f"self_reflection failed on host: {exc}", -1
         output = (result.stdout or "") + (result.stderr or "")
         return output.replace(host_workspace, self.config.harness_mount), result.returncode
 
@@ -312,54 +354,61 @@ class TerminalDockerEnvironment:
         )
 
         exception_info = ""
-        if command.split(maxsplit=1)[:1] == [SELF_REFLECT_SHIM]:
-            output, returncode = self._run_self_reflect_on_host(command)
-        else:
-            exec_cwd = cwd or self._task_workspace
-            try:
-                result = self._docker(
-                    "exec", "-w", exec_cwd, self._container,
-                    self.config.shell, "-lc", command,
-                    timeout=self.config.command_timeout_seconds,
-                )
-                output = (result.stdout or "") + (result.stderr or "")
-                returncode = result.returncode
-            except subprocess.TimeoutExpired:
-                output = ""
-                returncode = -1
-                exception_info = (
-                    f"Command timed out after {self.config.command_timeout_seconds}s "
-                    "and was killed."
-                )
-            except Exception as exc:  # noqa: BLE001
-                output = ""
-                returncode = -1
-                exception_info = f"An error occurred while executing the command: {exc}"
+        self._reflected_this_step = False
+        exec_cwd = cwd or self._task_workspace
+        try:
+            result = self._docker(
+                "exec", "-w", exec_cwd, self._container,
+                self.config.shell, "-lc", command,
+                # A reflection call blocks in the container while the host runs the
+                # judge, so the exec must outlive the judge call, not just the command.
+                timeout=self.config.command_timeout_seconds * 5,
+            )
+            output = (result.stdout or "") + (result.stderr or "")
+            returncode = result.returncode
+        except subprocess.TimeoutExpired:
+            output = ""
+            returncode = -1
+            exception_info = (
+                f"Command timed out after {self.config.command_timeout_seconds * 5}s "
+                "and was killed."
+            )
+        except Exception as exc:  # noqa: BLE001
+            output = ""
+            returncode = -1
+            exception_info = f"An error occurred while executing the command: {exc}"
 
         if output:
             self._logs_dir().mkdir(parents=True, exist_ok=True)
             (self._logs_dir() / f"step_{self._step_index:04d}.log").write_text(output, encoding="utf-8")
 
-        observation = {
-            "success": returncode == 0 and not exception_info,
-            "exception": exception_info,
-            "command": command,
-            "returncode": returncode,
-            "cwd": cwd or self._task_workspace,
-            "workspace_dir": self.config.harness_mount,
-            "task_workspace": self._task_workspace,
-            "command_output": self._truncate(output, self.config.output_truncation_chars),
-            "workspace_files": self._recent_task_files(),
-            # Fields the shared observation/judge plumbing expects to exist.
-            "url": "",
-            "title": "",
-            "aria_snapshot": "",
-            "console_output": "",
-            "recent_console": "",
-            "screenshot_path": "",
-            "new_screenshots": [],
-            "recent_screenshots": [],
-        }
+        # judge_mode: trajectory gates on this manifest. A step that ran the judge
+        # must NOT appear in it: the gate compares the verdict's
+        # covered_through_browser_step against the manifest maximum, so recording it
+        # would put the manifest permanently one step ahead of any verdict.
+        if not self._reflected_this_step:
+            append_jsonl(
+                self._workspace_dir() / self.config.step_manifest,
+                {
+                    "browser_step": self._step_index,
+                    "agent_step": self._step_index,
+                    "session_epoch": 1,
+                    "action": command,
+                    "code_sha256": hashlib.sha256(command.encode("utf-8")).hexdigest(),
+                    "success": returncode == 0 and not exception_info,
+                    "returncode": returncode,
+                    "url_after": "",
+                    "title": "",
+                    "screenshot_path": "",
+                    "error_kind": "" if returncode == 0 else "command",
+                    "error": exception_info,
+                },
+            )
+
+        observation = self._observation(
+            command=command, returncode=returncode,
+            exception_info=exception_info, output=output,
+        )
         return {
             "output": output,
             "returncode": returncode,
@@ -367,18 +416,43 @@ class TerminalDockerEnvironment:
             "observation": observation,
         }
 
-    def _recent_task_files(self) -> list[str]:
-        """Newest files in the task workspace, so the model sees what it changed.
+    def _observation(self, *, command: str, returncode: int, exception_info: str, output: str) -> dict[str, Any]:
+        return {
+            "success": returncode == 0 and not exception_info,
+            "exception": exception_info,
+            "command": command,
+            "returncode": returncode,
+            "cwd": self._task_workspace,
+            "workspace_dir": self.config.harness_mount,
+            "task_workspace": self._task_workspace,
+            "command_output": self._truncate(output, self.config.output_truncation_chars),
+            "workspace_files": self._recent_task_files(),
+            # Fields the shared observation/judge plumbing expects to exist.
+            "url": "", "title": "", "aria_snapshot": "",
+            "console_output": "", "recent_console": "",
+            "screenshot_path": "", "new_screenshots": [], "recent_screenshots": [],
+        }
 
-        Runs after every command, so it must stay cheap. An unbounded `find` walks
-        the whole tree each step: once a task installs a venv or node_modules, or
-        its WORKDIR is /root, that is tens of thousands of stat calls per step for
-        a list that is truncated to 40 entries anyway. Depth-limited and pruned.
+    def _recent_task_files(self) -> list[str]:
+        """Newest files in both workspaces, so the model sees what it changed.
+
+        Scans the harness mount as well as the task workspace: a heredoc write prints
+        nothing, so this listing is the only confirmation the agent gets that
+        plan.md / verify_state.py / judge_config.json actually landed. Without it an
+        agent can rewrite the same file indefinitely, believing it is still missing.
+
+        Runs after every command, so it must stay cheap. An unbounded `find` walks the
+        whole tree each step: once a task installs a venv or node_modules, or its
+        WORKDIR is /root, that is tens of thousands of stat calls per step for a list
+        that is truncated anyway. Depth-limited and pruned.
         """
         pruned = " -o ".join(f"-name {shlex.quote(name)}" for name in self.config.file_scan_prune)
+        roots = " ".join(
+            shlex.quote(d) for d in (self._task_workspace, self.config.harness_mount)
+        )
         result = self._docker(
             "exec", self._container, "/bin/sh", "-c",
-            f"find {shlex.quote(self._task_workspace)} -maxdepth {self.config.file_scan_max_depth} "
+            f"find {roots} -maxdepth {self.config.file_scan_max_depth} "
             f"\\( {pruned} \\) -prune -o -type f -printf '%T@ %p\\n' 2>/dev/null "
             f"| sort -rn | head -n {self.config.recent_files_limit} | cut -d' ' -f2-",
             timeout=self.config.file_scan_timeout_seconds,
@@ -488,6 +562,10 @@ class TerminalDockerEnvironment:
         }
 
     def close(self) -> None:
+        self._watcher_stop.set()
+        if self._watcher is not None:
+            self._watcher.join(timeout=5)
+            self._watcher = None
         if self._container and self.config.remove_container_on_close:
             self._docker("rm", "-f", self._container)
             self._container = ""

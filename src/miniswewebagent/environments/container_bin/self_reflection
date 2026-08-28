@@ -1,0 +1,42 @@
+#!/bin/sh
+# self_reflection client, mounted read-only into every task container.
+#
+# The judge needs the harness repo, its dependencies and the judge credentials,
+# none of which belong in a container where the agent runs arbitrary code. So
+# this script does not run the judge: it hands the arguments to the harness on
+# the host through the shared /harness mount and relays the result back.
+#
+# Protocol (all under $HARNESS/.reflect/):
+#   <id>.req   written here: one argument per line
+#   <id>.out   written by the host: stdout+stderr of the real tool
+#   <id>.rc    written by the host, last: exit code
+#
+# Only POSIX sh, no python, no curl. Task images vary too much to assume more.
+
+HARNESS="${SELF_REFLECTION_HARNESS:-/harness}"
+DIR="$HARNESS/.reflect"
+mkdir -p "$DIR" 2>/dev/null || { echo "self_reflection: $DIR not writable" >&2; exit 2; }
+
+id="$(date +%s)-$$"
+req="$DIR/$id.req"; out="$DIR/$id.out"; rc="$DIR/$id.rc"; tmp="$DIR/$id.tmp"
+
+: > "$tmp"
+for a in "$@"; do printf '%s\n' "$a" >> "$tmp"; done
+mv "$tmp" "$req"     # atomic: the host only picks up complete requests
+
+timeout="${SELF_REFLECTION_TIMEOUT:-900}"
+waited=0
+while [ ! -f "$rc" ]; do
+  sleep 1
+  waited=$((waited + 1))
+  if [ "$waited" -ge "$timeout" ]; then
+    echo "self_reflection: no response from the harness after ${timeout}s" >&2
+    rm -f "$req"
+    exit 124
+  fi
+done
+
+[ -f "$out" ] && cat "$out"
+code="$(cat "$rc" 2>/dev/null || echo 1)"
+rm -f "$req" "$out" "$rc"
+exit "$code"

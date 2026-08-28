@@ -42,8 +42,14 @@ Each task package:
 - **The agent runs inside the task's own container** (`terminal_docker`), not on the
   host. `/tests` and `/solution` are absent from that container.
 - **Two verdicts, kept separate.** Self-reflection is the agent's *own* completion
-  gate (`judge_mode: tool`, unchanged from web). The task's `tests/test.sh` is the
-  *external* score, run post-hoc, and the agent never sees it.
+  gate (`judge_mode: trajectory`, same as the web `persistent_cli` config, over a
+  `terminal-steps.jsonl` manifest the environment appends per command). The task's
+  `tests/test.sh` is the *external* score, run post-hoc, and the agent never sees it.
+- **`self_reflection` is a real command inside the container**, mounted read-only
+  from `environments/container_bin/self_reflection`. It is a POSIX-sh client: it
+  writes its argv under `/harness/.reflect/` and a watcher thread on the host runs the
+  actual judge and writes the result back. Credentials stay on the host; no python
+  is needed in the task image; the image is not rebuilt.
 - `agents/default.py` and `tools/self_reflection.py` are shared with the web flow.
   Do not fork them for terminal changes.
 
@@ -131,7 +137,7 @@ tmux split-window -t inference -v \
      -c generation/judge_phyagi.yaml \
      -c environment.tasks_root=$DATA/tasks/tasks \
      -c environment.build_timeout_seconds=1200 \
-     -c agent.step_limit=80 \
+     -c agent.step_limit=100 \
      --tasks-file $DATA/${BAND}.jsonl \
      --workers 8 \
      --output-dir $OUT 2>&1 | tee $OUT/run.log; \
@@ -166,8 +172,13 @@ Later `-c` specs win, so overlays compose:
 
 - `--limit N` — first N tasks of the band.
 - `--group N` — filter by the `group` field, for running from `all.jsonl`.
-- `-c agent.step_limit=80` — 60 is too tight: tasks finish the work and then run out
-  of steps inside the reflection loop.
+- `-c agent.step_limit=100` — matches `persistent_cli`; 60 is too tight, tasks finish
+  the work and then run out of steps inside the reflection loop.
+- `-c agent.require_self_reflection_success=false -c agent.step_limit=50` — disable
+  the completion gate. On 20 `g01` tasks this produced the same 11 positives as the
+  gated run at 285 s per positive instead of 508 (the gate lost 1–3 correct runs to
+  the step limit and passed 4 wrong ones). Labels come from `tests/test.sh` either
+  way, so for rejection sampling this is the cheaper setting.
 - `-c environment.reuse_images=false` — force rebuilds after editing a Dockerfile.
 - `-c environment.command_timeout_seconds=...` — per-command ceiling, default 240 s.
 
@@ -233,11 +244,27 @@ For rejection sampling, keep trajectories where `score == 1`. A `Submitted` run 
 
 ## Kill and clean up
 
+Send `C-c` to the run pane, or kill the pane. Both deliver the signal to the whole
+foreground process group, which is what you want:
+
 ```bash
+tmux send-keys -t inference.<pane_index> C-c
+# or
 tmux kill-pane -t inference.<pane_index>
-# or, with a pattern that cannot match your own shell:
-pkill -f 'benchmarks[.]rst'
 ```
+
+Avoid `pkill -f 'benchmarks[.]rst'` on its own. The worker processes are spawned
+with a `multiprocessing.spawn` command line that does not contain that string, so
+it kills only the parent; workers mid-episode keep their containers and gateway
+calls going and then drain the items the parent had already queued. If you must
+use pkill, kill the process group instead:
+
+```bash
+kill -- -"$(pgrep -f 'benchmarks[.]rst' | head -1 | xargs ps -o pgid= -p | tr -d ' ')"
+```
+
+Workers also watch their parent pid and exit on their own within a few seconds of
+it disappearing, so a stray orphan is a bug worth reporting, not an expected state.
 
 The environment removes its container on normal close; a killed run leaks them.
 

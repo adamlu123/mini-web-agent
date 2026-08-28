@@ -117,9 +117,13 @@ DEFAULT_NUM_EVALS = 1
 
 _RETRYABLE_STATUS_CODES = frozenset({400, 408, 409, 425, 429, 500, 502, 503, 504})
 
+# The image prompts drive stage 1, which only runs when there are screenshots to
+# score. A text-only harness (terminal tasks) has none, so requiring them at parse
+# time forces every such config to carry two dead stub strings. They are validated
+# below instead, once it is known whether any images were resolved.
 _PROMPT_FIELDS = (
-    ("image_judge_system_prompt", True),
-    ("image_judge_user_prompt", True),
+    ("image_judge_system_prompt", False),
+    ("image_judge_user_prompt", False),
     ("final_verdict_system_prompt", True),
     ("final_verdict_user_prompt", True),
 )
@@ -1126,7 +1130,18 @@ def main(argv: list[str] | None = None) -> int:
         )
         action_history_log = _load_action_history_log(artifact_dir)
 
-    if not resolved_images:
+    if resolved_images:
+        missing = [
+            key
+            for key in ("image_judge_system_prompt", "image_judge_user_prompt")
+            if not prompts.get(key)
+        ]
+        if missing:
+            raise SystemExit(
+                f"self_reflection: {len(resolved_images)} image(s) to score but the config is "
+                f"missing {', '.join(missing)} (or the matching *_file key)."
+            )
+    else:
         print(
             "[self_reflection] warning: no images provided; final stage will run without screenshot attachments.",
             file=sys.stderr,

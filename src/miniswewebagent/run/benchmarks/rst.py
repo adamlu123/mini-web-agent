@@ -55,6 +55,32 @@ _BUILD_SEMAPHORE = None
 def _init_worker(semaphore) -> None:
     global _BUILD_SEMAPHORE
     _BUILD_SEMAPHORE = semaphore
+    _watch_parent()
+
+
+def _watch_parent(interval: float = 5.0) -> None:
+    """Exit the worker when the parent runner dies.
+
+    ProcessPoolExecutor workers are spawned with a `multiprocessing.spawn` command
+    line, so `pkill -f 'benchmarks[.]rst'` reaches only the parent. A worker that is
+    mid-episode keeps running its container and gateway calls, then pulls further
+    items the parent had already queued. Observed: three orphans running ~30 min
+    after their parent was killed. Polling the parent pid closes that gap portably
+    (PR_SET_PDEATHSIG is Linux-only).
+    """
+    import os
+    import threading
+    import time
+
+    parent = os.getppid()
+
+    def _poll() -> None:
+        while True:
+            time.sleep(interval)
+            if os.getppid() != parent:
+                os._exit(1)
+
+    threading.Thread(target=_poll, name="parent-watchdog", daemon=True).start()
 
 
 def _load_config(config_spec: list[str]) -> dict[str, Any]:

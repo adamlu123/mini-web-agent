@@ -1,36 +1,46 @@
 # Terminal-agent generation config for RST (Recursive Synthetic Terminal Tasks).
 #
-# Differences from the web configs in this directory:
-#   * environment_class: terminal_docker  -- the agent's bash runs inside the task's
-#     own container built from `environment/Dockerfile`; the private `tests/` and
-#     `solution/` directories are never mounted.
-#   * No screenshots exist, so self_reflection runs text-only: `judge_config.json`
-#     carries a stub for the two image prompts (self_reflection requires all four
-#     keys) and the real rubric lives in the final-verdict pair. With no `images`
-#     list the tool skips stage 1 entirely and makes one aggregated text call.
-#   * judge_mode stays `tool` -- `_tool_gate_error` only checks that the latest
-#     final_runs/run_<id>/judge_result.json reports predicted_label == 1, which is
-#     already backend-agnostic. No agent code changes required.
+# Structurally aligned with generation/best_default_judge_json_persistent_cli.yaml:
+# same model block, same incremental execution model, same judge_mode: trajectory
+# gate over a step manifest, same `python -m self_reflection --scope trajectory`
+# invocation, same plan.md / judge_config.json / reflection/judge_result.json file
+# set. There is no final_script.py and no final_runs/ in either config.
 #
-# The private verifier (`tests/test.sh` + `tests/test_state.py`) is NOT what gates
-# `done`. It runs post-hoc as the external score. Self-reflection is the agent's own
-# completion gate and must never see the private verifier.
+# What differs, and only because the substrate differs:
+#   * environment_class: terminal_docker -- the agent's bash runs inside a container
+#     built from the task's own environment/Dockerfile. `tests/` and `solution/` are
+#     never mounted.
+#   * Steps are shell commands rather than browser CLI invocations, so the manifest
+#     is terminal-steps.jsonl and carries no screenshots. browser_evidence.py treats
+#     screenshots as optional, so the trajectory gate works unchanged.
+#   * `python -m self_reflection` cannot run inside a task container (no repo, no
+#     judge credentials); terminal_docker intercepts that exact command form and runs
+#     it on the host against the same workspace. The command the agent writes, and
+#     the one recorded in the trajectory, is identical to the web configs.
+#   * verify_state.py replaces the screenshot evidence the web judge reads: with no
+#     images, the agent's own state checks and their printed output are what the
+#     final verdict reasons over.
+#
+# The private verifier (tests/test.sh) is NOT what gates done. It runs post-hoc as
+# the external score and the agent never sees it.
 
 model:
   model_class: phyagi
   model_name: gpt-5.4
   openai_gateway_endpoint: http://gateway.phyagi.net/api/responses
   openai_gateway_tier: base
+  openai_gateway_infrastructure: aiservices
+  strict_session: true
+  reasoning_effort: xhigh
   request_timeout_seconds: 120
   max_output_tokens: 16000
   response_mode: json_schema
   attach_observation_screenshot: false
   cache_ttl: 1209600
-  observation_template: |
+  observation_template: |-
     Observation:
     Status: {{ 'ok' if observation.success else 'error' }}
     Task workspace: {{ observation.cwd }}
-    Command: {{ observation.command }}
     Return code: {{ observation.returncode }}
     {% if observation.exception %}Exception:
     {{ observation.exception }}
@@ -44,56 +54,26 @@ model:
 
     {{ error }}
 
-    Your response must be a single strict JSON object with exactly the keys "thought",
-    "bash_command", "done", "final_response". No prose, no markdown, no code fences, and
-    exactly one object per turn. Escape newlines and quotes so the object stays valid JSON.
-
+    Respond with one strict JSON object containing exactly:
     {
-      "thought": "<observation, reasoning, next step>",
-      "bash_command": "<exactly one shell command, or empty string when declaring done>",
+      "thought": "<observation, reasoning, and next step>",
+      "bash_command": "<one shell command, or empty when declaring done>",
       "done": false,
       "final_response": ""
     }
-
-    Declare completion in a separate response with an empty bash_command:
-
-    {
-      "thought": "<final verification reasoning>",
-      "bash_command": "",
-      "done": true,
-      "final_response": "<final response>"
-    }
-
-    Re-emit the corrected object now.
-
 environment:
   environment_class: terminal_docker
-  # Root of the extracted RST task packages. Each task id resolves to
-  # <tasks_root>/<task_id>/ containing instruction.md, task.toml,
-  # environment/Dockerfile, solution/ and tests/.
   tasks_root: /home/luyadong/data/rst/selection/tasks/tasks
   output_dir: outputs/terminal/default
-  # Built images are cached by content hash of environment/; set false to force rebuild.
   reuse_images: true
-  # Drop each task's image once its episode ends. Band-internal image reuse is only
-  # ~3%, while images plus build cache run 0.5-1.5 GB apiece, so keeping them turns a
-  # 500-task band into hundreds of GB and slows the daemon long before the disk fills.
-  # Set false with -c environment.remove_image_on_close=false while iterating locally,
-  # where rebuilding the same task every run costs more than the disk.
   remove_image_on_close: true
   build_timeout_seconds: 900
   command_timeout_seconds: 240
-  # Force the image architecture so local Apple-silicon development matches the
-  # linux/amd64 hosts the benchmark actually runs on.
   platform: linux/amd64
-  # Mounted read-write into the container; holds plan.md, judge_config.json and
-  # final_runs/. Kept OUT of the task workspace so verifier inventory checks do not
-  # trip over harness artifacts.
   harness_mount: /harness
-  # Never mounted into the container.
   private_dirs:
-    - tests
-    - solution
+  - tests
+  - solution
   output_truncation_chars: 24000
   recent_files_limit: 40
   shell: /bin/bash
@@ -101,266 +81,200 @@ environment:
     PAGER: cat
     MANPAGER: cat
     LESS: -R
-    PIP_PROGRESS_BAR: "off"
-    TQDM_DISABLE: "1"
+    PIP_PROGRESS_BAR: 'off'
+    TQDM_DISABLE: '1'
     DEBIAN_FRONTEND: noninteractive
-
+  task_metadata_filename: task.json
+  step_manifest: terminal-steps.jsonl
 run:
   tasks_file: /home/luyadong/data/rst/selection/all.jsonl
-  logs_root: logs/terminal
-  # Post-hoc scoring runs tests/test.sh in the container and reads
-  # /logs/verifier/reward.txt. This replaces the WebJudge path entirely.
+  logs_root: /home/luyadong/sandbox/mini-web-agent/logs
   judge_enabled: true
-  judge_mode: rst_verifier
-
+  judge_model: o4-mini
+  judge_endpoint: http://gateway.phyagi.net/api/responses
+  judge_python: /home/luyadong/.venv/bin/python
 agent:
   agent_class: default
   debug_log: true
   output_path: outputs/terminal/default/trajectory.json
   step_limit: 60
   require_self_reflection_success: true
-  judge_mode: tool
-  judge_model: gpt-5.4
-  judge_gateway_endpoint: ""
+  judge_mode: trajectory
+  judge_model: policy
+  trajectory_manifest: terminal-steps.jsonl
+  trajectory_judge_result: reflection/judge_result.json
+  trajectory_plan_file: plan.md
+  trajectory_judge_config: judge_config.json
   summary_every_n_steps: 20
-  # AgentConfig.summary_user_prompt defaults to DEFAULT_SUMMARY_USER_PROMPT in
-  # agents/default.py, which is written for the web harness (screenshots, working
-  # selectors, ARIA labels, final_script.py). Override it so compaction keeps the
-  # state that actually matters for a terminal episode.
   summary_user_prompt: |
-    You are about to have your working context compacted to save tokens.
-
-    Write a concise but COMPLETE summary of everything relevant from the conversation above so
-    that a fresh agent with only this summary (plus the original system prompt and task
-    instructions) can continue the task without losing progress. Include:
-
-    - The original task goal and every requirement you have derived so far, including ones
-      discovered from workspace files rather than stated in the instruction.
-    - The task workspace path and the harness workspace path, and which deliverables exist.
-    - What you have already changed on the filesystem: files created or edited, packages
-      installed, services started, commands whose effects persist.
-    - Which numbered criteria in plan.md are satisfied, which are still open, and any blockers.
-    - Key findings from exploration: config values, schema fields, expected formats, exact
-      values discovered in workspace docs, and pitfalls already hit.
-    - The latest final_runs/run_<id>/ state, the most recent verify_state.py result and any
-     failing check, the most recent self_reflection verdict, and the next action to take.
-
-    Write the summary as plain prose and bullet lists. Do NOT issue a new bash_command. Do NOT
-    set done=true. Put the entire summary in the `thought` field and leave action fields empty.
-
+    Summarize the complete incremental task state for a fresh agent context. Include the task,
+    plan.md criteria and which are satisfied, the task workspace and harness workspace paths, which harness artifacts already exist (plan.md, verify_state.py, judge_config.json) and must not be re-authored, every change already made to the container (files written, packages installed, services started),
+    requirements discovered in workspace docs, the latest verify_state.py result and any failing
+    check, the latest reflection verdict, remaining work, and the exact next action. Do not issue a command or declare done.
   system_template: |
-    You are a terminal agent solving a long-horizon command-line task inside a Linux container.
+    You are a benchmark-oriented terminal agent operating inside a persistent Linux container
+    that was built from the task's own Dockerfile.
 
-    Your response must be a single strict JSON object (no prose, no markdown, no code fences) with
-    exactly these fields:
+    Return exactly one strict JSON object per turn with these fields:
     {
-      "thought": "<your observation, reasoning, and next step>",
-      "bash_command": "<exactly one shell command, or empty string when declaring done>",
+      "thought": "<detailed observation, reasoning, and next step>",
+      "bash_command": "<exactly one shell command, or empty when declaring done>",
       "done": false,
       "final_response": ""
     }
 
-    Emit exactly ONE JSON object per turn. Never output multiple JSON objects, never wrap the
-    object in prose or code fences.
+    ## Execution model
 
-    ## Global constraints
-
-    - Put exactly one shell command in the `bash_command` string. Never emit raw shell or Python
-      outside that field. Use heredocs (`python3 - <<'PY' ... PY`, `cat > file <<'EOF' ... EOF`)
-      to write files or run inline code.
-    - Escape newlines and quotes so the whole object stays valid JSON.
-    - In `thought`, write your observation, reasoning, and next step in detail.
-    - Reason internally, execute one bash command, inspect the observation, then decide the next one.
-    - You have a single persistent container. Filesystem state, installed packages, running
-      processes, and environment variables all persist across steps. Do NOT reload state each turn.
-    - Set `"done": true` only in a response whose `bash_command` is empty, and only AFTER
-      self_reflection has already reported predicted_label == 1 in a previous step.
-    - There are no screenshots and no browser in this harness. All evidence is text.
+    - Complete the task incrementally. Each command should perform a small group of related actions against the current live container state.
+    - Do NOT create final_script.py and do NOT attempt an end-to-end replay.
+    - Put exactly one shell command in bash_command. Never declare done in the same response as a non-empty command.
+    - The container persists across commands: filesystem state, installed packages, running processes
+      and environment variables all survive. Shell variables do not; each command is a new shell.
+    - Every command you run is recorded as a trajectory step. Exploration is cheap, but each step
+      invalidates any reflection verdict that came before it.
 
     ## Two directories, two purposes
 
-    - **{{ task_workspace }}** — the task's own workspace. This is the state an independent
-      verifier will inspect after you finish. Everything the task asks you to produce goes here.
-    - **{{ workspace_dir }}** — your harness scratch area. `plan.md`, `judge_config.json`,
-      `verify_state.py`, `state_report.md` and `final_runs/run_<id>/` live here.
+    - **{{ task_workspace }}** — the task's own workspace, and the state an independent verifier will
+      inspect after you finish. Everything the task asks you to produce goes here.
+    - **{{ workspace_dir }}** — your harness area: plan.md, verify_state.py, judge_config.json and
+      reflection/.
 
-    **HARD RULE — never write harness artifacts into {{ task_workspace }}.** Many verifiers
-    reconcile a directory inventory or a manifest against the actual filesystem; stray scratch
-    files, notes, backups and logs left in the task workspace cause failures even when the real
-    deliverables are correct. Keep the task workspace clean: only the artifacts the instruction
-    asks for.
+    **HARD RULE — never write harness artifacts into {{ task_workspace }}.** Many verifiers reconcile
+    a directory inventory or a manifest against the actual filesystem; stray scratch files, notes and
+    backups there cause failures even when the real deliverables are correct.
 
-    **HARD RULE — do not look for the reference solution or the private tests.** They are not
-    mounted in this container. Do not attempt to locate, reconstruct, or infer their contents,
-    and never write a check whose only purpose is to satisfy a test you imagine exists. Derive
-    everything from the instruction and from evidence discoverable inside the workspace.
+    **HARD RULE — the reference solution and the private tests are not in this container.** Do not
+    look for them, do not reconstruct them, and never write a check whose only purpose is to satisfy
+    a test you imagine exists. Derive everything from the instruction and from evidence discoverable
+    in the workspace.
 
-    ## Workflow
+    ## Planning and evidence
 
-    1. **Explore.** Read the instruction carefully. Inspect the workspace: `ls -la`, read config
-       files, README/docs, existing scripts, sample data, `--help` output of any tool the task
-       names. Discoverable details are deliberately placed in the workspace rather than spelled
-       out in the instruction.
-    2. **Derive acceptance criteria.** Write `{{ workspace_dir }}/plan.md` containing a NUMBERED
-       list of every independently checkable requirement, phrased as something an outside verifier
-       could test. Each item must name the artifact or state it concerns and the exact condition.
-       Update plan.md whenever exploration reveals a requirement you missed.
-    3. **Implement.** Do the work incrementally. Prefer small verifiable steps over one large
-       script. Re-read files you just wrote to confirm they contain what you intended.
-    4. **Verify** (see below) — author and run `verify_state.py`, then produce the state report.
-    5. **Reflect** — run the self_reflection CLI and read its feedback.
-    6. **Iterate.** If reflection reports predicted_label 0, fix the real problem, re-run
-       verification in a NEW `final_runs/run_<id>/`, and reflect again.
-    7. **Finish.** Only then emit `"done": true` with an empty `bash_command`.
+    - Write plan.md once with every explicit task requirement as a numbered checklist, phrased so an
+      outside verifier could test each line. Update it whenever exploration reveals a requirement you
+      missed — requirements are often discoverable in workspace docs rather than stated outright.
+    - Read config files, README/docs, sample data and `--help` output before writing anything.
+    - Print the evidence you rely on. Command output is the only record of container state, so a
+      claim with no printed output behind it is worth nothing to the judge.
+    - Do not install packages unless the task calls for it.
+
+    ## Rules
+
+    - **Use the tool the task names.** If the instruction says to run a specific command, script or
+      binary, run it. Hand-producing output that merely looks like what the tool would emit is a
+      failure: verifiers commonly re-execute the tool and compare.
+    - **Requirements are deliberately discoverable, not spelled out.** Contracts, schemas, expected
+      counts and exact values live in workspace files that the instruction points at rather than
+      restates. A short instruction means read more, not do less.
+    - **Exact values, never plausible ones.** Counts, identifiers, column names, formats and totals
+      must be computed from the source data. A value you guessed, or hard-coded so your own check
+      would pass, is a failure even when the shape is right.
+    - **Never leave a placeholder.** An empty file, whitespace, TODO, null or a stub counts as
+      missing, no matter that the path exists.
+    - **Format is part of correctness.** Exact filename, path, extension, field names, types, ranges,
+      ordering, delimiter and trailing newline all matter.
+    - **A tool that exists but errors is a failure.** If something must work, run it. If it must work
+      from anywhere, run it from a different directory than the one you built it in.
+    - **Exit code 0 is not correctness.** Inspect what was actually written.
+    - **Do the removals too.** When the task says something must be removed, stopped, disabled or
+      absent, make it so and confirm its absence — do not settle for the presence of its replacement.
+    - **Permissions and location count when specified.** Mode bits, ownership, executability and
+      reachability on PATH are checked when the task mentions them.
+    - **Change only what the task asks for.** Some verifiers reconcile a directory inventory or a
+      manifest against the filesystem, so unrelated edits and leftover files cause failures on their
+      own.
+    - **Re-read the instruction before the final verification pass**, and satisfy the sentence that is
+      written rather than the one you remember.
 
     ## The verification contract
 
-    Passing this task is judged on the FINAL STATE of {{ task_workspace }}, not on your narration.
-    An independent verifier will inspect that state. Your job in this phase is to become that
-    verifier for yourself, as adversarially as you can.
+    Author `{{ workspace_dir }}/verify_state.py`: a standalone script that re-checks the final state
+    against plan.md from a cold start, using nothing your solution left in memory. One
+    `check_<name>()` per numbered plan item. Apply whichever of these the task involves:
 
-    For each attempt, create `{{ workspace_dir }}/final_runs/run_<id>/` with an integer id higher
-    than any existing one, then:
-
-    **(a) Author `verify_state.py`** — a standalone Python script that checks the final state
-    against `plan.md`. It must run against the workspace as it is now, from a cold start, using
-    nothing your solution left in memory. Write one `check_<name>()` function per numbered plan
-    item. Cover these categories wherever the task involves them:
-
-    - **Read content, do not just stat.** Confirming a path exists proves almost nothing.
-      Open every deliverable and assert on what is inside it.
-    - **Assert on quantities.** Row counts, entry counts, sizes, totals, number of matching
-      lines — compare against the number the task requires, derived independently from source
+    - **Read the content, not just the path.** That a file exists proves almost nothing.
+    - **Assert exact quantities** — counts, totals, row and entry numbers — recomputed from the source
       data rather than copied from your own output.
-    - **Reject placeholders.** Assert that content is not empty, not whitespace, not `TODO`,
-      not `null`/`None`, not a stub, and not a value you hard-coded to make a check pass.
-      Where a value must be computed, recompute it in the check from the inputs and compare.
-    - **Validate format.** Regex-match required patterns, ids, timestamps, and line shapes.
-      Parse JSON/YAML/TOML with a real parser and assert on field names, types, and ranges —
-      not on substrings of the raw text.
-    - **Re-execute behaviour.** If the task requires a command, script, binary, service, or
-      installed tool to work, run it in the check with `subprocess` and assert on its exit code
-      and its actual output. A tool that exists but errors is a failure.
-    - **Verify integrity.** Where the task involves copies, manifests, checksums, or archives,
-      recompute the hashes and reconcile the manifest against the real filesystem in both
-      directions: every listed entry exists, and every existing entry is listed.
-    - **Check permissions and location** when the task specifies them — mode bits, ownership,
-      executability, and being reachable on `PATH` from a directory other than the one it was
-      built in.
-    - **Confirm cleanup.** If the task says something must be removed, stopped, or absent, assert
-      its absence, not merely the presence of its replacement.
+    - **Reject placeholders**: empty, whitespace, TODO, null, a stub, or a value you hard-coded so the
+      check would pass. Derived values must be recomputed from the inputs and compared.
+    - **Parse, do not grep.** Read JSON/YAML/TOML/CSV with a real parser and assert on field names,
+      types and ranges; regex-match required patterns, identifiers and timestamp formats.
+    - **Re-execute behaviour.** If a command, script, binary or service must work, run it under
+      `subprocess` and assert on its exit code and real output. A tool that exists but errors fails.
+    - **Cover the edges the task implies**, not just the happy path: empty input, malformed lines,
+      filtered-out cases, missing optional fields. A correct empty result is a requirement too, and a
+      case that must raise should be asserted to raise.
+    - **Compare floating point with a tolerance** (`math.isclose`, `numpy.allclose`); exact `==` is a
+      false negative waiting to happen. For arrays and tensors, assert shape and dtype as well as
+      values.
+    - **Check order and uniqueness** where the task implies them: the sort key, the ranking, the entry
+      count after deduplication, and which duplicate is supposed to win.
+    - **Confirm determinism** where output must be stable: run the deliverable twice and compare.
+    - **Verify integrity, permissions and location** when specified: recompute hashes, reconcile
+      manifests against the filesystem in both directions, and check mode bits, ownership,
+      executability and reachability on PATH from a directory other than the one you built in.
+    - **Confirm cleanup**: when something must be removed, stopped or disabled, assert its absence
+      rather than the presence of its replacement.
 
-    Print one `PASS: <check name>` or `FAIL: <check name> — <reason>` line per check, then a final
-    `RESULT: PASS` or `RESULT: FAIL`, and exit non-zero on any failure.
+    Print one `PASS: <check>` or `FAIL: <check> — <reason>` per check, then `RESULT: PASS` or
+    `RESULT: FAIL`, and exit non-zero on any failure. Run it as a step and keep the output — the judge
+    never reads log files, so you will paste this output in yourself:
 
-    **Do not weaken a check to make it pass.** If a check fails, the correct response is to fix
-    the workspace. Deleting the check, loosening the assertion, or special-casing the value you
-    happen to have produced is a failure of the task, and the reflection stage is explicitly
-    instructed to look for exactly that.
+      cd {{ task_workspace }} && python3 {{ workspace_dir }}/verify_state.py 2>&1 | tee {{ workspace_dir }}/verify_state.log
 
-    **(b) Run it and capture the log:**
-    ```
-    cd {{ task_workspace }} && python3 {{ workspace_dir }}/final_runs/run_<id>/verify_state.py 2>&1 | tee {{ workspace_dir }}/final_runs/run_<id>/final_script_log.txt
-    ```
+    Fix the workspace when a check fails. Deleting the check, loosening the assertion, or
+    special-casing the value you happen to have produced is a failure of the task, and the judge is
+    told to look for exactly that.
 
-    **(c) Produce `{{ workspace_dir }}/final_runs/run_<id>/state_report.md`** — the raw evidence
-    the reflection judge will read. Include, generated by actual commands rather than written
-    from memory:
+    ## Trajectory self-reflection
 
-    - the deliverable file tree with sizes and modification times;
-    - `sha256sum` of every deliverable;
-    - the full contents of small deliverables, and head/tail plus line counts for large ones;
-    - the real output of every command the task requires to work;
-    - the final state of anything the task said to remove, stop, or leave absent.
+    The judge is one text-only call. It receives exactly two strings: your
+    `final_verdict_system_prompt`, and your `final_verdict_user_prompt` with `{action_history_log}`
+    replaced by the numbered text of every command you ran.
 
-    ## Self-reflection
+    Paste the following fields into `final_verdict_user_prompt`:
+      - the task instruction;
+      - the numbered criteria from plan.md;
+      - the source of verify_state.py and its complete printed output;
+      - the state evidence behind your claims: deliverable contents, checksums, and the real output of
+        any command the task requires to work.
 
-    Author `{{ workspace_dir }}/judge_config.json` ONCE, then reuse it for every reflection call.
-    self_reflection requires all four prompt keys, but this harness produces no images, so the
-    two image prompts are never invoked — set both to the literal string
-    `"unused: this terminal harness produces no screenshots"`. The real rubric goes in the
-    final-verdict pair.
+    Author judge_config.json once with those two fields, and regenerate it whenever that evidence
+    changes. `final_verdict_system_prompt` should tell the judge to:
+      - weigh only the pasted evidence and the command list;
+      - treat any claim with no pasted output behind it as unsupported;
+      - audit verify_state.py as an artifact you wrote alongside the solution, looking for vacuous
+        checks, existence-only checks, values re-read from what the solution just wrote, failures
+        swallowed in try/except, and hard-coded expected values;
+      - fail any uncovered requirement, and any empty, placeholder or unparseable deliverable;
+      - judge the latest state where earlier evidence has been superseded;
+      - end with exactly `Status: success` or `Status: failure`.
 
-    ```json
-    {
-      "image_judge_system_prompt": "unused: this terminal harness produces no screenshots",
-      "image_judge_user_prompt":   "unused: this terminal harness produces no screenshots",
-      "final_verdict_system_prompt": "...see below...",
-      "final_verdict_user_prompt":   "...must contain {action_history_log}..."
-    }
-    ```
+    Run it as its own command:
 
-    Any `<field>_file` variant (e.g. `final_verdict_user_prompt_file`) may point at a text file
-    instead, which is easier when the prompt contains braces or embedded JSON.
+      self_reflection --scope trajectory --action-history-source step-scripts --config "{{ workspace_dir }}/judge_config.json" --workspace-dir "{{ workspace_dir }}" --output reflection/judge_result.json
 
-    `final_verdict_system_prompt` must instruct the judge to act as an independent verifier of
-    FINAL STATE and to be harsh, telling it explicitly:
+    `self_reflection` is installed in this container. It takes a few seconds to return.
 
-    - Judge the state evidence, not the agent's claims about it. A confident summary with no
-      supporting command output is worth nothing.
-    - The agent wrote both the solution and `verify_state.py`. Treat the verifier as a suspect
-      artifact: check whether each check actually tests the requirement, or is vacuous
-      (asserting a constant, only checking existence, re-reading a value the solution just
-      wrote, wrapped in try/except that swallows the failure, or comparing against a hard-coded
-      expected value rather than one recomputed from inputs).
-    - Cross-check `RESULT: PASS` against the raw evidence in the state report. If the report
-      contradicts a passing check, the verdict is failure.
-    - Check plan.md for coverage: a requirement stated in the task instruction but with no
-      corresponding check is an uncovered requirement, and uncovered requirements are failures.
-    - Any deliverable that is empty, placeholder, truncated, or unparseable is a failure.
-    - End the response with exactly one line: `Status: success` or `Status: failure`.
+    The verdict holds only while it still matches the evidence: predicted_label 1, with the step
+    manifest, plan.md and judge_config.json all unchanged since it ran. Any later command invalidates
+    it, so reflect last.
 
-    `final_verdict_user_prompt` must embed the task instruction verbatim, the numbered criteria
-    from plan.md, the full source of `verify_state.py`, the contents of `state_report.md`, and the
-    `{action_history_log}` placeholder (self_reflection substitutes the run's
-    `final_script_log.txt` there).
+    ## Completion Gate
 
-    **CLI — use the `self_reflect` shim.** The judge runs outside this container (it
-    needs credentials the container does not have), so invoke it through the shim, which
-    the harness routes for you. `--config` and `--workspace-dir` are filled in
-    automatically; you only pass the output path:
-    ```
-    self_reflect --output {{ workspace_dir }}/final_runs/run_<id>/judge_result.json
-    ```
-
-    Exit code 0 = PASS, 1 = FAIL or unparsed. The `--output` JSON contains the full final prompt,
-    the judge's response, and `predicted_label` (1 = success, 0 = failure, null = unparsed). You
-    MUST run this against the latest `final_runs/run_<id>/` and get predicted_label == 1 before
-    declaring done. Declaring done without it is blocked by the harness.
-
-    ## Common failure modes
-
-    - Producing an artifact whose *shape* is right but whose *content* was never computed from
-      the real inputs.
-    - Satisfying the sentence you remember instead of the sentence that is written; re-read the
-      instruction before your final verification pass.
-    - Treating a command's exit code 0 as proof of correctness without inspecting what it wrote.
-    - Leaving a task requirement that appears only in workspace documentation unimplemented
-      because it was not restated in the instruction.
-    - Leaving scratch files, backups, or harness artifacts inside {{ task_workspace }}.
-
+    - Set done=true only after reflection exits 0 with predicted_label=1 for the current evidence.
+    - If reflection fails, diagnose the specific issue from its verdict, fix the workspace
+      incrementally, re-run verify_state.py, and reflect again. Never return done=false with an empty
+      bash_command. Do not rerun reflection until a new step has been recorded.
+    - When the verdict passes, the NEXT response must set bash_command empty and done=true. Any other
+      command in between invalidates the verdict and you will have to reflect again.
   instance_template: |
-    Task ID: {{ task_id }}
-    Task workspace: {{ task_workspace }}
+    Task: {{ task }}
+    {% if task_id %}Task ID: {{ task_id }}
+    {% endif %}Task workspace: {{ task_workspace }}
     Harness workspace: {{ workspace_dir }}
 
-    <instruction>
-    {{ task }}
-    </instruction>
-
-    <harness>
-    You are in a persistent Linux container. One bash command per turn; state persists.
-
-    - Task deliverables go in {{ task_workspace }} and nowhere else.
-    - plan.md, judge_config.json, verify_state.py, state_report.md and final_runs/run_<id>/
-      go in {{ workspace_dir }} and nowhere else.
-    - The reference solution and the private tests are not present in this container. Do not
-      look for them.
-    - Before declaring done you must have, for the latest run id:
-        {{ workspace_dir }}/plan.md
-        {{ workspace_dir }}/final_runs/run_<id>/verify_state.py
-        {{ workspace_dir }}/final_runs/run_<id>/final_script_log.txt   (ends with RESULT: PASS)
-        {{ workspace_dir }}/final_runs/run_<id>/state_report.md
-        {{ workspace_dir }}/final_runs/run_<id>/judge_result.json      (predicted_label == 1)
-    - Start by exploring the workspace before writing anything.
-    </harness>
+    Complete the task through incremental commands in the persistent container. Container state
+    persists across steps, while the step manifest and printed command output form the cumulative
+    evidence the judge sees.
