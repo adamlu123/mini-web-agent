@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import mimetypes
 from datetime import datetime, timezone
+from functools import lru_cache
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -13,9 +14,17 @@ import typer
 from rich.console import Console
 
 from miniswewebagent import package_dir
+from miniswewebagent.run.utilities.run_compare import compare_runs
+from miniswewebagent.run.utilities.task_levels import load_task_levels
 
 app = typer.Typer(rich_markup_mode="rich", add_completion=False)
 console = Console(highlight=False)
+
+
+@lru_cache(maxsize=1)
+def _default_task_levels() -> dict[str, str]:
+    """Cached task_id -> level lookup, shared across /api/compare requests."""
+    return load_task_levels()
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -314,6 +323,12 @@ class TraceCatalog:
         task_dir = self._task_dir(run_id, task_id)
         return _safe_join(task_dir, file_rel_path)
 
+    def resolve_run_dir(self, run_id: str) -> Path:
+        run_dir = self._run_dir(run_id)
+        if not run_dir.exists():
+            raise FileNotFoundError(f"Run '{run_id}' was not found.")
+        return run_dir
+
 
 class TraceViewerHandler(BaseHTTPRequestHandler):
     catalog: TraceCatalog
@@ -335,6 +350,24 @@ class TraceViewerHandler(BaseHTTPRequestHandler):
                 run_id = self._require_query(params, "run")
                 task_id = self._require_query(params, "task")
                 self._write_json(self.catalog.task_detail(run_id, task_id))
+                return
+            if parsed.path == "/api/compare":
+                params = parse_qs(parsed.query)
+                runs_param = self._require_query(params, "runs")
+                run_ids = [run_id.strip() for run_id in runs_param.split(",") if run_id.strip()]
+                if not run_ids:
+                    raise ValueError("Query parameter 'runs' must include at least one comma-separated run id.")
+                for run_id in run_ids:
+                    self.catalog.resolve_run_dir(run_id)
+                baseline_id = params.get("baseline", [""])[0].strip() or None
+                self._write_json(
+                    compare_runs(
+                        self.catalog.root_dir,
+                        run_ids,
+                        baseline_id=baseline_id,
+                        task_levels=_default_task_levels(),
+                    )
+                )
                 return
             if parsed.path == "/artifact":
                 params = parse_qs(parsed.query)
