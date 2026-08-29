@@ -1,96 +1,18 @@
 ---
 name: terminal-task-run
-description: Run RST (Recursive Synthetic Terminal Tasks) trajectory generation through the Docker harness on the phyagi gateway — preparing the task pool, launching a batch band by band from easy to hard, monitoring, scoring against each task's private verifier, and cleaning up. Use when asked to run, launch, monitor or score terminal (non-web) task generation, or when working with terminal_docker, terminal_rst.yaml, or run.benchmarks.rst.
+description: Generate agent trajectories on RST terminal tasks (Recursive Synthetic Terminal Tasks) with the Docker harness and the phyagi gateway — prepare the task pool, launch a band, monitor, score with each task's private tests, clean up. Use when asked to run, launch, monitor or score terminal (non-web) task generation, or when working with terminal_docker, terminal_rst.yaml, or run.benchmarks.rst.
 ---
 
-# RST terminal task runs (phyagi)
+# RST terminal task runs
 
-Generates agent trajectories on **RST** tasks — command-line tasks that ship their
-own Docker environment and their own private verifier. This is the terminal
-counterpart to the web `om2w` flow; it shares the agent loop, compaction and
-self-reflection, and nothing else.
+Each task ships its own `environment/Dockerfile` and its own private `tests/`. The
+agent runs inside the task's container; `tests/test.sh` runs afterwards and produces
+the label (`score` 1/0). Self-reflection does not affect the label.
 
-The working set is **5,000 tasks in 10 bands of 500**, ordered easy → hard by the
-length of the reference solution (the paper's own difficulty proxy). Run them band
-by band: `g01` first, and only move up once the pass rate at the current band is
-understood.
+Target host: Linux x86_64, Docker daemon, `/home/luyadong/.venv/bin/python`,
+`source /home/luyadong/cred.sh` for `OPENAI_GATEWAY_API_KEY`.
 
-| band | `solve.sh` non-empty lines | band | lines |
-|---|---|---|---|
-| g01 | 11 – 51 | g06 | 115 – 130 |
-| g02 | 51 – 68 | g07 | 130 – 145 |
-| g03 | 68 – 83 | g08 | 145 – 160 |
-| g04 | 83 – 99 | g09 | 160 – 175 |
-| g05 | 99 – 115 | g10 | 175 – 189 |
-
-Each task package:
-
-```
-<task_id>/
-  instruction.md            # what the agent is shown
-  task.toml                 # difficulty, timeouts, cpu/mem
-  environment/Dockerfile    # built into the container the agent lives in
-  solution/solve.sh         # PRIVATE — never mounted
-  tests/test.sh             # PRIVATE — run only after the episode ends
-  tests/test_state.py
-```
-
-## How it differs from the web flow
-
-- **No browser, no screenshots, no Browserbase, no WebJudge.** Nothing to release
-  after a kill; the cleanup target is Docker, not Browserbase sessions.
-- **The agent runs inside the task's own container** (`terminal_docker`), not on the
-  host. `/tests` and `/solution` are absent from that container.
-- **Two verdicts, kept separate.** Self-reflection is the agent's *own* completion
-  gate (`judge_mode: trajectory`, same as the web `persistent_cli` config, over a
-  `terminal-steps.jsonl` manifest the environment appends per command). The task's
-  `tests/test.sh` is the *external* score, run post-hoc, and the agent never sees it.
-- **`self_reflection` is a real command inside the container**, mounted read-only
-  from `environments/container_bin/self_reflection`. It is a POSIX-sh client: it
-  writes its argv under `/harness/.reflect/` and a watcher thread on the host runs the
-  actual judge and writes the result back. Credentials stay on the host; no python
-  is needed in the task image; the image is not rebuilt.
-- `agents/default.py` and `tools/self_reflection.py` are shared with the web flow.
-  Do not fork them for terminal changes.
-
-## Environments
-
-**Target (what this skill assumes):**
-
-| | |
-|---|---|
-| host | Linux, native `x86_64` |
-| policy | phyagi gateway, `gpt-5.4` (`model_class: phyagi`) |
-| judge | phyagi gateway `/responses` (`generation/judge_phyagi.yaml`) |
-| credentials | `source /home/luyadong/cred.sh` → `OPENAI_GATEWAY_API_KEY` |
-| python | `/home/luyadong/.venv/bin/python` |
-| docker | daemon reachable by the run user; task images are `linux/amd64`, native here |
-
-**Verified on (where this harness was built and smoke-tested):**
-
-| | |
-|---|---|
-| host | macOS 15 / Apple M2 Pro, `arm64` |
-| docker | OrbStack 29.4.0, 12 CPU / 8 GB VM, `linux/amd64` under Rosetta |
-| policy | Azure OpenAI `gpt-5.4` (`generation/model_azure_gpt54.yaml`) |
-| judge | Azure OpenAI chat-completions (`generation/judge_azure_gpt54.yaml`) |
-
-What that means for the target host:
-
-- `platform: linux/amd64` in the config is a no-op on Linux/amd64 and a Rosetta
-  emulation request on Apple silicon. Leave it set; it keeps both hosts identical.
-- Timings below were measured under emulation and include per-task image builds.
-  Native Linux is faster on the container side; the agent loop is gateway-bound and
-  will not change much.
-- **The phyagi judge route has not been smoke-tested end to end** — only the Azure
-  route was. The two backends need opposite argv shapes (see Known limits), and the
-  phyagi shape is covered by a unit check but not a live call. Confirm it on the
-  first `--limit 2` run before launching a band.
-
-## Prepare the task pool
-
-Once per machine. Downloads ~3.9 GB, extracts ~600 MB of task packages, and writes
-the band manifests.
+## 1. Prepare the task pool (once per machine)
 
 ```bash
 source /home/luyadong/cred.sh
@@ -99,27 +21,22 @@ source /home/luyadong/cred.sh
   --dest /home/luyadong/data/rst
 ```
 
-It downloads `Zhongzhi1228/Recursive-Task-Synthesis`, collapses near-duplicate
-rewrite variants to one representative per cluster (37,484 → 12,010; the paper keeps
-variants undeduplicated and says so), takes the shortest 5,000, splits them into 10
-bands, extracts the packages, and **drops the ~583 multi-container tasks** the
-harness cannot run. Selection is deterministic — the same inputs give the same 5,000.
-
-Output:
+Downloads `Zhongzhi1228/Recursive-Task-Synthesis` (~3.9 GB, public), dedups rewrite
+variants (37,484 → 12,010), keeps the shortest 5,000 by reference-solution length,
+splits them into 10 bands of 500 (`g01` easiest … `g10` hardest), extracts the packages
+and drops the ~583 multi-container tasks. Deterministic. Needs `huggingface_hub`,
+`pyarrow`, `pandas`.
 
 ```
 /home/luyadong/data/rst/selection/
-  tasks/tasks/<task_id>/     <- tasks_root is this directory
-  g01.jsonl .. g10.jsonl     <- ~440 tasks each after the compose filter
+  tasks/tasks/<task_id>/   ← tasks_root
+  g01.jsonl … g10.jsonl    ← ~440 tasks each
   all.jsonl
 ```
 
-Needs `huggingface_hub`, `pyarrow`, `pandas` in the venv.
+## 2. Launch one band
 
-## Launch one band
-
-Same tmux convention as the web runs: **do not use `screen`**; open a pane in the
-`inference` window of the current session.
+Open a pane in the `inference` window of the current tmux session (no `screen`).
 
 ```bash
 BAND=g01
@@ -127,248 +44,91 @@ DATA=/home/luyadong/data/rst/selection
 OUT=/home/luyadong/sandbox/mini-web-agent/outputs/terminal/rst_${BAND}
 
 mkdir -p "$OUT"
-tmux has-session 2>/dev/null || { echo "Not in a tmux session"; exit 1; }
 tmux list-windows -F '#W' | grep -qx inference || tmux new-window -n inference
 tmux split-window -t inference -v \
   "source /home/luyadong/cred.sh && \
    cd /home/luyadong/sandbox/mini-web-agent && \
    /home/luyadong/.venv/bin/python -m miniswewebagent.run.benchmarks.rst \
      -c generation/terminal_rst.yaml \
-     -c generation/terminal_rst_noverify.yaml \
      -c generation/judge_phyagi.yaml \
      -c environment.tasks_root=$DATA/tasks/tasks \
      -c environment.build_timeout_seconds=1200 \
      -c agent.require_self_reflection_success=false \
      -c agent.step_limit=50 \
      --tasks-file $DATA/${BAND}.jsonl \
-     --workers 8 \
+     --workers 8 --build-workers 4 --prune-every 25 \
      --output-dir $OUT 2>&1 | tee $OUT/run.log; \
    exec bash"
 tmux select-layout -t inference tiled
 ```
 
-**Always smoke-test first**: add `--limit 2 --workers 2` and confirm two tasks reach
-`summary.json` with a non-null `score` before launching the full band.
+Smoke-test first with `--limit 2 --workers 2` and confirm two `summary.json` files
+with a non-null `score`.
 
-This is the measured-cheapest configuration (see "What the ablations showed"). Drop
-`terminal_rst_noverify.yaml` and the two `agent.*` overrides to get the full
-self-verification prompt with the completion gate; it produces the same positives at
-about three times the cost.
+- `generation/judge_phyagi.yaml` is required: without it self-reflection falls back
+  to TRAPI Kimi and fails on every call.
+- `environment.tasks_root` is required: the yaml default is a dev path.
+- `require_self_reflection_success=false` turns off the completion gate. On 20 g01
+  tasks the gate produced the same positives as no gate at 2–3× the cost; labels come
+  from `tests/test.sh` either way. Leave it off for data generation.
+- `--workers` is agent concurrency (gateway-bound); `--build-workers` caps concurrent
+  image builds (host-bound). Each container asks for ~2 GB; size workers by RAM.
+- For local Azure runs replace `judge_phyagi.yaml` with `model_azure_gpt54.yaml` +
+  `judge_azure_gpt54.yaml`.
 
-Two flags are not optional:
-
-- **`-c generation/judge_phyagi.yaml`** — without an explicit judge endpoint,
-  `self_reflection` falls back to its TRAPI Kimi default and needs
-  `az login --scope api://trapi`. Batch hosts do not have that: every reflection call
-  fails with a `ChainedTokenCredential` error while the run keeps burning steps.
-- **`-c environment.tasks_root=...`** — the default in `terminal_rst.yaml` is a local
-  dev path that does not exist on the batch host.
-
-### Config layering
-
-Later `-c` specs win, so overlays compose:
-
-| spec | purpose |
-|---|---|
-| `generation/terminal_rst.yaml` | base: prompts, `terminal_docker`, phyagi policy |
-| `generation/terminal_rst_noverify.yaml` | drops the verification contract (agent-authored `verify_state.py`) |
-| `generation/judge_phyagi.yaml` | judge → phyagi `/responses` |
-| `generation/model_azure_gpt54.yaml` | policy → Azure (local dev only) |
-| `generation/judge_azure_gpt54.yaml` | judge → Azure (local dev only) |
-
-### Useful overrides
-
-- `--limit N` — first N tasks of the band.
-- `--group N` — filter by the `group` field, for running from `all.jsonl`.
-- `-c agent.step_limit=100` when the completion gate is on (matches `persistent_cli`;
-  60 is too tight, tasks finish the work and then run out of steps inside the
-  reflection loop). 50 is enough with the gate off.
-- `-c environment.reuse_images=false` — force rebuilds after editing a Dockerfile.
-- `-c environment.command_timeout_seconds=...` — per-command ceiling, default 240 s.
-
-### Choosing `--workers`
-
-Each container asks for ~2 GB (`task.toml`). Size workers against host RAM, not
-CPU count, and leave headroom for the image builds running alongside.
-
-## Monitor
+## 3. Monitor
 
 ```bash
 tail -f $OUT/run.log
-find $OUT -name summary.json | wc -l              # tasks finished
+find $OUT -name summary.json | wc -l
 docker ps --filter name=rst- --format '{{.Names}} {{.Status}}'
 ```
 
-Per-task artifacts land in `$OUT/<task_id>/`:
+Per task in `$OUT/<task_id>/`: `trajectory.json` (the SFT data), `summary.json`
+(steps, exit_status, score, seconds), `verifier_log.txt`, `steps/`, `logs/`.
+`$OUT/batch_summary.json` is the roll-up.
 
-| file | contents |
-|---|---|
-| `trajectory.json` | full message history + cumulative token usage — **this is the SFT data** |
-| `summary.json` | steps, exit_status, score, partial_credit, seconds |
-| `verifier_log.txt` | raw output of the private `tests/test.sh` |
-| `verifier_result.json` | `{score, returncode, tests_passed, partial_credit}` |
-| `plan.md`, `judge_config.json`, `reflection/judge_result.json` | what the agent authored; `verify_state.py` too under the full prompt |
-| `terminal-steps.jsonl` | step manifest the completion gate checks against |
-| `steps/`, `logs/` | one file per executed command and its output |
-| `docker_build.log` | image build output; only worth reading on failure |
-
-`batch_summary.json` at the root has the roll-up.
-
-## Score
-
-`score` comes from the task's own verifier, not from a judge model: `1` = every
-assertion passed, `0` = at least one failed, `null` = the verifier produced no
-reward — treat that as infrastructure failure, not as a wrong answer.
+## 4. Score
 
 ```bash
 python - <<'PY'
-import json, pathlib, collections
-root = pathlib.Path("OUT_DIR_HERE")
+import json, pathlib
+root = pathlib.Path("OUT_DIR")
 rows = [json.loads(p.read_text()) for p in root.glob("*/summary.json")]
 scored = [r for r in rows if isinstance(r.get("score"), int)]
-print(f"{sum(r['score'] for r in scored)}/{len(scored)} passed"
-      f"   raw={dict(collections.Counter(str(r.get('score')) for r in rows))}")
-print("exit:", collections.Counter(r.get("exit_status") for r in rows))
-print("skipped:", sum(1 for r in rows if r.get("skipped")),
+print(f"{sum(r['score'] for r in scored)}/{len(scored)} passed",
+      " skipped:", sum(1 for r in rows if r.get("skipped")),
       " errors:", sum(1 for r in rows if r.get("error")))
 PY
 ```
 
-A task carrying `skipped` was never run (see Known limits) and is not part of the
-pass rate.
+Keep trajectories with `score == 1`. `score` is the private tests' verdict; `null`
+means the tests produced no reward (infrastructure), `skipped` means a multi-container
+task. `exit_status` is not a label.
 
-`exit_status` reads:
+If a band is slow, `scripts/diagnose_throughput.py --output-dir $OUT --workers N`
+separates build time, step-limit churn, gateway latency and disk pressure.
 
-- `Submitted` — the agent passed its own reflection gate and declared done.
-- `LimitsExceeded` — hit `step_limit`. **This does not mean the task failed**; a run
-  can do the work correctly and still run out of steps inside the reflection loop.
-  Check `score` separately.
-
-For rejection sampling, keep trajectories where `score == 1`. A `Submitted` run with
-`score == 0` is a self-reflection false positive and must not enter the SFT set.
-
-## Kill and clean up
-
-Send `C-c` to the run pane, or kill the pane. Both deliver the signal to the whole
-foreground process group, which is what you want:
+## 5. Kill and clean up
 
 ```bash
-tmux send-keys -t inference.<pane_index> C-c
-# or
-tmux kill-pane -t inference.<pane_index>
-```
-
-Avoid `pkill -f 'benchmarks[.]rst'` on its own. The worker processes are spawned
-with a `multiprocessing.spawn` command line that does not contain that string, so
-it kills only the parent; workers mid-episode keep their containers and gateway
-calls going and then drain the items the parent had already queued. If you must
-use pkill, kill the process group instead:
-
-```bash
-kill -- -"$(pgrep -f 'benchmarks[.]rst' | head -1 | xargs ps -o pgid= -p | tr -d ' ')"
-```
-
-Workers also watch their parent pid and exit on their own within a few seconds of
-it disappearing, so a stray orphan is a bug worth reporting, not an expected state.
-
-The environment removes its container on normal close; a killed run leaks them.
-
-```bash
+tmux send-keys -t inference.<pane_index> C-c      # signals the whole process group
 docker ps -a --filter name=rst- -q | xargs -r docker rm -f
+docker builder prune -f --keep-storage 20GB
 ```
 
-**Only remove `rst-`-prefixed containers.** The daemon is shared; a blanket
-`docker rm -f $(docker ps -aq)` will kill colleagues' work.
-
-Images are cached by a content hash of `environment/`, so a full band leaves several
-hundred images. Reclaim with `docker image prune -a` only when no run is active — a
-rebuild costs roughly two minutes per task.
-
-## What the ablations showed
-
-Same 20 `g01` tasks, four configurations, gpt-5.4. All four passed the identical 11
-tasks; they differ only in what a positive costs.
-
-| configuration | steps (median) | s per positive |
-|---|---|---|
-| full prompt: verification contract + completion gate | 20 | 508 |
-| gate off | 17 | 285 |
-| verification contract off | 14 | 227 |
-| both off, mounted client | 12 | 167 |
-
-The self-verification apparatus does not change which tasks pass. Every task that
-failed under all four failed on one detail the instruction does not state: two are
-specified only in the private tests (unsolvable by design), two are documented in
-workspace files the agent did not read, one has an ambiguous spec. Reflection audits
-the agent's own checklist, so a requirement missing from that checklist is invisible
-to it. Labels come from `tests/test.sh` regardless, so for rejection sampling the
-cheapest configuration is the right default; the exploration depth of the agent is
-where the remaining headroom is.
-
-A static scan suggests up to 22% of the 5,000 tasks assert a path that appears in
-neither the instruction nor any public workspace file (an upper bound — build-time
-clones are invisible to the scan). Expect a floor of unsolvable tasks in every band.
-
-## Cost and duration
-
-Measured with `gpt-5.4` on 17 runnable `g01` tasks (3 of 20 were multi-container and
-skipped), recommended configuration, 4 workers, local dev host (Azure policy, Apple
-silicon emulation, images cached):
-
-| | |
-|---|---|
-| wall clock, 17 tasks | 7 min |
-| per task (median) | 86 s, 12 steps |
-| per positive | 167 s |
-| pass rate | 10/17 |
-
-Input tokens dominate and grow with step count: every step resends the whole history.
-Cost tracks step count and cache hit rate, not output length. Higher bands have
-reference solutions 3–4× longer than `g01` and will use more steps.
-
-## Prompts
-
-All agent-facing prompt text lives in
-**`src/miniswewebagent/config/generation/terminal_rst.yaml`**:
-
-- `agent.system_template` — the main prompt. Contains the JSON response contract, the
-  task-workspace / harness-workspace split, the workflow, the verification contract
-  (the assertion categories the agent's own `verify_state.py` must cover — omitted by
-  the `noverify` overlay), and the
-  self-reflection spec.
-- `agent.instance_template` — per-task injection: instruction, paths, done checklist.
-- `agent.summary_user_prompt` — compaction. Overridden here because the default in
-  `agents/default.py` is written for the web harness and talks about screenshots and
-  selectors.
-- `model.observation_template`, `model.format_error_template`.
-
-**The self-reflection rubric is not a file.** `judge_config.json` is authored by the
-agent at runtime, constrained by the `## Self-reflection` section of
-`system_template`. To change judge behaviour, edit that section.
+Do not use `pkill -f 'benchmarks[.]rst'` alone: it reaches only the parent (workers
+now exit on their own within seconds of the parent dying, but `C-c` is the right
+tool). Only remove `rst-` containers; the daemon is shared.
 
 ## Known limits
 
-- **Multi-container tasks are skipped, not run.** 583 of the 5,000 ship a compose
-  file defining several networked containers (an SSH target, a mock API server, a
-  private subnet with fixed IPs), and the instruction depends on that network
-  existing. `terminal_docker` builds one image and runs one container, so those
-  tasks would fail for environment reasons and look like model failures.
-  `prepare_rst_tasks.py` filters them out of the band manifests; if one reaches the
-  runner anyway it is recorded as `skipped` in `summary.json`, counted separately in
-  `batch_summary.json`, and left out of the pass-rate denominator. They are spread
-  evenly across bands (51–64 per band), leaving ~440 runnable per band.
-- **Self-reflection is wrong in both directions.** It has passed a run whose output
-  had the wrong column headers — the agent's own verifier only checked that headers
-  existed, not that they matched the values discoverable in the workspace — and it
-  has blocked runs that were already correct. Never treat `Submitted` as a score.
-- **The phyagi judge route is not smoke-tested.** `self_reflection` needs opposite
-  argv shapes per backend: a `/responses` gateway takes the real deployment name,
-  while an OpenAI chat-completions server needs the `policy` sentinel (passing a chat
-  URL with a real model name silently routes to the responses backend). The
-  environment infers this from the endpoint; `judge_backend: responses|policy_chat`
-  forces it. Verify on the first `--limit 2` run that
-  `reflection/judge_result.json` exists and has `predicted_label` set.
-- **`/logs/verifier` is created by the harness** before running `test.sh`. 4,960 of
-  the 5,000 RST tasks create it themselves, so a regression here would show up only
-  on the remaining 40 — as `verifier_log.txt` ending in `No such file or directory`
-  while pytest was green, and `score: null`.
+- Multi-container tasks are skipped by the prepare script and, if one slips through,
+  recorded as `skipped` and excluded from the pass rate.
+- Some tasks are unsolvable by construction: the tested detail appears only in the
+  private tests (3 of 17 scored g01 tasks in a 20-task sample). Expect a floor of
+  failures per band that no prompt or model fixes.
+- The phyagi judge route is unit-checked but was not exercised live; only relevant if
+  the gate is on.
+- Prompt text lives in `config/generation/terminal_rst.yaml`. With the gate off, the
+  self-reflection call in it is pure overhead and can be removed.
