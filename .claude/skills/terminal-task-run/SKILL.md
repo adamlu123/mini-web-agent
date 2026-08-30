@@ -42,6 +42,8 @@ Open a pane in the `inference` window of the current tmux session (no `screen`).
 BAND=g01
 DATA=/home/luyadong/data/rst/selection
 OUT=/home/luyadong/sandbox/mini-web-agent/outputs/terminal/rst_${BAND}
+WORKERS=${WORKERS:-8}              # agent concurrency; override per run, e.g. WORKERS=32
+BUILD_WORKERS=${BUILD_WORKERS:-4}  # concurrent docker builds; keep well below WORKERS
 
 mkdir -p "$OUT"
 tmux list-windows -F '#W' | grep -qx inference || tmux new-window -n inference
@@ -56,7 +58,7 @@ tmux split-window -t inference -v \
      -c agent.require_self_reflection_success=false \
      -c agent.step_limit=50 \
      --tasks-file $DATA/${BAND}.jsonl \
-     --workers 8 --build-workers 4 --prune-every 25 \
+     --workers $WORKERS --build-workers $BUILD_WORKERS --prune-every 25 \
      --output-dir $OUT 2>&1 | tee $OUT/run.log; \
    exec bash"
 tmux select-layout -t inference tiled
@@ -73,6 +75,11 @@ with a non-null `score`.
   from `tests/test.sh` either way. Leave it off for data generation.
 - `--workers` is agent concurrency (gateway-bound); `--build-workers` caps concurrent
   image builds (host-bound). Each container asks for ~2 GB; size workers by RAM.
+  If the user names a worker count, set `WORKERS` (and `BUILD_WORKERS`) above instead
+  of editing the command; the defaults are 8 / 4. Rate-limit retries are per model
+  call (`MAX_RATE_LIMIT_RETRIES` in `models/phyagi_model.py`, 10 with linear backoff
+  capped at 30 s); a task whose retries are exhausted lands in `summary.json` as
+  `error`, not a crash, so large `WORKERS` mostly costs samples, not the batch.
 - For local Azure runs replace `judge_phyagi.yaml` with `model_azure_gpt54.yaml` +
   `judge_azure_gpt54.yaml`.
 
@@ -120,15 +127,3 @@ docker builder prune -f --keep-storage 20GB
 Do not use `pkill -f 'benchmarks[.]rst'` alone: it reaches only the parent (workers
 now exit on their own within seconds of the parent dying, but `C-c` is the right
 tool). Only remove `rst-` containers; the daemon is shared.
-
-## Known limits
-
-- Multi-container tasks are skipped by the prepare script and, if one slips through,
-  recorded as `skipped` and excluded from the pass rate.
-- Some tasks are unsolvable by construction: the tested detail appears only in the
-  private tests (3 of 17 scored g01 tasks in a 20-task sample). Expect a floor of
-  failures per band that no prompt or model fixes.
-- The phyagi judge route is unit-checked but was not exercised live; only relevant if
-  the gate is on.
-- Prompt text lives in `config/generation/terminal_rst.yaml`. With the gate off, the
-  self-reflection call in it is pure overhead and can be removed.

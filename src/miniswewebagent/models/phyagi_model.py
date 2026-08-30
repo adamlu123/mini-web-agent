@@ -22,7 +22,7 @@ from miniswewebagent.utils.logging import append_runtime_log
 from miniswewebagent.utils.runtime import run_async
 
 MAX_JSON_PARSE_RETRIES = 3
-MAX_RATE_LIMIT_RETRIES = 5
+MAX_RATE_LIMIT_RETRIES = 10
 MAX_TRANSIENT_GATEWAY_RETRIES = 5
 DEFAULT_OBSERVATION_TEMPLATE = """Observation:
 Status: {{ 'ok' if observation.success else 'error' }}
