@@ -83,6 +83,8 @@ from miniswewebagent.utils.browser_evidence import (
     image_context,
     load_browser_steps,
     optional_file_digest,
+    relative_workspace_path,
+    task_screenshot_paths,
     trajectory_evidence_digest,
     trajectory_images,
 )
@@ -265,9 +267,26 @@ def _load_trajectory_scope(
     action_history_source: str = ACTION_HISTORY_BROWSER_STEPS,
 ) -> dict[str, Any]:
     rows = load_browser_steps(workspace_dir, manifest)
-    image_entries = trajectory_images(workspace_dir, rows)
-    images = [path for path, _row in image_entries]
-    contexts = {str(path): image_context(row) for path, row in image_entries}
+    manifest_image_entries = trajectory_images(workspace_dir, rows)
+    manifest_images = [path for path, _row in manifest_image_entries]
+    manifest_image_set = set(manifest_images)
+    images = [
+        *manifest_images,
+        *(
+            path
+            for path in task_screenshot_paths(workspace_dir)
+            if path not in manifest_image_set
+        ),
+    ]
+    contexts = {
+        str(path): image_context(row) for path, row in manifest_image_entries
+    }
+    for path in images:
+        if str(path) not in contexts:
+            contexts[str(path)] = (
+                "Task screenshot not referenced by the trajectory manifest:\n"
+                f"- File: {relative_workspace_path(workspace_dir, path)}"
+            )
     if action_history_source == ACTION_HISTORY_STEP_SCRIPTS:
         # Same contract as scripts/eval/persistent_cli_steps.py, so the completion
         # gate reasons over the commands the official judge will be shown.
@@ -976,7 +995,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--scope",
         choices=("latest-run", "trajectory"),
         default="latest-run",
-        help="Judge the legacy latest final run or every saved incremental browser step.",
+        help=(
+            "Judge the legacy latest final run or every image in the task's screenshots/ "
+            "folder, using incremental browser-step context when available."
+        ),
     )
     parser.add_argument(
         "--trajectory-manifest",
@@ -1081,7 +1103,7 @@ def main(argv: list[str] | None = None) -> int:
         discovered_run_dir = None
         print(
             f"[self_reflection] trajectory contains {len(trajectory_scope['rows'])} browser "
-            f"steps and {len(resolved_images)} saved screenshots",
+            f"steps and {len(resolved_images)} task screenshots",
             file=sys.stderr,
         )
     else:

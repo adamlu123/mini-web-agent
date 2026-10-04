@@ -149,6 +149,8 @@ def test_load_trajectory_scope_uses_all_saved_images_across_epochs(tmp_path: Pat
     screenshots.mkdir()
     (screenshots / "one.png").write_bytes(b"one")
     (screenshots / "two.png").write_bytes(b"two")
+    (screenshots / "manual_evidence.png").write_bytes(b"manual")
+    (screenshots / "not_an_image.txt").write_text("ignore me", encoding="utf-8")
     (tmp_path / "browser-steps.jsonl").write_text(
         "\n".join(
             [
@@ -166,11 +168,16 @@ def test_load_trajectory_scope_uses_all_saved_images_across_epochs(tmp_path: Pat
 
     scope = _load_trajectory_scope(tmp_path)
 
-    assert [path.name for path in scope["images"]] == ["one.png", "two.png"]
+    assert [path.name for path in scope["images"]] == [
+        "one.png",
+        "two.png",
+        "manual_evidence.png",
+    ]
     assert scope["session_epochs"] == [1, 2]
     assert scope["covered_through_browser_step"] == 2
     assert "Recover in a new tab" in scope["action_history_log"]
     assert "Session epoch: 2" in scope["image_contexts"][str(scope["images"][1])]
+    assert "not referenced" in scope["image_contexts"][str(scope["images"][2])]
 
 
 def test_trajectory_main_caches_image_judgment_and_writes_freshness_metadata(

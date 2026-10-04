@@ -7,6 +7,7 @@ from typing import Any, Iterable
 
 
 DEFAULT_BROWSER_STEPS_FILE = "browser-steps.jsonl"
+TASK_SCREENSHOT_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp"})
 
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -93,6 +94,21 @@ def trajectory_images(
     return images
 
 
+def task_screenshot_paths(workspace_dir: str | Path) -> list[Path]:
+    """Return every supported image directly under the task's screenshots folder."""
+    screenshots_dir = Path(workspace_dir).resolve() / "screenshots"
+    if not screenshots_dir.is_dir():
+        return []
+    return sorted(
+        (
+            path.resolve()
+            for path in screenshots_dir.iterdir()
+            if path.is_file() and path.suffix.lower() in TASK_SCREENSHOT_SUFFIXES
+        ),
+        key=lambda path: (path.name.casefold(), path.name),
+    )
+
+
 def format_action_history(rows: Iterable[dict[str, Any]]) -> str:
     lines: list[str] = []
     for row in rows:
@@ -168,8 +184,18 @@ def trajectory_evidence_digest(
                 "error": str(row.get("error") or ""),
             }
         )
+    canonical_task_screenshots = [
+        {
+            "path": relative_workspace_path(workspace, path),
+            "sha256": _file_sha256(path),
+        }
+        for path in task_screenshot_paths(workspace)
+    ]
     serialized = json.dumps(
-        canonical_rows,
+        {
+            "rows": canonical_rows,
+            "task_screenshots": canonical_task_screenshots,
+        },
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,
@@ -192,6 +218,7 @@ __all__ = [
     "read_jsonl",
     "relative_workspace_path",
     "resolve_workspace_path",
+    "task_screenshot_paths",
     "trajectory_evidence_digest",
     "trajectory_images",
 ]

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import copy
 import json
 import mimetypes
 import os
@@ -64,6 +65,38 @@ Please respond using exactly these XML tags:
 Return XML only. Do not include markdown fences or any prose before or after the `<response>` block.
 `<python_code>` is still accepted for backward compatibility, but prefer `<bash_command>` for local-workspace tasks.
 """
+DEFAULT_TOOL_FORMAT_ERROR_TEMPLATE = """Format error:
+
+{{ error }}
+
+Each turn must be either exactly one `run_command` tool call carrying a single shell
+command, or a plain text message declaring the task complete. Never both, never neither.
+"""
+
+# Sole model-visible tool. The command is the whole turn: there is no thought,
+# done, or final_response field, because completion is declared by answering with
+# a plain text message instead of calling the tool.
+RUN_COMMAND_TOOL: dict[str, Any] = {
+    "type": "function",
+    "name": "run_command",
+    "description": (
+        "Execute exactly one shell command in the task workspace and return its "
+        "standard output, standard error, and exit status."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "command": {
+                "type": "string",
+                "description": "One complete shell command. Heredocs are allowed.",
+            }
+        },
+        "required": ["command"],
+        "additionalProperties": False,
+    },
+    "strict": True,
+}
+TOOL_RESPONSE_MODE = "run_command_tool"
 
 
 def _is_rate_limit_error(exc: BaseException | None) -> bool:
@@ -290,12 +323,12 @@ def text_part(text: str) -> dict[str, Any]:
     return {"type": "input_text", "text": text}
 
 
-def image_part_from_path(path: Path) -> dict[str, Any]:
-    mime_type, _ = mimetypes.guess_type(str(path))
+def image_part_from_path(path: Path, *, media_type: str | None = None) -> dict[str, Any]:
+    guessed_mime_type, _ = mimetypes.guess_type(str(path))
     encoded = base64.b64encode(path.read_bytes()).decode("ascii")
     return {
         "type": "input_image",
-        "image_url": f"data:{mime_type or 'image/png'};base64,{encoded}",
+        "image_url": f"data:{media_type or guessed_mime_type or 'image/png'};base64,{encoded}",
         "detail": "high",
     }
 
@@ -315,14 +348,41 @@ def _serialize_response_content_part(part: dict[str, Any], *, role: str) -> dict
 
 def _serialize_response_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     serialized: list[dict[str, Any]] = []
+    pending_calls: list[str] = []
+
+    def flush_pending() -> None:
+        # The Responses API rejects a function_call that is never answered, so a
+        # turn interrupted before execution (format error, gate, compaction) gets
+        # a synthetic output rather than poisoning every later request.
+        while pending_calls:
+            serialized.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": pending_calls.pop(0),
+                    "output": "The command was not executed.",
+                }
+            )
+
     for message in messages:
         role = message["role"]
         if role == "exit":
             continue
+        extra = message.get("extra") if isinstance(message.get("extra"), dict) else {}
         content = message.get("content", "")
         if role == "assistant":
-            extra = message.get("extra")
-            raw_response = extra.get("raw_response") if isinstance(extra, dict) else None
+            response_items = extra.get("response_items")
+            if isinstance(response_items, list) and response_items:
+                # Replay reasoning/function_call items verbatim so the hidden
+                # reasoning state carries into the next turn.
+                flush_pending()
+                for item in response_items:
+                    if not isinstance(item, dict):
+                        continue
+                    serialized.append(copy.deepcopy(item))
+                    if item.get("type") == "function_call" and isinstance(item.get("call_id"), str):
+                        pending_calls.append(item["call_id"])
+                continue
+            raw_response = extra.get("raw_response")
             if isinstance(raw_response, dict):
                 # Keep the model's complete structured response in history. The
                 # display content contains only its thought, while the command,
@@ -332,6 +392,36 @@ def _serialize_response_input(messages: list[dict[str, Any]]) -> list[dict[str, 
             serialized_content = [text_part(content)]
         else:
             serialized_content = [part for part in content if isinstance(part, dict)]
+
+        tool_call_id = extra.get("tool_call_id")
+        if role == "user" and isinstance(tool_call_id, str) and tool_call_id in pending_calls:
+            pending_calls.remove(tool_call_id)
+            serialized.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": tool_call_id,
+                    "output": "\n".join(
+                        str(part.get("text", ""))
+                        for part in serialized_content
+                        if part.get("type") != "input_image"
+                    ),
+                }
+            )
+            # A function_call_output carries text only; images follow as a user turn.
+            image_parts = [part for part in serialized_content if part.get("type") == "input_image"]
+            if image_parts:
+                serialized.append(
+                    {
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            _serialize_response_content_part(part, role="user") for part in image_parts
+                        ],
+                    }
+                )
+            continue
+
+        flush_pending()
         mapped_role = "developer" if role == "system" else role
         serialized.append(
             {
@@ -343,6 +433,7 @@ def _serialize_response_input(messages: list[dict[str, Any]]) -> list[dict[str, 
                 ],
             }
         )
+    flush_pending()
     return serialized
 
 
@@ -365,6 +456,100 @@ def _extract_response_text(payload: dict[str, Any]) -> str:
             elif isinstance(content.get("output_text"), str):
                 texts.append(content["output_text"])
     return "\n".join(texts)
+
+
+def _normalize_response_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Keep the output items that must be replayed verbatim on the next turn.
+
+    Reasoning items are the model's carried-over memory: replaying them with their
+    ``encrypted_content`` lets the next call resume from the same hidden state
+    instead of re-deriving it. The gateway can only decrypt a blob produced by the
+    replica that issued it, so this requires ``strict_session`` pinning.
+    """
+    items: list[dict[str, Any]] = []
+    for item in payload.get("output") or []:
+        if not isinstance(item, dict):
+            continue
+        item_type = item.get("type")
+        if item_type == "reasoning":
+            reasoning: dict[str, Any] = {"type": "reasoning", "summary": item.get("summary") or []}
+            if item.get("id"):
+                reasoning["id"] = item["id"]
+            if item.get("encrypted_content"):
+                reasoning["encrypted_content"] = item["encrypted_content"]
+            items.append(reasoning)
+        elif item_type == "function_call":
+            if not isinstance(item.get("call_id"), str) or not isinstance(item.get("name"), str):
+                continue
+            items.append(
+                {
+                    "type": "function_call",
+                    "call_id": item["call_id"],
+                    "name": item["name"],
+                    "arguments": item.get("arguments", "{}"),
+                }
+            )
+        elif item_type == "message":
+            text = "\n".join(
+                content.get("text", "")
+                for content in item.get("content") or []
+                if isinstance(content, dict) and content.get("type") == "output_text"
+            )
+            if text:
+                items.append(
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": text}],
+                    }
+                )
+    return items
+
+
+def parse_tool_call_output(payload: dict[str, Any]) -> dict[str, Any]:
+    """Map a Responses tool-calling turn onto the harness action contract.
+
+    One ``run_command`` call means "run this and continue"; a plain text message
+    with no call means "the task is finished, here is the answer".
+    """
+    call: dict[str, Any] | None = None
+    text_parts: list[str] = []
+    for item in payload.get("output") or []:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") == "function_call" and call is None:
+            call = item
+        elif item.get("type") == "message":
+            text_parts.extend(
+                content.get("text", "")
+                for content in item.get("content") or []
+                if isinstance(content, dict) and content.get("type") == "output_text"
+            )
+    text = "\n".join(part for part in text_parts if part.strip()).strip()
+
+    if call is None:
+        if not text:
+            raise ValueError(
+                "Model returned neither a run_command tool call nor any text. Call "
+                "run_command with one shell command, or answer with the final response."
+            )
+        return {"thought": "", "bash_command": "", "python_code": "", "done": True, "final_response": text}
+
+    if call.get("name") != "run_command":
+        raise ValueError(f"Unknown tool {call.get('name')!r}; only run_command is available.")
+    try:
+        arguments = json.loads(call.get("arguments") or "{}")
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"run_command arguments are not valid JSON: {exc}") from exc
+    if not isinstance(arguments, dict):
+        raise ValueError("run_command arguments must be a JSON object.")
+    command = str(arguments.get("command", "") or "").strip()
+    if not command:
+        raise ValueError(
+            "run_command was called with an empty command. Send one shell command, or "
+            "declare completion with a plain text message instead of calling the tool."
+        )
+    return {"thought": text, "bash_command": command, "python_code": "", "done": False, "final_response": ""}
 
 
 def _extract_reasoning_summary(payload: dict[str, Any]) -> str:
@@ -580,6 +765,12 @@ class PhyagiModel:
             if env_strict in {"1", "true", "yes"}:
                 self.config.strict_session = True
 
+        if (
+            self.config.response_mode == TOOL_RESPONSE_MODE
+            and self.config.format_error_template == DEFAULT_XML_FORMAT_ERROR_TEMPLATE
+        ):
+            self.config.format_error_template = DEFAULT_TOOL_FORMAT_ERROR_TEMPLATE
+
     def get_template_vars(self, **kwargs) -> dict[str, Any]:
         return {
             "model_name": self.config.model_name,
@@ -682,13 +873,35 @@ class PhyagiModel:
             )
 
             parts: list[dict[str, Any]] = [text_part(content)]
+            attached_paths: set[Path] = set()
+            for attachment in observation.get("image_attachments") or []:
+                if not isinstance(attachment, dict):
+                    continue
+                path_value = attachment.get("path")
+                media_type = attachment.get("media_type")
+                if not isinstance(path_value, str) or not path_value:
+                    continue
+                path = Path(path_value)
+                parts.append(
+                    image_part_from_path(
+                        path,
+                        media_type=media_type if isinstance(media_type, str) else None,
+                    )
+                )
+                attached_paths.add(path.resolve())
             screenshot_path = observation.get("screenshot_path")
             if self.config.attach_observation_screenshot and screenshot_path:
-                parts.append(image_part_from_path(Path(screenshot_path)))
+                path = Path(screenshot_path)
+                if path.resolve() not in attached_paths:
+                    parts.append(image_part_from_path(path))
 
             observation_messages.append(
                 self.format_message(role="user", content=parts, extra={"observation": observation})
             )
+        tool_call_id = (message.get("extra") or {}).get("tool_call_id")
+        if observation_messages and isinstance(tool_call_id, str):
+            # Answers the run_command call this observation came from.
+            observation_messages[0]["extra"]["tool_call_id"] = tool_call_id
         return observation_messages
 
     def _response_schema(self) -> dict[str, Any]:
@@ -762,6 +975,15 @@ class PhyagiModel:
                     "strict": False, #TODO check if this works -Yadong
                 }
             }
+        if self.config.response_mode == TOOL_RESPONSE_MODE:
+            payload["tools"] = [copy.deepcopy(RUN_COMMAND_TOOL)]
+            payload["parallel_tool_calls"] = False
+            # Carry the hidden reasoning across turns instead of discarding it.
+            payload["include"] = ["reasoning.encrypted_content"]
+            payload["store"] = False
+            last_extra = messages[-1].get("extra") if messages else None
+            if isinstance(last_extra, dict) and last_extra.get("disable_tools"):
+                payload["tool_choice"] = "none"
         return payload
 
     def _format_repair_message(self, *, raw_text: str, error: str) -> dict[str, Any]:
@@ -789,6 +1011,7 @@ class PhyagiModel:
         last_error: ValueError | None = None
         raw_text = ""
         reasoning_summary = ""
+        response_items: list[dict[str, Any]] = []
         parsed: dict[str, Any] | None = None
         request_messages = list(messages)
         for attempt_index in range(MAX_JSON_PARSE_RETRIES + 1):
@@ -868,7 +1091,12 @@ class PhyagiModel:
                     reasoning_summary=reasoning_summary,
                 )
             try:
-                parsed = self._parse_model_output(raw_text)
+                parsed = (
+                    parse_tool_call_output(response_payload)
+                    if self.config.response_mode == TOOL_RESPONSE_MODE
+                    else self._parse_model_output(raw_text)
+                )
+                response_items = _normalize_response_items(response_payload)
                 break
             except ValueError as exc:
                 last_error = exc
@@ -910,9 +1138,27 @@ class PhyagiModel:
         elif python_code:
             actions.append({"python_code": python_code})
 
+        content = parsed.get("thought", "")
+        tool_extra: dict[str, Any] = {}
+        if self.config.response_mode == TOOL_RESPONSE_MODE:
+            # There is no thought field any more: the visible trace of a turn is the
+            # reasoning summary, while the reasoning items carry the hidden state.
+            content = parsed.get("final_response") or reasoning_summary or content
+            call_id = next(
+                (
+                    item["call_id"]
+                    for item in response_items
+                    if item.get("type") == "function_call" and isinstance(item.get("call_id"), str)
+                ),
+                None,
+            )
+            tool_extra = {"response_items": response_items}
+            if call_id is not None:
+                tool_extra["tool_call_id"] = call_id
+
         return self.format_message(
             role="assistant",
-            content=parsed.get("thought", ""),
+            content=content,
             extra={
                 "actions": actions,
                 "done": bool(parsed.get("done", False)),
@@ -920,6 +1166,7 @@ class PhyagiModel:
                 "raw_response": parsed,
                 "reasoning_summary": reasoning_summary,
                 "usage": self._usage_snapshot(),
+                **tool_extra,
             },
         )
 

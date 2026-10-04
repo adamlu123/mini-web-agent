@@ -88,6 +88,18 @@ def encode_image(image):
     return base64.b64encode(buffered.getvalue()).decode("utf-8")
 
 
+def parse_status_verdict(response: str) -> int:
+    """Parse an explicit verdict, rejecting missing or malformed judgments."""
+    if isinstance(response, str):
+        matches = list(re.finditer(r"(?i)status:\s*", response))
+        if matches:
+            tail = response[matches[-1].end() :].strip()
+            verdict_match = re.match(r'^[\'"“”‘’\s]*(success|failure)\b', tail, re.IGNORECASE)
+            if verdict_match:
+                return 1 if verdict_match.group(1).lower() == "success" else 0
+    raise ValueError("Judge response has no valid Status: success/failure verdict")
+
+
 def extract_predication(response, mode):
     if mode in {
         "Autonomous_eval",
@@ -100,14 +112,8 @@ def extract_predication(response, mode):
         "WebJudge_general_eval",
     }:
         try:
-            matches = list(re.finditer(r"(?i)status:\s*", response))
-            if matches:
-                tail = response[matches[-1].end() :].strip()
-                verdict_match = re.match(r'^[\'"“”‘’\s]*(success|failure)\b', tail, re.IGNORECASE)
-                if verdict_match:
-                    return 1 if verdict_match.group(1).lower() == "success" else 0
-            return 0
-        except Exception:
+            return parse_status_verdict(response)
+        except ValueError:
             return 0
     if mode == "WebVoyager_eval":
         return 0 if "FAILURE" in response else 1

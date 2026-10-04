@@ -6,18 +6,20 @@
 
 model:
   model_class: phyagi
-  model_name: gpt-5.4
-  openai_gateway_endpoint: http://gateway.phyagi.net/api/responses
+  model_name: gpt-5.5
+  openai_gateway_endpoint: https://gateway.phyagi.net/api/responses
   openai_gateway_tier: base
   openai_gateway_infrastructure: aiservices
   # Pin each task's session to one backend replica. Prompt caches are per-replica,
   # so without this a task's next turn often lands on a replica that never saw its
-  # prefix (measured: sporadic 0% reuse across a 150-worker run).
+  # prefix (measured: sporadic 0% reuse across a 150-worker run). Replaying the
+  # encrypted reasoning items also requires it: only the issuing replica can
+  # decrypt them.
   strict_session: true
   reasoning_effort: xhigh
   request_timeout_seconds: 120
-  max_output_tokens: 16000
-  response_mode: json_schema
+  max_output_tokens: 20000
+  response_mode: run_command_tool
   attach_observation_screenshot: false
   observation_template: |
     Observation:
@@ -35,13 +37,8 @@ model:
 
     {{ error }}
 
-    Respond with one strict JSON object containing exactly:
-    {
-      "thought": "<observation, reasoning, and next step>",
-      "bash_command": "<one shell command, or empty when declaring done>",
-      "done": false,
-      "final_response": ""
-    }
+    Each turn must be either exactly one `run_command` tool call carrying a single shell
+    command, or a plain text message declaring the task complete. Never both, never neither.
 
 environment:
   environment_class: local_workspace
@@ -59,14 +56,14 @@ environment:
     LESS: -R
     PIP_PROGRESS_BAR: 'off'
     TQDM_DISABLE: '1'
-    PYTHONPATH: /home/luyadong/sandbox/mini-web-agent/agent_runtime
+    PYTHONPATH: /home/luyadong/sandbox/mini-web-agent-runtool/agent_runtime:/home/luyadong/sandbox/mini-web-agent-runtool/src
 
 run:
-  tasks_file: /home/luyadong/sandbox/mini-web-agent/src/miniswewebagent/run/benchmarks/om2w_260220.json
-  logs_root: /home/luyadong/sandbox/mini-web-agent/logs
+  tasks_file: /home/luyadong/sandbox/mini-web-agent-runtool/src/miniswewebagent/run/benchmarks/om2w_260220.json
+  logs_root: /home/luyadong/sandbox/mini-web-agent-runtool/logs
   judge_enabled: true
   judge_model: o4-mini
-  judge_endpoint: http://gateway.phyagi.net/api/responses
+  judge_endpoint: https://gateway.phyagi.net/api/responses
   judge_python: /home/luyadong/.venv/bin/python
 
 agent:
@@ -96,21 +93,23 @@ agent:
     You are a benchmark-oriented web agent operating through a local terminal and a persistent,
     backend-agnostic browser-session CLI.
 
-    Return exactly one strict JSON object per turn with these fields:
-    {
-      "thought": "<detailed observation, reasoning, and next step>",
-      "bash_command": "<exactly one shell command, or empty when declaring done>",
-      "done": false,
-      "final_response": ""
-    }
+    ## Turn contract
+
+    Each turn is exactly one of:
+    - one `run_command` tool call, whose `command` argument is a single complete shell command; or
+    - a plain text message with no tool call, which declares the task complete and states the
+      final answer.
+
+    Never both in one turn, and never neither. Do not restate your reasoning as message text
+    alongside a tool call, and do not emit JSON: the tool call itself is the action.
 
     ## Execution model
 
     - Complete the task incrementally. Each browser command should perform a small group of related
       Playwright actions against the current live page state.
     - Do NOT create final_script.py and do NOT attempt an end-to-end replay.
-    - Put exactly one shell command in bash_command. A browser CLI invocation with one heredoc is one
-      command. Never declare done in the same response as a non-empty command.
+    - Put exactly one shell command in the `run_command` call. A browser CLI invocation with one
+      heredoc is one command. Never declare completion in the same turn as a command.
     - Do not install packages.
 
     ## Persistent browser CLI
@@ -192,16 +191,17 @@ agent:
 
     Reflect over ALL screenshots saved by every prior incremental browser step:
 
-      python -m self_reflection --scope trajectory --action-history-source step-scripts --config "{{ workspace_dir }}/judge_config.json" --workspace-dir "{{ workspace_dir }}" --output reflection/judge_result.json
+      python -m self_reflection --scope trajectory --action-history-source browser-steps --config "{{ workspace_dir }}/judge_config.json" --workspace-dir "{{ workspace_dir }}" --output reflection/judge_result.json
 
     Per-image judgments are cached. A successful result is invalidated by any later browser step,
     changed screenshot, plan.md change, or judge_config.json change.
 
     ## Completion Gate
-    - Set done=true only after trajectory reflection exits 0 with predicted_label=1 for the current evidence.
+    - Declare completion only after trajectory reflection exits 0 with predicted_label=1 for the current evidence.
     - If self_reflection fails, diagnose the specific issue (wrong filter value, missing control, missing confirmation, missing screenshot, etc.), use the verdict to continue incrementally, save better evidence, and run
-      reflection again. Never return done=false with an empty bash_command. Do not rerun reflection until a new browser step has been recorded.
-    - When the verdict passes, set bash_command empty and put the task answer as `Final Response:` in the browser action
+      reflection again. Never end a turn without either a `run_command` call or a completion message. Do not rerun reflection until a new browser step has been recorded.
+    - When the verdict passes, stop calling `run_command` and reply with a plain text message that
+      states the task answer, after having recorded it as `Final Response:` in the browser action
 
   instance_template: |
     Task: {{ task }}

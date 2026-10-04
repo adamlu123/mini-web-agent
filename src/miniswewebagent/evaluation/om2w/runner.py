@@ -2,9 +2,10 @@
 
 This module is the judging engine: it fans tasks out across worker processes,
 throttles requests to the model endpoint, retries a failed task, and writes a
-manifest, a resumable results file, and a summary. Successful judge rows are
-skipped on a subsequent invocation, while rows that contain ``evaluation_error``
-are retried.
+manifest, a resumable results file, and a summary. Complete judgments, including
+task failures, are skipped on a subsequent invocation. Evaluation errors,
+incomplete image judgments, and malformed verdicts are retried. Resuming with a
+different artifact layout is rejected before the manifest is overwritten.
 
 Reading trajectories off disk belongs to
 :mod:`miniswewebagent.evaluation.om2w.artifacts`; this module only consumes the
@@ -43,8 +44,9 @@ from miniswewebagent.evaluation.om2w.artifacts import (
 )
 from miniswewebagent.evaluation.om2w.judge import (
     robust_webjudge_online_mind2web_eval,
+    validate_image_judge_records,
 )
-from om2w_judge.utils import OpenaiEngine, extract_predication
+from om2w_judge.utils import OpenaiEngine, parse_status_verdict
 
 MODE = "WebJudge_Online_Mind2Web_eval"
 DEFAULT_TASKS_DIR = REPO_ROOT / "outputs/default/260717_persistent_cli_full/w150"
@@ -102,15 +104,48 @@ def _read_result_rows(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def completed_task_ids(path: Path) -> set[str]:
-    """Return task IDs already scored without error, so a rerun can skip them."""
+def validate_judge_result(row: dict[str, Any]) -> None:
+    """Distinguish a valid task failure from a failed evaluation."""
+    if row.get("evaluation_error"):
+        raise ValueError(str(row["evaluation_error"]))
+    label = row.get("predicted_label")
+    if type(label) is not int or label not in (0, 1):
+        raise ValueError("Missing or invalid predicted_label")
+    details = row.get("evaluation_details")
+    if not isinstance(details, dict):
+        raise ValueError("Missing evaluation_details")
+    if parse_status_verdict(details.get("response")) != label:
+        raise ValueError("Final verdict does not match predicted_label")
+    validate_image_judge_records(
+        row.get("screenshot_paths", []), row.get("image_judge_record", [])
+    )
+
+
+def completed_task_ids(path: Path, *, spec: ArtifactSpec | None = None) -> set[str]:
+    """Resume only valid latest judgments, without mixing artifact layouts."""
+    latest_by_task = {
+        str(row["task_id"]): row for row in _read_result_rows(path) if row.get("task_id")
+    }
     completed: set[str] = set()
-    for row in _read_result_rows(path):
-        task_id = str(row.get("task_id") or "")
-        if not task_id or row.get("evaluation_error"):
+    for task_id, row in latest_by_task.items():
+        if row.get("evaluation_error"):
             continue
-        if row.get("predicted_label") in (0, 1):
-            completed.add(task_id)
+        if spec is not None and (
+            row.get("action_history_source") != spec.action_history_source
+            or row.get("screenshot_source") != spec.screenshot_source
+        ):
+            raise ValueError(
+                f"Cannot resume {path}: task {task_id} uses a different artifact layout "
+                f"({row.get('action_history_source')!r}, {row.get('screenshot_source')!r}); "
+                f"expected ({spec.action_history_source!r}, {spec.screenshot_source!r}). "
+                "Use a separate output directory for a different layout."
+            )
+        try:
+            validate_judge_result(row)
+        except ValueError as exc:
+            print(f"Retrying invalid judge result {task_id}: {exc}", flush=True)
+            continue
+        completed.add(task_id)
     return completed
 
 
@@ -168,7 +203,7 @@ def evaluate_subset(
                     )
                 )
                 response = model.generate(messages, max_new_tokens=8192)[0]
-                predicted_label = extract_predication(response, MODE)
+                predicted_label = parse_status_verdict(response)
                 row = {
                     "task_id": artifact.task_id,
                     "mode": MODE,
@@ -278,12 +313,15 @@ def summarize_results(results_path: Path, expected_task_ids: set[str]) -> dict[s
         if task_id:
             latest_by_task[task_id] = row
 
-    completed = [
-        row
-        for row in latest_by_task.values()
-        if not row.get("evaluation_error") and row.get("predicted_label") in (0, 1)
-    ]
-    errors = [row for row in latest_by_task.values() if row.get("evaluation_error")]
+    completed = []
+    errors = []
+    for row in latest_by_task.values():
+        try:
+            validate_judge_result(row)
+        except ValueError:
+            errors.append(row)
+        else:
+            completed.append(row)
     successes = sum(row.get("predicted_label") == 1 for row in completed)
     return {
         "mode": MODE,
@@ -320,6 +358,8 @@ def parallel_eval(
             f"{spec.task_source} layout, found {len(artifacts)}"
         )
 
+    results_path = output_results_path(output_path, args.model, args.score_threshold)
+    completed = completed_task_ids(results_path, spec=spec)
     workers = max(1, min(args.num_worker, len(artifacts))) if artifacts else 0
     manifest = build_manifest(args, artifacts, workers, spec)
     manifest_path = output_path / "eval_manifest.json"
@@ -330,8 +370,6 @@ def parallel_eval(
         print(f"Dry run complete. Manifest: {manifest_path}", flush=True)
         return
 
-    results_path = output_results_path(output_path, args.model, args.score_threshold)
-    completed = completed_task_ids(results_path)
     pending = [artifact for artifact in artifacts if artifact.task_id not in completed]
     print(
         f"Resuming with completed={len(completed)} pending={len(pending)} workers={workers}",

@@ -3,11 +3,14 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import subprocess
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
+
+from miniswewebagent.tools.image_read import image_read_descriptor
 
 _EXPORT_RE = re.compile(r"^export\s+([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
 _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
@@ -107,6 +110,37 @@ class LocalWorkspaceEnvironment:
             return command
         return command.replace(alias, str(self._workspace_dir()))
 
+    @staticmethod
+    def _image_read_path(command: str) -> str | None:
+        try:
+            argv = shlex.split(command, comments=False, posix=True)
+        except ValueError:
+            return None
+        if len(argv) != 5 or argv[:4] != ["python", "-m", "image_read", "--path"]:
+            return None
+        return argv[4]
+
+    def _validated_image_read_result(
+        self,
+        *,
+        requested_path: str | None,
+        output: str,
+        returncode: int,
+    ) -> dict[str, Any] | None:
+        if requested_path is None or returncode != 0:
+            return None
+        try:
+            emitted = json.loads(output)
+        except json.JSONDecodeError as exc:
+            raise ValueError("image_read returned malformed JSON") from exc
+        expected = image_read_descriptor(
+            requested_path,
+            workspace_dir=self._workspace_dir(),
+        )
+        if emitted != expected:
+            raise ValueError("image_read descriptor did not match the requested image")
+        return expected
+
     def _display_text(self, value: str) -> str:
         alias = self.config.workspace_alias.strip().rstrip("/")
         if not alias:
@@ -178,6 +212,8 @@ class LocalWorkspaceEnvironment:
         ).strip()
         self._persist_step_command(command)
         resolved_cwd = self._resolve_cwd(cwd)
+        executable_command = self._executable_command(command)
+        requested_image_path = self._image_read_path(executable_command)
         screenshots_before = {
             path.resolve(): path.stat().st_mtime_ns for path in self._recent_screenshots()
         }
@@ -192,7 +228,7 @@ class LocalWorkspaceEnvironment:
 
         try:
             result = subprocess.run(
-                self._executable_command(command),
+                executable_command,
                 shell=True,
                 executable=self.config.shell,
                 text=True,
@@ -203,6 +239,7 @@ class LocalWorkspaceEnvironment:
                 errors="replace",
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
+                check=False,
             )
             output = result.stdout
             returncode = result.returncode
@@ -213,6 +250,18 @@ class LocalWorkspaceEnvironment:
             returncode = -1
             exception_info = f"An error occurred while executing the command: {exc}"
 
+        image_attachment = None
+        try:
+            image_attachment = self._validated_image_read_result(
+                requested_path=requested_image_path,
+                output=output,
+                returncode=returncode,
+            )
+        except (OSError, ValueError) as exc:
+            returncode = 1
+            rejection = f"image_read attachment rejected: {exc}"
+            output = f"{output.rstrip()}\n{rejection}\n" if output else rejection + "\n"
+
         log_path = self._write_step_log(output)
         observation = self._capture_observation(
             command=command,
@@ -222,6 +271,7 @@ class LocalWorkspaceEnvironment:
             exception_info=exception_info,
             log_path=log_path,
             screenshots_before=screenshots_before,
+            image_attachment=image_attachment,
         )
         return {
             "output": output,
@@ -240,6 +290,7 @@ class LocalWorkspaceEnvironment:
         exception_info: str,
         log_path: Path | None,
         screenshots_before: dict[Path, int] | None = None,
+        image_attachment: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         final_script_path = self._final_script_path()
         recent_screenshot_paths = self._recent_screenshots()
@@ -261,6 +312,14 @@ class LocalWorkspaceEnvironment:
         workspace_dir = self._workspace_dir()
         recent_screenshots = [str(path.relative_to(workspace_dir)) for path in recent_screenshot_paths[:10]]
         new_screenshots = [str(path.relative_to(workspace_dir)) for path in step_screenshot_paths]
+        image_attachments = []
+        if image_attachment is not None:
+            image_attachments.append(
+                {
+                    **image_attachment,
+                    "display_path": self._display_path(image_attachment["path"]),
+                }
+            )
         return {
             "success": returncode == 0 and not exception_info,
             "exception": self._display_text(exception_info),
@@ -282,6 +341,7 @@ class LocalWorkspaceEnvironment:
             "screenshot_path": self._display_path(latest_screenshot) if latest_screenshot is not None else "",
             "new_screenshots": new_screenshots,
             "recent_screenshots": recent_screenshots,
+            "image_attachments": image_attachments,
             "workspace_files": self._recent_workspace_files(),
         }
 

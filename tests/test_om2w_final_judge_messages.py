@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from miniswewebagent.evaluation.om2w import judge as robust_judge
 from om2w_judge.methods import webjudge_online_mind2web as official_judge
 
@@ -111,3 +113,30 @@ def test_retry_hardened_messages_match_official_with_snapshot(monkeypatch) -> No
             "detail": "high",
         },
     }
+
+
+def test_retry_hardened_judge_rejects_exhausted_image_retries(monkeypatch) -> None:
+    async def failed_image_judge(task, image_path, key_points, model):
+        return {
+            "Response": "",
+            "Score": 0,
+            "Reasoning": "",
+            "Attempts": 10,
+            "ParseFailed": True,
+            "ParseError": "429 Too Many Requests",
+        }
+
+    monkeypatch.setattr(official_judge, "identify_key_points", _fake_identify_key_points)
+    monkeypatch.setattr(robust_judge, "judge_image_with_retry", failed_image_judge)
+
+    with pytest.raises(ValueError, match="Incomplete image judgment.*429"):
+        asyncio.run(
+            robust_judge.robust_webjudge_online_mind2web_eval(
+                "Task", ["Action"], ["shot.png"], _BombModel(), 3
+            )
+        )
+
+
+def test_cached_request_rejects_missing_image_records() -> None:
+    with pytest.raises(ValueError, match="different lengths"):
+        robust_judge.build_webjudge_request("Task", [], ["shot.png"], [], "Key point", 3)

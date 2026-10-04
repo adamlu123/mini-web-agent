@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CUAWright Plugin-Ready Execution Flow</title>
+  <style>
+    :root {
+      --ink: #242532;
+      --copy: #3b4053;
+      --muted: #70758b;
+      --connector: #565c72;
+      --line: #cfd6e8;
+      --green: #57bfa8;
+      --green-soft: #effaf7;
+      --blue: #6aa7c8;
+      --blue-soft: #eff7fb;
+      --purple: #9a78cf;
+      --purple-soft: #f5effc;
+      --amber: #d39b32;
+      --amber-soft: #fff6df;
+      --coral: #e58b72;
+      --coral-soft: #fff1ed;
+      --terminal: #3e3e58;
+      --terminal-light: #54506f;
+      --shadow: 0 24px 70px rgba(83, 93, 132, 0.14);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: "Avenir Next", "Segoe UI", Helvetica, Arial, sans-serif;
+      background:
+        radial-gradient(circle at 12% 18%, rgba(131, 196, 223, 0.38), transparent 30%),
+        radial-gradient(circle at 78% 17%, rgba(169, 137, 219, 0.32), transparent 32%),
+        radial-gradient(circle at 56% 80%, rgba(244, 194, 126, 0.20), transparent 28%),
+        linear-gradient(120deg, #e8f6fb 0%, #f5edf9 52%, #f7f4fb 100%);
+    }
+
+    #capture {
+      padding: 28px;
+    }
+
+    #poster {
+      position: relative;
+      width: 1840px;
+      height: 1140px;
+      margin: 0 auto;
+      overflow: hidden;
+      border: 1px solid rgba(164, 177, 207, 0.46);
+      border-radius: 30px;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(247, 250, 255, 0.88)),
+        radial-gradient(circle at 15% 28%, rgba(136, 204, 226, 0.16), transparent 30%),
+        radial-gradient(circle at 82% 18%, rgba(163, 123, 218, 0.18), transparent 32%);
+      box-shadow: var(--shadow);
+    }
+
+    .title {
+      position: absolute;
+      top: 24px;
+      left: 0;
+      width: 100%;
+      text-align: center;
+      font-size: 50px;
+      line-height: 1.08;
+      font-weight: 800;
+      color: #262631;
+    }
+
+    .subtitle {
+      position: absolute;
+      top: 88px;
+      left: 0;
+      width: 100%;
+      text-align: center;
+      color: #666b80;
+      font-size: 20px;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+    }
+
+    .terminal-tile {
+      width: 82px;
+      height: 82px;
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 17px;
+      color: white;
+      background: linear-gradient(135deg, var(--terminal), var(--terminal-light));
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+    }
+
+    .terminal-glyph {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 38px;
+      font-weight: 800;
+      letter-spacing: -0.12em;
+      transform: translateX(-3px);
+    }
+
+    .divider {
+      position: absolute;
+      top: 132px;
+      left: 42px;
+      width: 1756px;
+      border-top: 3px solid rgba(164, 177, 207, 0.48);
+    }
+
+    .section-title {
+      position: absolute;
+      top: 153px;
+      left: 0;
+      width: 100%;
+      text-align: center;
+      font-size: 34px;
+      font-weight: 800;
+      color: #282936;
+    }
+
+    .section-kicker {
+      position: absolute;
+      top: 195px;
+      left: 0;
+      width: 100%;
+      text-align: center;
+      font-size: 17px;
+      font-weight: 650;
+      color: #73788d;
+    }
+
+    .flow-card {
+      position: absolute;
+      padding: 22px;
+      border: 3px solid transparent;
+      border-radius: 23px;
+      background: rgba(255, 255, 255, 0.78);
+      box-shadow: 0 15px 36px rgba(83, 93, 132, 0.11);
+    }
+
+    .step-badge {
+      position: absolute;
+      top: -20px;
+      left: -16px;
+      width: 54px;
+      height: 54px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      color: white;
+      font-size: 25px;
+      font-weight: 800;
+      box-shadow: 0 6px 18px rgba(16, 24, 40, 0.12);
+    }
+
+    .flow-card h3,
+    .panel h3 {
+      margin: 0 0 8px;
+      font-size: 24px;
+      line-height: 1.12;
+    }
+
+    .flow-card p,
+    .panel p {
+      margin: 0;
+      color: var(--copy);
+      font-size: 16px;
+      line-height: 1.4;
+    }
+
+    .task-card {
+      left: 52px;
+      top: 283px;
+      width: 200px;
+      height: 236px;
+      border-color: rgba(211, 155, 50, 0.68);
+      background: linear-gradient(180deg, rgba(255, 250, 235, 0.97), rgba(255, 247, 226, 0.94));
+      text-align: center;
+      padding: 24px 18px 18px;
+    }
+
+    .task-card .step-badge { background: #e5a735; }
+    .task-card h3 { color: #bd8128; }
+
+    .cli-mark {
+      width: 68px;
+      height: 68px;
+      margin: 0 auto 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 18px;
+      color: white;
+      background: #e0a52f;
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 24px;
+      font-weight: 800;
+    }
+
+    .model-card {
+      left: 306px;
+      top: 261px;
+      width: 572px;
+      height: 258px;
+      border-color: rgba(106, 167, 200, 0.74);
+      background: linear-gradient(180deg, rgba(248, 253, 255, 0.97), rgba(239, 248, 252, 0.94));
+    }
+
+    .model-card .step-badge { background: var(--blue); }
+    .model-card h3 { color: var(--blue); }
+
+    .model-capabilities {
+      margin: 10px 0 0;
+      padding-left: 22px;
+      color: var(--copy);
+      font-size: 17px;
+      line-height: 1.4;
+    }
+
+    .model-capabilities li { margin: 3px 0; }
+    .model-capabilities li::marker { color: var(--blue); }
+
+    .terminal-card {
+      left: 930px;
+      top: 237px;
+      width: 312px;
+      height: 330px;
+      border: 4px solid rgba(87, 191, 168, 0.84);
+      background:
+        linear-gradient(180deg, rgba(246, 255, 251, 0.99), rgba(235, 248, 245, 0.96));
+      box-shadow: 0 20px 48px rgba(67, 122, 119, 0.18);
+      text-align: center;
+      padding: 24px 28px;
+    }
+
+    .terminal-card .step-badge {
+      background: var(--green);
+    }
+
+    .terminal-card .terminal-tile {
+      width: 92px;
+      height: 92px;
+      margin: 0 auto 12px;
+    }
+
+    .terminal-card h3 {
+      color: var(--green);
+      font-size: 25px;
+      white-space: nowrap;
+    }
+
+    .terminal-card .glue-label {
+      display: inline-block;
+      margin: 9px 0 12px;
+      padding: 6px 11px;
+      border-radius: 999px;
+      background: rgba(87, 191, 168, 0.15);
+      color: #348d7b;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .panel {
+      position: absolute;
+      border-radius: 23px;
+      border: 3px solid transparent;
+      box-shadow: 0 15px 36px rgba(83, 93, 132, 0.10);
+    }
+
+    .env-panel {
+      left: 1300px;
+      top: 227px;
+      width: 480px;
+      height: 414px;
+      padding: 22px;
+      border-color: rgba(154, 120, 207, 0.65);
+      background: linear-gradient(180deg, rgba(253, 249, 255, 0.96), rgba(246, 240, 252, 0.92));
+    }
+
+    .env-panel h3 {
+      color: var(--purple);
+      font-size: 26px;
+    }
+
+    .plugin-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: rgba(154, 120, 207, 0.13);
+      color: #7c59b2;
+      font-size: 11px;
+      line-height: 1;
+      font-weight: 800;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .plugin-tag::before {
+      content: "+";
+      font-size: 15px;
+      line-height: 0.8;
+    }
+
+    .env-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 11px;
+      margin-top: 15px;
+    }
+
+    .env-option {
+      position: relative;
+      min-height: 116px;
+      padding: 14px 13px;
+      border: 2px dashed rgba(154, 120, 207, 0.46);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.70);
+    }
+
+    .env-option strong {
+      display: block;
+      margin-bottom: 5px;
+      color: #5c4b78;
+      font-size: 16px;
+      line-height: 1.18;
+    }
+
+    .env-option span {
+      display: block;
+      color: #65697c;
+      font-size: 13px;
+      line-height: 1.3;
+    }
+
+    .env-option.future {
+      border-color: rgba(154, 120, 207, 0.32);
+      background: rgba(255, 255, 255, 0.44);
+    }
+
+    .tools-panel {
+      left: 300px;
+      top: 585px;
+      width: 942px;
+      height: 170px;
+      padding: 18px 20px;
+      border-color: rgba(87, 191, 168, 0.64);
+      background: linear-gradient(180deg, rgba(246, 255, 251, 0.94), rgba(237, 249, 246, 0.90));
+    }
+
+    .tools-panel h3 {
+      color: var(--green);
+      font-size: 21px;
+    }
+
+    .tool-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .tool-pill {
+      padding: 8px 11px;
+      border-radius: 10px;
+      background: var(--terminal);
+      color: white;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 12px;
+      font-weight: 700;
+      box-shadow: 0 4px 10px rgba(62, 62, 88, 0.14);
+    }
+
+    .tool-pill.future {
+      color: #447f72;
+      background: transparent;
+      border: 2px dashed rgba(87, 191, 168, 0.55);
+      box-shadow: none;
+    }
+
+    .tool-pill.role {
+      color: #456f87;
+      background: rgba(255, 255, 255, 0.82);
+      border: 2px solid rgba(106, 167, 200, 0.46);
+      box-shadow: none;
+    }
+
+    .loop-label,
+    .edge-label {
+      position: absolute;
+      z-index: 3;
+      padding: 4px 8px;
+      border-radius: 8px;
+      background: rgba(250, 252, 255, 0.90);
+      color: #555b70;
+      font-size: 13px;
+      font-weight: 750;
+      text-align: center;
+      line-height: 1.25;
+    }
+
+    .edge-action { left: 866px; top: 342px; width: 68px; }
+    .edge-dispatch { left: 1235px; top: 342px; width: 74px; }
+    .loop-label { left: 757px; top: 775px; width: 326px; }
+
+    .trusted-panel {
+      position: absolute;
+      left: 72px;
+      top: 827px;
+      width: 1696px;
+      height: 242px;
+      padding: 44px 28px 22px;
+      border: 3px solid rgba(193, 201, 221, 0.78);
+      border-radius: 23px;
+      background: linear-gradient(180deg, rgba(242, 248, 253, 0.97), rgba(235, 241, 249, 0.94));
+      box-shadow: 0 15px 36px rgba(83, 93, 132, 0.09);
+    }
+
+    .boundary-label {
+      position: absolute;
+      top: 12px;
+      left: 24px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: #64708a;
+      font-size: 14px;
+      font-weight: 800;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .boundary-label::before {
+      content: "";
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--coral);
+      box-shadow: 0 0 0 5px rgba(229, 139, 114, 0.13);
+    }
+
+    .final-flow {
+      display: grid;
+      grid-template-columns: 1fr 70px 1.25fr 70px 1.35fr 70px 1.1fr;
+      align-items: center;
+      height: 100%;
+    }
+
+    .final-node {
+      min-height: 134px;
+      padding: 17px 18px;
+      border-radius: 16px;
+      border: 2px solid rgba(189, 196, 216, 0.72);
+      background: rgba(255, 255, 255, 0.78);
+    }
+
+    .final-node h4 {
+      margin: 0 0 8px;
+      font-size: 18px;
+      color: #535c74;
+    }
+
+    .final-node p {
+      margin: 0;
+      color: #4e5365;
+      font-size: 14px;
+      line-height: 1.4;
+    }
+
+    .final-node.accent {
+      border-color: rgba(229, 139, 114, 0.60);
+      background: linear-gradient(180deg, rgba(255, 247, 244, 0.95), rgba(255, 241, 237, 0.91));
+    }
+
+    .final-node.accent h4 { color: #c66f58; }
+
+    .arrow-mini {
+      position: relative;
+      height: 3px;
+      margin: 0 12px;
+      background: #7b8194;
+    }
+
+    .arrow-mini::after {
+      content: "";
+      position: absolute;
+      right: -1px;
+      top: -6px;
+      border-left: 11px solid #7b8194;
+      border-top: 7px solid transparent;
+      border-bottom: 7px solid transparent;
+    }
+
+    .note-bar {
+      position: absolute;
+      left: 72px;
+      top: 1088px;
+      width: 1696px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      color: #656b80;
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    .note-strong {
+      color: #3b4053;
+      font-weight: 800;
+    }
+
+    .legend {
+      display: flex;
+      gap: 18px;
+      align-items: center;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .legend-line {
+      width: 34px;
+      border-top: 3px solid var(--connector);
+    }
+
+    .legend-line.dotted {
+      border-top-style: dashed;
+      border-top-color: #8f96aa;
+    }
+
+    .connector-layer {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="capture">
+    <div id="poster">
+      <div class="title">CUAWright: Plugin-Ready Execution Flow</div>
+      <div class="subtitle">One model-controlled loop · terminal-mediated actions · pluggable CLI tools and environments</div>
+
+      <div class="divider"></div>
+      <div class="section-title">Execution Flow</div>
+      <div class="section-kicker">The terminal is the stable glue between model-selected actions and interchangeable environments</div>
+
+      <section class="flow-card task-card">
+        <div class="step-badge">1</div>
+        <div class="cli-mark">CLI</div>
+        <h3>Task + Profile</h3>
+        <p><strong>CUAWright CLI</strong><br>Selected benchmark profile</p>
+      </section>
+
+      <section class="flow-card model-card">
+        <div class="step-badge">2</div>
+        <h3>Model</h3>
+        <ul class="model-capabilities">
+          <li>Receives the task</li>
+          <li>Inspects the workspace filesystem</li>
+          <li>Uses the workspace as memory for self-improvement</li>
+          <li>Inspects and modifies existing CLI tools</li>
+          <li>Crafts new CLI tools when needed</li>
+        </ul>
+      </section>
+
+      <section class="flow-card terminal-card">
+        <div class="step-badge">3</div>
+        <div class="terminal-tile" aria-hidden="true"><span class="terminal-glyph">&gt;_</span></div>
+        <h3>Terminal Bridge</h3>
+        <div class="glue-label">Action ↔ Environment Glue</div>
+        <p>Executes in the selected runtime and returns one normalized observation.</p>
+      </section>
+
+      <section class="panel env-panel">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:14px;">
+          <h3>Environment Plugins</h3>
+          <span class="plugin-tag">Extension Point</span>
+        </div>
+        <p>One runtime contract; environment-specific isolation and lifecycle.</p>
+        <div class="env-grid">
+          <div class="env-option">
+            <strong>Web / OM2W</strong>
+            <span>Browser session + shell workspace runtime</span>
+          </div>
+          <div class="env-option">
+            <strong>CadGenBench</strong>
+            <span>Dedicated Python 3.12 image with Build123d + MCP</span>
+          </div>
+          <div class="env-option">
+            <strong>BenchCAD</strong>
+            <span>Dedicated Python 3.11 image with isolated two-container scoring</span>
+          </div>
+          <div class="env-option future">
+            <strong>Future Environment</strong>
+            <span>Implement CliTaskRuntime and package its task adapter</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel tools-panel">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
+          <h3>CLI Tool Plugins</h3>
+          <span class="plugin-tag">Extension Point</span>
+        </div>
+        <div class="tool-row">
+          <span class="tool-pill">run_command</span>
+          <span class="tool-pill">read_image</span>
+          <span class="tool-pill role">Binder</span>
+          <span class="tool-pill role">Critic</span>
+          <span class="tool-pill role">Verifier</span>
+          <span class="tool-pill">browser-session</span>
+          <span class="tool-pill">cad-mcp</span>
+          <span class="tool-pill">benchcad-run</span>
+          <span class="tool-pill">benchcad-render</span>
+          <span class="tool-pill future">+ future tool</span>
+        </div>
+      </section>
+
+      <div class="edge-label edge-action">action</div>
+      <div class="edge-label edge-dispatch">dispatch</div>
+      <div class="loop-label">Observation returns through the same terminal contract</div>
+
+      <section class="trusted-panel">
+        <div class="boundary-label">Trusted host-side finalization</div>
+        <div class="final-flow">
+          <div class="final-node">
+            <h4>Model submits</h4>
+            <p>`submit_task` ends model execution with the best persisted candidate.</p>
+          </div>
+          <div class="arrow-mini"></div>
+          <div class="final-node">
+            <h4>Adapter freezes state</h4>
+            <p>Cleanup, last-valid restore, bounded copy, hashes, and immutable provenance.</p>
+          </div>
+          <div class="arrow-mini"></div>
+          <div class="final-node accent">
+            <h4>Benchmark evaluator</h4>
+            <p>OM2W judge · Cad public validation/render · BenchCAD isolated two-container scorer.</p>
+          </div>
+          <div class="arrow-mini"></div>
+          <div class="final-node">
+            <h4>Artifacts + results</h4>
+            <p>Traces, reports, telemetry, checkpoints, immutable outputs, and truthful status.</p>
+          </div>
+        </div>
+      </section>
+
+      <div class="note-bar">
+        <span><span class="note-strong">Invariant:</span> CLI tools are capabilities; environments are replaceable runtimes; the terminal binds them at execution time.</span>
+        <div class="legend">
+          <span class="legend-item"><span class="legend-line"></span> execution</span>
+          <span class="legend-item"><span class="legend-line dotted"></span> optional / plugin</span>
+        </div>
+      </div>
+
+      <svg class="connector-layer" viewBox="0 0 1840 1140" aria-hidden="true">
+        <defs>
+          <marker id="arrowDark" markerWidth="4" markerHeight="4" refX="3.5" refY="2" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L4,2 L0,4 z" fill="#565c72"></path>
+          </marker>
+          <marker id="arrowSoft" markerWidth="4" markerHeight="4" refX="3.5" refY="2" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L4,2 L0,4 z" fill="#8f96aa"></path>
+          </marker>
+          <marker id="arrowGreen" markerWidth="4" markerHeight="4" refX="3.5" refY="2" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L4,2 L0,4 z" fill="#57bfa8"></path>
+          </marker>
+        </defs>
+
+        <!-- main execution path -->
+        <line x1="254" y1="391" x2="300" y2="391" stroke="#565c72" stroke-width="4" marker-end="url(#arrowDark)"></line>
+        <line x1="880" y1="391" x2="924" y2="391" stroke="#565c72" stroke-width="4" marker-end="url(#arrowDark)"></line>
+        <line x1="1244" y1="391" x2="1294" y2="391" stroke="#565c72" stroke-width="4" marker-end="url(#arrowDark)"></line>
+
+        <!-- two plugin contracts attach to the model and terminal -->
+        <path d="M610 521 C610 555, 560 567, 560 581" fill="none" stroke="#8f96aa" stroke-width="3.5" stroke-dasharray="8 9" marker-end="url(#arrowSoft)"></path>
+        <path d="M1086 571 C1086 577, 1086 581, 1086 585" fill="none" stroke="#8f96aa" stroke-width="3.5" stroke-dasharray="8 9" marker-end="url(#arrowSoft)"></path>
+
+        <!-- normalized observation loop -->
+        <path d="M1540 647 C1540 793, 1172 799, 1000 775 C800 747, 660 729, 534 515" fill="none" stroke="#565c72" stroke-width="4" marker-end="url(#arrowDark)"></path>
+
+        <!-- submit to trusted finalization -->
+        <path d="M390 521 C340 541, 280 559, 280 623 L280 821" fill="none" stroke="#8f96aa" stroke-width="3.5" stroke-dasharray="8 9" marker-end="url(#arrowSoft)"></path>
+      </svg>
+    </div>
+  </div>
+</body>
+</html>

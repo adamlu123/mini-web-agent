@@ -188,6 +188,52 @@ async def robust_webjudge_online_mind2web_eval(
     score_threshold,
 ):
     """Build the final WebJudge request with retry-hardened image scoring."""
+    key_points = await upstream_webjudge.identify_key_points(task, model)
+    key_points = key_points.replace("\n\n", "\n")
+    try:
+        key_points = key_points.split("**Key Points**:")[1]
+    except IndexError:
+        key_points = key_points.split("Key Points:")[-1]
+    key_points = "\n".join(line.lstrip() for line in key_points.splitlines())
+
+    image_records = await asyncio.gather(
+        *[judge_image_with_retry(task, image_path, key_points, model) for image_path in images_path]
+    )
+    return build_webjudge_request(
+        task, last_actions, images_path, image_records, key_points, score_threshold
+    )
+
+
+def validate_image_judge_records(
+    images_path: list[str], image_records: list[dict[str, object]]
+) -> None:
+    """Reject missing image judgments instead of silently dropping evidence."""
+    if len(images_path) != len(image_records):
+        raise ValueError("Screenshot paths and image judge records have different lengths")
+    for image_path, record in zip(images_path, image_records):
+        reasoning = record.get("Reasoning")
+        score = record.get("Score")
+        if (
+            record.get("ParseFailed")
+            or type(score) is not int
+            or not 1 <= score <= 5
+            or not isinstance(reasoning, str)
+            or not reasoning.strip()
+        ):
+            error = record.get("ParseError") or "invalid image score or reasoning"
+            raise ValueError(f"Incomplete image judgment for {image_path}: {error}")
+
+
+def build_webjudge_request(
+    task: str,
+    last_actions: list[str],
+    images_path: list[str],
+    image_records: list[dict[str, object]],
+    key_points: str,
+    score_threshold: int,
+):
+    """Build the unchanged official request from complete, reusable image judgments."""
+    validate_image_judge_records(images_path, image_records)
     # Keep this adapter-local copy aligned with the official OSU implementation.
     # Tests compare the complete requests produced by both evaluator paths.
     system_msg = """You are an expert in evaluating the performance of a web navigation agent. The agent is designed to help a human user navigate a website to complete a task. Given the user's task, the agent's action history, key points for task completion, some potentially important web pages in the agent's trajectory and their reasons, your goal is to determine whether the agent has completed the task and achieved all requirements.
@@ -224,18 +270,6 @@ Action History:
 
 The potentially important snapshots of the webpage in the agent's trajectory and their reasons:
 {thoughts}"""
-
-    key_points = await upstream_webjudge.identify_key_points(task, model)
-    key_points = key_points.replace("\n\n", "\n")
-    try:
-        key_points = key_points.split("**Key Points**:")[1]
-    except IndexError:
-        key_points = key_points.split("Key Points:")[-1]
-    key_points = "\n".join(line.lstrip() for line in key_points.splitlines())
-
-    image_records = await asyncio.gather(
-        *[judge_image_with_retry(task, image_path, key_points, model) for image_path in images_path]
-    )
 
     whole_content_img = []
     whole_thoughts = []

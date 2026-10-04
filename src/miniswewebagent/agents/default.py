@@ -100,6 +100,13 @@ def _sanitize_message_for_disk(message: dict[str, Any]) -> dict[str, Any]:
         for part in content:
             if isinstance(part, dict) and part.get("type") == "input_image":
                 part["image_url"] = "<omitted:data-url>"
+    extra = cloned.get("extra")
+    if isinstance(extra, dict) and isinstance(extra.get("response_items"), list):
+        # Opaque reasoning blobs are replayed to the gateway, not read by humans;
+        # the reasoning summary next to them stays intact.
+        for item in extra["response_items"]:
+            if isinstance(item, dict) and item.get("encrypted_content"):
+                item["encrypted_content"] = "<omitted:encrypted-reasoning>"
     return cloned
 
 
@@ -758,7 +765,7 @@ class DefaultAgent:
         summary_request = self.model.format_message(
             role="user",
             content=self.config.summary_user_prompt,
-            extra={"interrupt_type": "HistoryCompactionRequest"},
+            extra={"interrupt_type": "HistoryCompactionRequest", "disable_tools": True},
         )
         summary_messages = list(self.messages) + [summary_request]
         try:

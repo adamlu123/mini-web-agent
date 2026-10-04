@@ -1,0 +1,15 @@
+<svg width="1900" height="1196" viewBox="0 0 3800 2392" xmlns="http://www.w3.org/2000/svg">
+  <title>CUAWright Plugin-Ready Execution Flow</title>
+  <desc>
+    Model-controlled execution flow with a terminal bridge connecting model-selected
+    actions to plugin-ready CLI tools and interchangeable environment adapters.
+  </desc>
+  <image
+    href="cli_actor_orchestrator_execution_flow@2x.png"
+    x="0"
+    y="0"
+    width="3800"
+    height="2392"
+    preserveAspectRatio="xMidYMid meet"
+  />
+</svg>

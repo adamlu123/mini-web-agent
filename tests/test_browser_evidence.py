@@ -77,3 +77,16 @@ def test_load_browser_steps_preserves_unicode_line_separator(tmp_path: Path) -> 
 
     assert len(rows) == 1
     assert rows[0]["python_output"] == "first section\u2028second section"
+
+
+def test_trajectory_digest_covers_unreferenced_task_screenshots(tmp_path: Path) -> None:
+    screenshots = tmp_path / "screenshots"
+    screenshots.mkdir()
+    extra = screenshots / "manual_evidence.png"
+    extra.write_bytes(b"first-version")
+
+    before = trajectory_evidence_digest(tmp_path, [])
+    extra.write_bytes(b"second-version")
+    after = trajectory_evidence_digest(tmp_path, [])
+
+    assert before != after
