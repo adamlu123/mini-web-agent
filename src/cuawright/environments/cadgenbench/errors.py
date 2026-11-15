@@ -1,0 +1,2 @@
+class CadGenBenchInfrastructureError(RuntimeError):
+    pass

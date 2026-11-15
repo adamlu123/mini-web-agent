@@ -1,0 +1,66 @@
+{
+  "profile": "cli-harness-v2-55pct-106",
+  "auditors": 28,
+  "audited_tasks": 40,
+  "primary_classes": {
+    "evaluator_contract_or_proxy": [
+      "009", "010", "021", "023", "024", "033", "035", "036",
+      "037", "044", "061", "080", "089", "092"
+    ],
+    "actor_execution": [
+      "018", "047", "048", "049", "050", "051", "053",
+      "054", "055", "056", "058", "059", "090"
+    ],
+    "mixed_binder_actor": [
+      "020", "042", "046", "062", "102"
+    ],
+    "domain_or_reference_limited": [
+      "067", "099", "106"
+    ],
+    "infrastructure_or_model_refusal": [
+      "060", "071", "081", "082", "086"
+    ]
+  },
+  "tasks": {
+    "009": ["evaluator_conflict", "binder_incomplete", "actor_partial", "repair_partial"],
+    "010": ["hidden_serialization", "binder_wrong", "actor_compliant", "verifier_false_pass"],
+    "018": ["actor_noncompliance", "wrong_or_unpersisted_calendar_state", "verifier_false_pass"],
+    "020": ["binder_task_evaluator_conflict", "malformed_cart_state", "repair_failed"],
+    "021": ["hidden_exact_set", "binder_wrong", "actor_compliant"],
+    "023": ["hidden_gate", "binder_dependency_omission", "verifier_false_pass"],
+    "024": ["visible_hidden_evidence_conflict", "actor_binder_compliant", "verifier_false_pass"],
+    "033": ["evaluator_canonical_path_bug", "semantic_artifact_present", "verifier_pass"],
+    "035": ["binder_wrong_exact_set", "baseline_conflict", "actor_compliant"],
+    "036": ["evaluator_profile_path_bug", "scope_mismatch", "actor_compliant", "repair_inconclusive"],
+    "037": ["hidden_exact_keys", "binder_incomplete", "actor_semantically_compliant"],
+    "042": ["binder_unresolved", "actor_native_serialization_error", "verifier_under_sensitive"],
+    "044": ["evaluator_filter_proxy", "actor_task_compliant", "verifier_false_pass"],
+    "046": ["binder_unresolved_exact_set", "actor_guessed_set", "verifier_unknown"],
+    "047": ["actor_wrong_serialized_state", "verifier_detected", "repair_failed"],
+    "048": ["actor_incomplete_game_state", "verifier_detected", "repair_failed"],
+    "049": ["actor_native_geometry_error", "verifier_under_sensitive"],
+    "050": ["actor_provenance_and_native_structure_failure", "repair_partial", "task_specific_audio_contract"],
+    "051": ["actor_layer_bounds_error", "evaluator_geometry_proxy", "verifier_false_pass"],
+    "053": ["actor_visual_mask_failure", "evaluator_pixel_proxy", "repair_failed"],
+    "054": ["actor_compositing_failure", "evaluator_fixed_geometry_proxy", "repair_partial"],
+    "055": ["actor_incomplete_and_reference_copy", "repair_failed"],
+    "056": ["actor_incomplete_and_reference_copy", "repair_failed"],
+    "058": ["actor_native_group_and_morph_failure", "verifier_false_pass"],
+    "059": ["missing_native_artifact", "verifier_detected", "repair_failed"],
+    "060": ["read_only_filesystem", "unsafe_actor_escalation", "model_policy_refusal"],
+    "061": ["hidden_pixel_reference", "actor_semantic_underfit", "verifier_false_pass"],
+    "062": ["actor_library_preservation_failure", "repair_partial", "evaluator_narrow"],
+    "067": ["polyphonic_transcription_failure", "verifier_unknown", "domain_capability_limit"],
+    "071": ["read_only_filesystem", "artifact_stuck_in_tmpfs", "repair_impossible"],
+    "080": ["direct_evaluator_memo_conflict", "actor_compliant", "verifier_false_pass"],
+    "081": ["service_setup_failure", "wrong_evaluator_surface", "verifier_false_pass"],
+    "082": ["nested_docker_controller_network_failure", "setup_only"],
+    "086": ["ext4_read_only_remount", "setup_shim_async_bug", "repair_impossible", "evaluator_postconfig_failure"],
+    "089": ["evaluator_hardcoded_directory", "binder_wrong_surface", "actor_process_violation", "repair_partial"],
+    "090": ["actor_native_geometry_and_animation_shortfall", "verifier_under_sensitive"],
+    "092": ["nondeterministic_llm_visual_check", "no_repair"],
+    "099": ["exact_coordinate_unresolved", "actor_wrong_semantic_answer", "verifier_false_pass"],
+    "102": ["binder_underbound_exhaustive_formatting", "actor_partial", "verifier_false_pass"],
+    "106": ["hidden_expert_voxel_reference", "actor_semantic_underfit", "repair_partial"]
+  }
+}

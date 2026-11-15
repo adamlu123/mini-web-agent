@@ -1,0 +1,11 @@
+Google Material Symbols Rounded
+===============================
+
+The icon font in assets/material-symbols-rounded.woff2 is sourced from Google
+Fonts and used under the Apache License, Version 2.0.
+
+Project:
+https://fonts.google.com/icons
+
+License:
+https://www.apache.org/licenses/LICENSE-2.0

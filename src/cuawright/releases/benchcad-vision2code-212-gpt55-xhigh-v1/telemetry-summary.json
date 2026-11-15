@@ -1,0 +1,204 @@
+{
+  "attempts": {
+    "direct": {
+      "directories": 213,
+      "selected": 212,
+      "selected_terminal_classification_counts": {
+        "exec_fail": 5,
+        "no_code": 1,
+        "ok": 206
+      },
+      "unselected": 1,
+      "unselected_terminal_classification_counts": {
+        "gateway_failure": 1
+      }
+    },
+    "full": {
+      "directories": 213,
+      "selected": 212,
+      "selected_terminal_classification_counts": {
+        "ok": 206,
+        "policy_invalid_prompt": 6
+      },
+      "unselected": 1,
+      "unselected_terminal_classification_counts": {
+        "infrastructure_failure": 1
+      }
+    }
+  },
+  "http_logs": {
+    "direct": 213,
+    "full": 212
+  },
+  "reconciliation": {
+    "exact_match_sections": [
+      "successful model calls and role counts",
+      "input/cached/uncached/output/reasoning/visible tokens",
+      "recorded-price estimated cost",
+      "response status counts",
+      "HTTP status counts and retry attempts",
+      "selected terminal classification counts",
+      "selected run timing and duration distributions after adding recorded orchestration intervals",
+      "unselected Direct hinge 504 attempts",
+      "recovered Full infrastructure attempt inclusion"
+    ],
+    "passed": true
+  },
+  "schema_version": 1,
+  "source_summary": {
+    "file": "summary.json",
+    "sha256": "d1b2749ce339e8675f7de9ca4d939ed516834dee71e38313543c70c5fbaf312b"
+  },
+  "timing": {
+    "direct_selected_runs": {
+      "actual_finished_at": "2026-08-15T00:10:37+00:00",
+      "actual_started_at": "2026-08-14T23:10:02+00:00",
+      "elapsed_seconds": 3635.0,
+      "task_duration_distribution": {
+        "count": 212,
+        "max_seconds": 2400,
+        "mean_seconds": 254.36320754716982,
+        "median_seconds": 209.0,
+        "min_seconds": 23,
+        "p25_seconds": 155.0,
+        "p75_seconds": 306.25,
+        "p95_seconds": 448.69999999999993,
+        "sum_seconds": 53925
+      }
+    },
+    "full_all_panel_tasks_including_policy_failures": {
+      "actual_finished_at": "2026-08-15T09:38:37+00:00",
+      "actual_started_at": "2026-08-15T00:11:11+00:00",
+      "elapsed_seconds": 34046.0,
+      "task_duration_distribution": {
+        "count": 212,
+        "max_seconds": 17179,
+        "mean_seconds": 5423.462264150943,
+        "median_seconds": 5395.0,
+        "min_seconds": 696,
+        "p25_seconds": 3427.0,
+        "p75_seconds": 7221.0,
+        "p95_seconds": 9770.9,
+        "sum_seconds": 1149774
+      },
+      "attempt_ledger_sum_seconds": 1149770.219544,
+      "orchestration_overhead_seconds": 3.780456,
+      "reconciled_sum_seconds": 1149774.0
+    }
+  },
+  "usage": {
+    "combined": {
+      "cached_input_tokens": 382417536,
+      "estimated_list_price_usd": 2316.3690079999997,
+      "input_tokens": 608536468,
+      "output_tokens": 33152186,
+      "price_basis": {
+        "cached_input_usd_per_million": 0.5,
+        "label": "estimate",
+        "output_usd_per_million": 30.0,
+        "reasoning_tokens": "included in output tokens and not double-counted",
+        "uncached_input_usd_per_million": 5.0
+      },
+      "reasoning_tokens": 25278271,
+      "successful_model_calls": 33388,
+      "uncached_input_tokens": 226118932,
+      "visible_output_tokens": 7873915
+    },
+    "direct_selected_successful_runs": {
+      "attempt_directories": 213,
+      "cached_input_tokens": 0,
+      "estimated_list_price_usd": 95.91662,
+      "http": {
+        "selected_run_retry_attempts": 30,
+        "selected_run_status_counts": {
+          "200": 212,
+          "502": 2,
+          "504": 28
+        },
+        "selected_run_total_attempts": 242,
+        "unselected_failed_hinge_status_counts": {
+          "504": 10
+        }
+      },
+      "input_tokens": 123808,
+      "output_tokens": 3176586,
+      "price_basis": {
+        "cached_input_usd_per_million": 0.5,
+        "label": "estimate",
+        "output_usd_per_million": 30.0,
+        "reasoning_tokens": "included in output tokens and not double-counted",
+        "uncached_input_usd_per_million": 5.0
+      },
+      "reasoning_tokens": 3108358,
+      "response_status_counts": {
+        "completed": 209,
+        "incomplete": 3
+      },
+      "selected_run_directories": 212,
+      "successful_call_role_counts": {
+        "direct": 212
+      },
+      "successful_model_calls": 212,
+      "uncached_input_tokens": 123808,
+      "unselected_failed_hinge_attempt": {
+        "record_id": "hinge_001662_s20260506",
+        "successful_responses": 0,
+        "tokens_included": false,
+        "upstream_504_attempts": 10
+      },
+      "visible_output_tokens": 68228
+    },
+    "full_every_attempt": {
+      "attempt_directories": 213,
+      "cached_input_tokens": 382417536,
+      "estimated_list_price_usd": 2220.4523879999997,
+      "http": {
+        "all_attempt_status_counts": {
+          "200": 33176,
+          "400": 6,
+          "429": 13,
+          "502": 107,
+          "503": 7,
+          "504": 2
+        },
+        "all_attempt_total_attempts": 33311,
+        "retry_attempts": 129,
+        "terminal_policy_400_calls": 6
+      },
+      "input_tokens": 608412660,
+      "output_tokens": 29975600,
+      "policy_failed_call_role_counts": {
+        "actor": 6
+      },
+      "policy_failed_calls": 6,
+      "price_basis": {
+        "cached_input_usd_per_million": 0.5,
+        "label": "estimate",
+        "output_usd_per_million": 30.0,
+        "reasoning_tokens": "included in output tokens and not double-counted",
+        "uncached_input_usd_per_million": 5.0
+      },
+      "reasoning_tokens": 22169913,
+      "recovered_infrastructure_retry": {
+        "count": 1,
+        "included_in_usage": true,
+        "reason": "Guest disk exhausted",
+        "record_id": "double_simplex_sprocket_009544_s20260505"
+      },
+      "response_status_counts": {
+        "completed": 33176
+      },
+      "selected_run_directories": 212,
+      "successful_call_role_counts": {
+        "actor": 25164,
+        "binder": 2891,
+        "binder-critic": 2830,
+        "verifier-audit": 2048,
+        "verifier-recheck": 243
+      },
+      "successful_model_calls": 33176,
+      "uncached_input_tokens": 225995124,
+      "visible_output_tokens": 7805687
+    }
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "authoritative_local_final_report_sha256": {
+    "README.md": "a89ff12d7d4b641421799d4bdbb555475667d9ff7f455b196dfd6df829e40f13",
+    "SHA256SUMS": "6b17c7502f11162e376d5b632c2d40a935611bafc9091a2986843ce4f44e8aaa",
+    "direct-submission.jsonl": "467a5dd6b23182e8a87a147c89e6f9dcdaeae52941cea59650363de97e779bf1",
+    "families.tsv": "037b43ac3c1339513fd7c347340fee242ace3b91792de61691483c0692df2e8c",
+    "full-submission.jsonl": "77e7971947f4552122dfccb177255141722ea4d767998a633566dae20f5dc4df",
+    "provenance.json": "d52d44438f54aef8389b23c51ddbc7171212337fd939495f59824b5e6158c608",
+    "records.jsonl": "573b6bfe068e85de8718d1462908ac10fe17ce29ee4765c8e57c2f762102107f",
+    "records.tsv": "485d7012e155b196045b68601579d766cfc5d2e8aab22d5cf4024d56487246e2",
+    "summary.json": "d1b2749ce339e8675f7de9ca4d939ed516834dee71e38313543c70c5fbaf312b"
+  },
+  "local_full_result_root": "/data/iso-osworld-v2/worktrees/benchcad/results-benchcad-panel-212-v1",
+  "note": "The complete local result root is preserved; this committed bundle contains compact independently regradable evidence.",
+  "release_id": "benchcad-vision2code-212-gpt55-xhigh-v1",
+  "runtime_snapshot_note": "Direct and Full source hashes are identical after excluding generated Python bytecode; original source-sha256 files are preserved in the complete local roots.",
+  "runtime_source_snapshot_sha256": "c9ce7b32b22f944a403b35312b3cd7a4d3cf40b1f1b71556e39132ba47e3610d",
+  "schema_version": 1,
+  "source_artifact_sha256": {
+    "direct_selected_runs": "c0dd9b0745350348e24a48b1721913cb819ae432fde6b7ae4abd02b87a2f87b4",
+    "five_record_smoke_report": "7433353ce83c3883f947d60c621ddbf4832129d4b3ee15a056b4ccea87efdb8f",
+    "full_selected_runs": "d98f4b9f4faa57b2e7bcef4c9ce33522dccbf8ffe5e45dbdb086720062bdf6f4",
+    "full_status": "4705ef1e85829f4f5b9f3e2ae8838d3be5e632714ad698fc89751e952e14fbbf",
+    "issue52_provenance": "98d7e91846e9d8b6f5e5af81da1236723bb902e8bc5961e2a9a6650f2ca87e4c",
+    "issue52_status": "3892b206103b0072ae912cbeb0404d75fa04300ddf76ecec49936c7977f36825",
+    "issue52_submission": "072a04eea3001c7aeee61b44586f19c003d13d40a80be89318ce16ed2e1dc83c",
+    "panel_manifest": "7dc67cee15b73318c66384b193aab91712aebcf2825711717ec91ed55358fd9b",
+    "panel_provenance": "6a538e9ad2db73a50d705d61de401303200dbadd99385882c25fd20891311e3b",
+    "panel_records": "4ba2c347ee14f0b16b624eaf5acc36ab2c01cb8c1474c373c673fa54445d8891",
+    "pinned_public_leaderboard": "1e4f7d9d210737c9bbced13f132bd8bf5cbc6f31ffea5f968fae55e792bad3f2"
+  },
+  "verification": {
+    "independent_second_pass": {
+      "completed": true,
+      "method": "separate verifier re-reads final TSV/JSONL/submissions and primary offline results, recomputes arithmetic and hashes",
+      "passed": true
+    },
+    "primary_pass": {
+      "direct_prediction_hashes_verified": 212,
+      "direct_selected_unique_offline_results": 212,
+      "full_other_terminal_failures": 0,
+      "full_policy_invalid_prompt_failures": 6,
+      "full_prediction_hashes_verified": 206,
+      "full_selected_unique_offline_results": 206,
+      "issue52_prediction_hashes_verified": 212,
+      "issue52_unique_results": 212,
+      "manifest_records_unique": true,
+      "score_arithmetic_verified": true,
+      "tracked_diff_unchanged_from_issue52_final_preflight": true
+    }
+  }
+}

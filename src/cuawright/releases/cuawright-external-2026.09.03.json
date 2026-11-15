@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "release": "cuawright-external-2026.09.03",
+  "benchmarks": {
+    "osworld": {
+      "release": "v2026.06.24",
+      "upstream_repository": "xlang-ai/OSWorld-V2",
+      "upstream_commit": "2b9b7b4eb73243d557bdbf2998fe18d8e18e19c6",
+      "integration_repository": "TheoLeeCJ/deskwright-cua",
+      "integration_commit": "43997ed9a88b81151bbb496f1fd1f3b9febf312c"
+    },
+    "weavebench": {
+      "integration_repository": "TheoLeeCJ/WeaveBench",
+      "integration_branch": "cuawright-integration",
+      "integration_commit": "319d8502caa36b7f8077a88dca8d20d3cdb71890",
+      "dataset_revision": "cd887bf5ee0e70faa4b250f2cd192bcc1de164ea",
+      "agent_model": "gpt-5.5",
+      "agent_reasoning_effort": "high",
+      "vm_sha256": "3c1caf41cb75b8482a30d1a251545393aee8175375ab405e0d6870f8a07fa3f8"
+    },
+    "benchcad": {
+      "commit": "52087ef4b08811c21c09b8b16d0ae36c70844865"
+    },
+    "cadgenbench": {
+      "commit": "33304cf771fc5639144b1df9611e347251052cf8",
+      "dataset_revision": "f76f965585817c621d6ea0d150d745adf670e66e"
+    }
+  }
+}

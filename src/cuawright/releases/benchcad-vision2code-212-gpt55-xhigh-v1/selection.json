@@ -1,0 +1,256 @@
+{
+  "benchmark_commit": "52087ef4b08811c21c09b8b16d0ae36c70844865",
+  "container_image_id": "sha256:cb311aa0259c74ede9d41729442faeae4aea96abfd90a3a9ce013040ddc84a5a",
+  "counts": {
+    "base_plane": {
+      "XY": 117,
+      "XZ": 36,
+      "YZ": 59
+    },
+    "difficulty": {
+      "easy": 72,
+      "hard": 68,
+      "medium": 72
+    },
+    "families": 106,
+    "records_per_family": 2,
+    "standard": {
+      "ASME B1.20.1": 2,
+      "ASME B16.5": 4,
+      "ASME B16.9": 4,
+      "DIN 1480": 2,
+      "DIN 2088": 2,
+      "DIN 2095": 2,
+      "DIN 315": 2,
+      "DIN 319": 2,
+      "DIN 338": 2,
+      "DIN 3570": 2,
+      "DIN 471/472": 2,
+      "DIN 5480": 2,
+      "DIN 580": 2,
+      "DIN 650": 2,
+      "DIN 660": 2,
+      "DIN 6799": 2,
+      "DIN 6885": 2,
+      "DIN 705": 2,
+      "DIN 71412": 2,
+      "DIN 71751": 2,
+      "DIN 7954/7955": 2,
+      "DIN 8187": 2,
+      "DIN 950": 2,
+      "DIN 988": 2,
+      "EN 10034": 2,
+      "EN 10056": 4,
+      "EN 10219": 2,
+      "EN 10279": 2,
+      "IEC 60072-1": 2,
+      "IEC 60086": 2,
+      "ISO 10828": 2,
+      "ISO 113": 2,
+      "ISO 1234": 2,
+      "ISO 1580": 2,
+      "ISO 22": 2,
+      "ISO 2339": 2,
+      "ISO 2340": 2,
+      "ISO 23509": 2,
+      "ISO 272": 2,
+      "ISO 2936": 2,
+      "ISO 4014": 2,
+      "ISO 4032": 2,
+      "ISO 5167-4": 2,
+      "ISO 53": 4,
+      "ISO 606": 2,
+      "ISO 7089": 2,
+      "ISO 8734": 2,
+      "N/A (open-source)": 2,
+      "None": 108
+    },
+    "tasks": 212,
+    "unique_task_ids": 212,
+    "variant": {
+      "3blade": 1,
+      "4blade": 1,
+      "conical": 1,
+      "cross": 1,
+      "disc": 2,
+      "external": 2,
+      "female": 1,
+      "linear": 1,
+      "male": 1,
+      "miter": 1,
+      "multi_web": 1,
+      "round": 1,
+      "solid_disc": 1,
+      "standard": 192,
+      "straight": 2,
+      "straight_bevel": 1,
+      "tee": 2
+    }
+  },
+  "created_at": "2026-08-14T23:03:50.895848Z",
+  "dataset": {
+    "config": "code_gen",
+    "repo_id": "BenchCAD/BenchCAD",
+    "revision": "5919f578ab09ec283603a082fab07c7639ab56eb",
+    "rows": 17900,
+    "shards": [
+      {
+        "relative_path": "code_gen/data/code_gen-00000-of-00018.parquet",
+        "sha256": "e5ec5483b22d53909d058b0024656c471bfe0080025905b65fe64466a884a43f",
+        "size_bytes": 40904740
+      },
+      {
+        "relative_path": "code_gen/data/code_gen-00001-of-00018.parquet",
+        "sha256": "d19a35b82c40eeef6924c0ca66f2624819d9fb0c1ac2d621a9486805e7ca52d6",
+        "size_bytes": 42118467
+      },
+      {
+        "relative_path": "code_gen/data/code_gen-00002-of-00018.parquet",
+        "sha256": "bc9a05e2db94e233cca48f1cc09e88bf4f9d8d949bfb9bd3dd96b20dbf297e76",
+        "size_bytes": 41528860
+      },
+      {
+        "relative_path": "code_gen/data/code_gen-00003-of-00018.parquet",
+        "sha256": "9d97f8ff248a1c25d2f2319beece8caef36852295d733de3c5cc6a827ebffc7c",
+        "size_bytes": 42329778
+      },
+      {
+        "relative_path": "code_gen/data/code_gen-00004-of-00018.parquet",
+        "sha256": "6b6dba61f030a2c7466a9723d33468834f74b29fec07159cd3f7a42af991d1f5",
+        "size_bytes": 42368598
+      },
+      {
+        "relative_path": "code_gen/data/code_gen-00005-of-00018.parquet",
+        "sha256": "155514fa0946cabe375088850c864f76f40550c0d90dff4eff6a6861c710782a",
+        "size_bytes": 40931201
+      },
+      {
+        "relative_path": "code_gen/data/code_gen-00006-of-00018.parquet",
+        "sha256": "045113b8bc8eca206c6ac165cdf4f71618ddb02c76dc834be0b4ce1e6a8bbab8",
+        "size_bytes": 43037436
+      },
+      {
+        "relative_path": "code_gen/data/code_gen-00007-of-00018.parquet",
+        "sha256": "36213c603c72ba6ca924573e0d6f8f837c9ee3ce921d18f16f78652c69010647",
+        "size_bytes": 43212097
+      },
+      {
+        "relative_path": "code_gen/data/code_gen-00008-of-00018.parquet",
+        "sha256": "88ea457d6e7ef57cd4a7d3e408e5cfcff9355c44960af617d0c2aa16a9bd1a58",
+        "size_bytes": 42833368
+      },
+      {
+        "relative_path": "code_gen/data/code_gen-00009-of-00018.parquet",
+        "sha256": "979aca1abe7bf06f1c103f25c948468eb0396cf23fd996ed06bdd3b83d1e0d1b",
+        "size_bytes": 41796005
+      },
+      {
+        "relative_path": "code_gen/data/code_gen-00010-of-00018.parquet",
+        "sha256": "0d7eb5e0e6e6c662ec2b64da4386e76d2309e489dc303d4e5818c444aa7fb551",
+        "size_bytes": 41826458
+      },
+      {
+        "relative_path": "code_gen/data/code_gen-00011-of-00018.parquet",
+        "sha256": "b61bbaac172a9fc137ba7cc77fea5ebf1878ed926d223fd6b78524de3277bc77",
+        "size_bytes": 40983892
+      },
+      {
+        "relative_path": "code_gen/data/code_gen-00012-of-00018.parquet",
+        "sha256": "4dbbf1eea097564b8f4428526aebaccc37eb0599c6f5fe7180fcab34815cab33",
+        "size_bytes": 42458465
+      },
+      {
+        "relative_path": "code_gen/data/code_gen-00013-of-00018.parquet",
+        "sha256": "47282a45d463cdb4c615ab7e2a4d918e177f67e63f9c2c3f266153c43dbd7725",
+        "size_bytes": 41544250
+      },
+      {
+        "relative_path": "code_gen/data/code_gen-00014-of-00018.parquet",
+        "sha256": "e61e5effcf515e6dcd44b6f80b359ee974aab23ac5d8425cecc3948c65bfbb79",
+        "size_bytes": 41826672
+      },
+      {
+        "relative_path": "code_gen/data/code_gen-00015-of-00018.parquet",
+        "sha256": "5852cc88f0c05b3d84372b00501a5af594c79f958923a6b837fa08286c675e6e",
+        "size_bytes": 40203596
+      },
+      {
+        "relative_path": "code_gen/data/code_gen-00016-of-00018.parquet",
+        "sha256": "6a292758b996d2e15bfa579b08df65a8f1862bb81b0912d340c545ca303857d3",
+        "size_bytes": 39934642
+      },
+      {
+        "relative_path": "code_gen/data/code_gen-00017-of-00018.parquet",
+        "sha256": "8b1a15b5d94990de539fd08c28ecb330e10b071175be28408a2d52800878f363",
+        "size_bytes": 36585753
+      }
+    ]
+  },
+  "manifest_sha256": "7dc67cee15b73318c66384b193aab91712aebcf2825711717ec91ed55358fd9b",
+  "materialization": {
+    "concurrency": 54,
+    "duration_seconds": 53.315,
+    "failed": 0,
+    "finished_at": "2026-08-14T22:32:54.842114Z",
+    "started_at": "2026-08-14T22:32:01.526899Z",
+    "substitutions": 0,
+    "succeeded": 212,
+    "total": 212
+  },
+  "note": "Panel was deterministically selected and frozen before model execution; no public preregistration is claimed.",
+  "ordered_ids_sha256": "e8a95f18780ac266cbdfa7dd5015414ca9aa24d8960523df6e30c962e454c403",
+  "panel_id": "benchcad-panel-212-v1",
+  "rendering": {
+    "duration_seconds": 1578.291,
+    "duration_source": "derived from materialization finish to manifest filesystem mtime; no explicit render summary was available",
+    "finished_at": "2026-08-14T22:59:13.133462Z",
+    "observed_first_output_at": "2026-08-14T22:33:20.760711Z",
+    "observed_last_output_at": "2026-08-14T22:59:12.472468Z",
+    "observed_output_span_seconds": 1551.712,
+    "outputs": 212,
+    "started_at": "2026-08-14T22:32:54.842114Z"
+  },
+  "schema_version": 1,
+  "selection": {
+    "algorithm": {
+      "bucket_choice": "minimum SHA256(seed + '|' + stem)",
+      "family_order": "ascending SHA256(seed + '|' + family)",
+      "family_pairing": [
+        {
+          "difficulties": [
+            "easy",
+            "medium"
+          ],
+          "ranks": [
+            0,
+            37
+          ]
+        },
+        {
+          "difficulties": [
+            "easy",
+            "hard"
+          ],
+          "ranks": [
+            38,
+            71
+          ]
+        },
+        {
+          "difficulties": [
+            "medium",
+            "hard"
+          ],
+          "ranks": [
+            72,
+            105
+          ]
+        }
+      ],
+      "hash_encoding": "UTF-8",
+      "tie_breaker": "ascending raw name"
+    },
+    "duration_seconds": 1.527,
+    "seed": "cuawright-benchcad-panel-212-v1"
+  }
+}

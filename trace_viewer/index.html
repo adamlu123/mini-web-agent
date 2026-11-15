@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CUAWright traces</title>
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#transcript">Skip to transcript</a>
+  <header class="topbar">
+    <section class="task-picker">
+      <div class="product-name">
+        <a class="brand-home" href="../index.html">CUAWright evaluations</a>
+        <span class="breadcrumb-separator" aria-hidden="true">/</span>
+        <button id="all-tasks-button" class="collection-button" type="button"
+                title="All tasks"><span id="collection-name">CUAWright traces</span></button>
+      </div>
+      <label for="task-select">Task</label>
+      <select id="task-select" aria-label="Select a task"></select>
+      <button id="mobile-outline-toggle" class="mobile-outline-toggle" type="button"
+              aria-controls="outline-pane" aria-expanded="false">
+        <span class="material-symbols-rounded" aria-hidden="true">format_list_bulleted</span>
+        Jump through trace
+      </button>
+    </section>
+
+    <section class="score-summary">
+      <span id="task-status" class="status-chip">Loading</span>
+      <div>
+        <span id="score-label" class="score-label">Score</span>
+        <span id="task-score" class="score-value">—</span>
+      </div>
+    </section>
+  </header>
+
+  <main id="task-list-view" class="task-list-view">
+    <section id="collection-hero" class="collection-hero"></section>
+    <div class="task-list-toolbar">
+      <label class="task-list-search">
+        <span class="material-symbols-rounded" aria-hidden="true">search</span>
+        <input id="task-list-search" type="search"
+               placeholder="Search task ID or instruction">
+      </label>
+      <label class="compact-select">
+        <span class="material-symbols-rounded" aria-hidden="true">filter_alt</span>
+        <select id="task-status-filter" aria-label="Filter tasks">
+          <option value="all">All tasks</option>
+          <option value="strict">Strict passes</option>
+          <option value="partial">Partial scores</option>
+          <option value="zero">Zeros</option>
+          <option value="unevaluated">Unevaluated</option>
+        </select>
+      </label>
+    </div>
+    <div id="task-list-count" class="task-list-count"></div>
+    <div id="task-list" class="task-list"></div>
+  </main>
+
+  <main id="workspace" class="workspace hidden">
+    <aside id="outline-pane" class="outline-pane">
+      <div class="review-tools">
+        <label class="search-box">
+          <span class="material-symbols-rounded" aria-hidden="true">search</span>
+          <input id="trace-search" type="search" placeholder="Search this trace">
+        </label>
+        <label class="compact-select">
+          <span class="material-symbols-rounded" aria-hidden="true">filter_alt</span>
+          <select id="role-filter" aria-label="Filter by role">
+            <option value="all">All roles</option>
+            <option value="Actor">Actor</option>
+            <option value="Binder">Binder</option>
+            <option value="Critic">Critic</option>
+            <option value="Verifier">Verifier</option>
+            <option value="System">System</option>
+          </select>
+        </label>
+        <label class="prompt-toggle" title="Show model-visible launch prompts">
+          <input id="prompt-toggle" type="checkbox">
+          <span>Prompts</span>
+        </label>
+        <button id="error-filter" class="filter-button" type="button"
+                aria-label="Show failed actions and infrastructure issues only"
+                aria-pressed="false" title="Show failures only">
+          <span id="failure-filter-icon" class="material-symbols-rounded"
+                aria-hidden="true">warning</span>
+        </button>
+        <button id="expand-all" class="filter-button" type="button"
+                aria-label="Expand all details"
+                aria-pressed="false" title="Expand all details">
+          <span id="expand-icon" class="material-symbols-rounded"
+                aria-hidden="true">unfold_more</span>
+        </button>
+      </div>
+      <div id="outline-current" class="outline-current" aria-live="polite"></div>
+      <div class="outline-scroll">
+      <div id="outline-summary" class="outline-summary" aria-live="polite"></div>
+      <nav id="outline" class="outline" aria-label="Trajectory sections"></nav>
+      </div>
+    </aside>
+
+    <main id="transcript-pane" class="transcript-pane">
+      <div id="current-context" class="current-context hidden" aria-live="polite"></div>
+      <div id="transcript-scroll" class="transcript-scroll">
+        <article id="transcript" class="transcript" tabindex="-1"></article>
+      </div>
+      <div class="step-nav-dock">
+        <nav id="step-nav" class="step-nav hidden" aria-label="Step navigation">
+          <button id="previous-step" type="button" title="Previous step"
+                  aria-label="Previous step">
+            <span class="material-symbols-rounded" aria-hidden="true">arrow_upward</span>
+          </button>
+          <span id="step-position">—</span>
+          <button id="next-step" type="button" title="Next step"
+                  aria-label="Next step">
+            <span class="material-symbols-rounded" aria-hidden="true">arrow_downward</span>
+          </button>
+        </nav>
+      </div>
+    </main>
+  </main>
+
+  <dialog id="image-dialog" aria-label="Expanded trace image">
+    <div class="dialog-toolbar">
+      <button id="previous-image" class="icon-button" type="button"
+              aria-label="Previous image">
+        <span class="material-symbols-rounded" aria-hidden="true">arrow_back</span>
+      </button>
+      <div id="dialog-caption" class="dialog-caption"></div>
+      <button id="next-image" class="icon-button" type="button"
+              aria-label="Next image">
+        <span class="material-symbols-rounded" aria-hidden="true">arrow_forward</span>
+      </button>
+      <button id="close-image" class="icon-button" type="button"
+              aria-label="Close image">
+        <span class="material-symbols-rounded" aria-hidden="true">close</span>
+      </button>
+    </div>
+    <img id="dialog-image" alt="Image supplied to the model">
+  </dialog>
+
+  <div id="loading" class="loading">
+    <span class="material-symbols-rounded spin" aria-hidden="true">progress_activity</span>
+    Loading trace
+  </div>
+
+  <script src="data/catalog.js"></script>
+  <script src="assets/app.js"></script>
+</body>
+</html>

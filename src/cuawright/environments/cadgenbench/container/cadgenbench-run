@@ -1,0 +1,24 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+
+from cuawright.environments.cadgenbench.container_tools import run_prediction
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("prediction")
+    parser.add_argument("--step", default="/workspace/output.step")
+    parser.add_argument("--timeout", type=int, default=120)
+    args = parser.parse_args()
+    output = run_prediction(
+        args.prediction,
+        output_step=args.step,
+        timeout=args.timeout,
+    )
+    print(output)
+
+
+if __name__ == "__main__":
+    main()

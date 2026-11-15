@@ -1,0 +1,124 @@
+{
+  "schema_version": 1,
+  "id": "benchcad-vision2code-212-gpt55-xhigh-v1",
+  "benchmark": {
+    "name": "BenchCAD Vision2Code",
+    "commit": "52087ef4b08811c21c09b8b16d0ae36c70844865",
+    "dataset_revision": "5919f578ab09ec283603a082fab07c7639ab56eb",
+    "metric": "normalized_64_cubed_voxel_iou"
+  },
+  "panel": {
+    "id": "benchcad-panel-212-v1",
+    "records": 212,
+    "families": 106,
+    "records_per_family": 2,
+    "difficulty": {
+      "easy": 72,
+      "medium": 72,
+      "hard": 68
+    },
+    "manifest_sha256": "7dc67cee15b73318c66384b193aab91712aebcf2825711717ec91ed55358fd9b",
+    "ordered_ids_sha256": "e8a95f18780ac266cbdfa7dd5015414ca9aa24d8960523df6e30c962e454c403"
+  },
+  "runtime": {
+    "model": "gpt-5.5",
+    "reasoning_effort": "xhigh",
+    "generation_width": 54,
+    "scoring_width": 48,
+    "total_steps": 300,
+    "compact_every": 40,
+    "container_image_id": "sha256:cb311aa0259c74ede9d41729442faeae4aea96abfd90a3a9ce013040ddc84a5a",
+    "base_harness_commit": "b665b8097fe51d744cc7a29e6478414eb4317d0f"
+  },
+  "results": {
+    "direct": {
+      "mean": 0.4378044831700526,
+      "median": 0.44353486929538044,
+      "execution_rate": 0.9716981132075472,
+      "statuses": {
+        "ok": 206,
+        "exec_fail": 5,
+        "no_code": 1
+      }
+    },
+    "cuawright": {
+      "mean": 0.7389984228144295,
+      "median": 0.8627275798791825,
+      "execution_rate": 0.9716981132075472,
+      "statuses": {
+        "ok": 206,
+        "policy_invalid_prompt": 6
+      }
+    },
+    "public_issue_52": {
+      "mean": 0.7271664440596326,
+      "median": 0.8320951574577335,
+      "execution_rate": 0.9198113207547169,
+      "accepted": false,
+      "claimed_full_score": 0.7552
+    }
+  },
+  "comparisons": {
+    "cuawright_minus_direct": {
+      "mean": 0.30119393964437685,
+      "family_cluster_bootstrap_95_ci": [
+        0.25615209856933496,
+        0.34650116872337616
+      ],
+      "strict_wins": 189,
+      "ties": 0,
+      "strict_losses": 23
+    },
+    "cuawright_minus_issue_52": {
+      "mean": 0.011831978754796885,
+      "family_cluster_bootstrap_95_ci": [
+        -0.0510688733565832,
+        0.0761651913031912
+      ],
+      "strict_wins": 117,
+      "ties": 5,
+      "strict_losses": 90
+    }
+  },
+  "usage": {
+    "direct": {
+      "successful_model_calls": 212,
+      "input_tokens": 123808,
+      "cached_input_tokens": 0,
+      "output_tokens": 3176586,
+      "reasoning_tokens": 3108358,
+      "estimated_list_price_usd": 95.91662,
+      "elapsed_seconds": 3635
+    },
+    "cuawright": {
+      "successful_model_calls": 33176,
+      "input_tokens": 608412660,
+      "cached_input_tokens": 382417536,
+      "output_tokens": 29975600,
+      "reasoning_tokens": 22169913,
+      "estimated_list_price_usd": 2220.452388,
+      "elapsed_seconds": 34046
+    },
+    "price_basis": {
+      "uncached_input_usd_per_million": 5.0,
+      "cached_input_usd_per_million": 0.5,
+      "output_usd_per_million": 30.0,
+      "label": "estimate"
+    }
+  },
+  "representativeness": {
+    "family_balanced": true,
+    "population_family_weighted_cuawright": 0.7386756624431277,
+    "population_family_weighted_direct": 0.4380784407790164,
+    "note": "Strong broad-family preliminary result; not a random 1,000-record or full 17,900-record leaderboard result."
+  },
+  "artifacts": {
+    "report": "docs/CLI_HARNESS_BENCHCAD_212_RESULT.md",
+    "committed_evidence": "benchmark_releases/benchcad-vision2code-212-gpt55-xhigh-v1",
+    "telemetry_ledger": "benchmark_releases/benchcad-vision2code-212-gpt55-xhigh-v1/attempt-telemetry.jsonl",
+    "local_image_archive_sha256": "a8b1d3faad9aaeb58910637320c31b9a5663d6305f62ebe2277b5ae65b4a791f",
+    "local_result_root": "/data/iso-osworld-v2/worktrees/benchcad/results-benchcad-panel-212-v1",
+    "local_final_report": "/data/iso-osworld-v2/worktrees/benchcad/results-benchcad-panel-212-v1/final-report",
+    "local_panel_root": "/data/iso-osworld-v2/worktrees/benchcad/cache/benchcad-panel-212-v1"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "image_id": "sha256:cb311aa0259c74ede9d41729442faeae4aea96abfd90a3a9ce013040ddc84a5a",
+  "archive_path": "/data/iso-osworld-v2/worktrees/benchcad/banked-artifacts/benchcad-vision2code-212-gpt55-xhigh-v1/cuawright-benchcad-cb311aa.tar.gz",
+  "archive_sha256": "a8b1d3faad9aaeb58910637320c31b9a5663d6305f62ebe2277b5ae65b4a791f",
+  "archive_size_bytes": 658409254,
+  "published": false,
+  "note": "Exact executed OCI image is banked locally but not published; base-image tags in the original Dockerfile were not digest-pinned."
+}

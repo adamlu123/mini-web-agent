@@ -1,0 +1,410 @@
+{
+  "comparisons": {
+    "full_minus_direct": {
+      "family_cluster_bootstrap_95_ci": {
+        "confidence_level": 0.95,
+        "lower": 0.25615209856933496,
+        "method": "paired family-cluster bootstrap; resample 106 families with replacement and retain both records",
+        "percentile_method": "linear interpolation at 0.025 and 0.975 over sorted bootstrap estimates",
+        "resamples": 10000,
+        "seed": "cuawright-benchcad-panel-212-v1-bootstrap",
+        "upper": 0.34650116872337616
+      },
+      "mean_difference": 0.30119393964437685,
+      "median_difference": 0.25660636765485695,
+      "strict_losses": 23,
+      "strict_wins": 189,
+      "ties": 0
+    },
+    "full_minus_issue52": {
+      "family_cluster_bootstrap_95_ci": {
+        "confidence_level": 0.95,
+        "lower": -0.0510688733565832,
+        "method": "paired family-cluster bootstrap; resample 106 families with replacement and retain both records",
+        "percentile_method": "linear interpolation at 0.025 and 0.975 over sorted bootstrap estimates",
+        "resamples": 10000,
+        "seed": "cuawright-benchcad-panel-212-v1-bootstrap",
+        "upper": 0.0761651913031912
+      },
+      "mean_difference": 0.011831978754796885,
+      "median_difference": 0.014558005232056359,
+      "strict_losses": 90,
+      "strict_wins": 117,
+      "ties": 5
+    }
+  },
+  "conditions": {
+    "direct": {
+      "count": 212,
+      "execution_count": 206,
+      "execution_rate": 0.9716981132075472,
+      "mean": 0.4378044831700526,
+      "median": 0.44353486929538044,
+      "status_counts": {
+        "exec_fail": 5,
+        "no_code": 1,
+        "ok": 206
+      }
+    },
+    "full": {
+      "count": 212,
+      "execution_count": 206,
+      "execution_rate": 0.9716981132075472,
+      "mean": 0.7389984228144295,
+      "median": 0.8627275798791825,
+      "status_counts": {
+        "ok": 206,
+        "policy_invalid_prompt": 6
+      }
+    },
+    "issue52": {
+      "count": 212,
+      "execution_count": 195,
+      "execution_rate": 0.9198113207547169,
+      "mean": 0.7271664440596326,
+      "median": 0.8320951574577335,
+      "status_counts": {
+        "exec_fail": 17,
+        "ok": 195
+      }
+    }
+  },
+  "difficulty": {
+    "easy": {
+      "direct": {
+        "count": 72,
+        "execution_count": 71,
+        "execution_rate": 0.9861111111111112,
+        "mean": 0.43377199634396896,
+        "median": 0.441820744038979,
+        "status_counts": {
+          "no_code": 1,
+          "ok": 71
+        }
+      },
+      "full": {
+        "count": 72,
+        "execution_count": 71,
+        "execution_rate": 0.9861111111111112,
+        "mean": 0.7828361837849619,
+        "median": 0.9273840816618893,
+        "status_counts": {
+          "ok": 71,
+          "policy_invalid_prompt": 1
+        }
+      },
+      "issue52": {
+        "count": 72,
+        "execution_count": 66,
+        "execution_rate": 0.9166666666666666,
+        "mean": 0.7206314506911874,
+        "median": 0.8487940161929706,
+        "status_counts": {
+          "exec_fail": 6,
+          "ok": 66
+        }
+      }
+    },
+    "hard": {
+      "direct": {
+        "count": 68,
+        "execution_count": 64,
+        "execution_rate": 0.9411764705882353,
+        "mean": 0.433148148638743,
+        "median": 0.4454748716089121,
+        "status_counts": {
+          "exec_fail": 4,
+          "ok": 64
+        }
+      },
+      "full": {
+        "count": 68,
+        "execution_count": 65,
+        "execution_rate": 0.9558823529411765,
+        "mean": 0.6827837541449531,
+        "median": 0.7963775851229321,
+        "status_counts": {
+          "ok": 65,
+          "policy_invalid_prompt": 3
+        }
+      },
+      "issue52": {
+        "count": 68,
+        "execution_count": 62,
+        "execution_rate": 0.9117647058823529,
+        "mean": 0.7079451929732139,
+        "median": 0.7945869524098069,
+        "status_counts": {
+          "exec_fail": 6,
+          "ok": 62
+        }
+      }
+    },
+    "medium": {
+      "direct": {
+        "count": 72,
+        "execution_count": 71,
+        "execution_rate": 0.9861111111111112,
+        "mean": 0.44623461927570646,
+        "median": 0.4483039099447864,
+        "status_counts": {
+          "exec_fail": 1,
+          "ok": 71
+        }
+      },
+      "full": {
+        "count": 72,
+        "execution_count": 70,
+        "execution_rate": 0.9722222222222222,
+        "mean": 0.7482522933650693,
+        "median": 0.8702138402647512,
+        "status_counts": {
+          "ok": 70,
+          "policy_invalid_prompt": 2
+        }
+      },
+      "issue52": {
+        "count": 72,
+        "execution_count": 67,
+        "execution_rate": 0.9305555555555556,
+        "mean": 0.7518548412319176,
+        "median": 0.8740216492833377,
+        "status_counts": {
+          "exec_fail": 5,
+          "ok": 67
+        }
+      }
+    }
+  },
+  "family_balanced_mean": {
+    "direct": 0.4378044831700526,
+    "full": 0.7389984228144295,
+    "issue52": 0.7271664440596326
+  },
+  "issue52": {
+    "accepted": false,
+    "claimed_full_17900_record_score": 0.7552,
+    "label": "unnamed public issue #52 submission",
+    "panel_score": 0.7271664440596326,
+    "state": "open"
+  },
+  "non_comparable_context": {
+    "five_record_smoke": {
+      "direct_mean": 0.61996732099255,
+      "full_mean": 0.9980257136214913,
+      "note": "Integration smoke only; selected from a different five-record set and not comparable.",
+      "records": 5
+    },
+    "public_vision2code_leaderboard": {
+      "best_self_reported_iou_score_in_pinned_leaderboard": 0.384,
+      "best_verified_iou_score_in_pinned_leaderboard": 0.289,
+      "note": "Full-dataset leaderboard entries use the benchmark's published evaluation set/protocol; this selected 212-record panel is not comparable."
+    }
+  },
+  "report": {
+    "authoritative": true,
+    "families": 106,
+    "generated_at": "2026-08-15T09:53:42.040202+00:00",
+    "metric": "voxel_iou",
+    "panel_id": "benchcad-panel-212-v1",
+    "records": 212
+  },
+  "schema_version": 1,
+  "timing": {
+    "direct_selected_runs": {
+      "actual_finished_at": "2026-08-15T00:10:37+00:00",
+      "actual_started_at": "2026-08-14T23:10:02+00:00",
+      "elapsed_seconds": 3635.0,
+      "task_duration_distribution": {
+        "count": 212,
+        "max_seconds": 2400.0,
+        "mean_seconds": 254.36320754716982,
+        "median_seconds": 209.0,
+        "min_seconds": 23.0,
+        "p25_seconds": 155.0,
+        "p75_seconds": 306.25,
+        "p95_seconds": 448.69999999999993,
+        "sum_seconds": 53925.0
+      }
+    },
+    "full_all_panel_tasks_including_policy_failures": {
+      "actual_finished_at": "2026-08-15T09:38:37+00:00",
+      "actual_started_at": "2026-08-15T00:11:11+00:00",
+      "elapsed_seconds": 34046.0,
+      "task_duration_distribution": {
+        "count": 212,
+        "max_seconds": 17179.0,
+        "mean_seconds": 5423.462264150943,
+        "median_seconds": 5395.0,
+        "min_seconds": 696.0,
+        "p25_seconds": 3427.0,
+        "p75_seconds": 7221.0,
+        "p95_seconds": 9770.9,
+        "sum_seconds": 1149774.0
+      }
+    },
+    "offline_scoring": {
+      "direct": {
+        "duration_available": false,
+        "note": "The per-run offline scorer artifacts do not record start/end or duration."
+      },
+      "full": {
+        "duration_available": false,
+        "note": "The per-run offline scorer artifacts do not record start/end or duration."
+      },
+      "issue52": {
+        "actual_finished_at": "2026-08-15T09:46:13.422580+00:00",
+        "actual_started_at": "2026-08-15T09:44:18.062594+00:00",
+        "docker_scorer_width": 48,
+        "duration_available": true,
+        "parallel_task_duration_distribution": {
+          "count": 212,
+          "max_seconds": 74.15255968400743,
+          "mean_seconds": 22.453666735557047,
+          "median_seconds": 21.65644115950272,
+          "min_seconds": 0.8600014940020628,
+          "p25_seconds": 16.793104119504278,
+          "p75_seconds": 25.51048856874695,
+          "p95_seconds": 43.38418925260484,
+          "sum_seconds": 4760.177347938094
+        },
+        "wall_elapsed_seconds": 115.35998067000764
+      }
+    }
+  },
+  "usage": {
+    "combined": {
+      "cached_input_tokens": 382417536,
+      "estimated_list_price_usd": 2316.3690079999997,
+      "input_tokens": 608536468,
+      "output_tokens": 33152186,
+      "price_basis": {
+        "cached_input_usd_per_million": 0.5,
+        "label": "estimate",
+        "output_usd_per_million": 30.0,
+        "reasoning_tokens": "included in output tokens and not double-counted",
+        "uncached_input_usd_per_million": 5.0
+      },
+      "reasoning_tokens": 25278271,
+      "successful_model_calls": 33388,
+      "uncached_input_tokens": 226118932,
+      "visible_output_tokens": 7873915
+    },
+    "direct_selected_successful_runs": {
+      "attempt_directories": 213,
+      "cached_input_tokens": 0,
+      "estimated_list_price_usd": 95.91662,
+      "http": {
+        "selected_run_retry_attempts": 30,
+        "selected_run_status_counts": {
+          "200": 212,
+          "502": 2,
+          "504": 28
+        },
+        "selected_run_total_attempts": 242,
+        "unselected_failed_hinge_status_counts": {
+          "504": 10
+        }
+      },
+      "input_tokens": 123808,
+      "output_tokens": 3176586,
+      "price_basis": {
+        "cached_input_usd_per_million": 0.5,
+        "label": "estimate",
+        "output_usd_per_million": 30.0,
+        "reasoning_tokens": "included in output tokens and not double-counted",
+        "uncached_input_usd_per_million": 5.0
+      },
+      "reasoning_tokens": 3108358,
+      "response_status_counts": {
+        "completed": 209,
+        "incomplete": 3
+      },
+      "selected_run_directories": 212,
+      "successful_call_role_counts": {
+        "direct": 212
+      },
+      "successful_model_calls": 212,
+      "uncached_input_tokens": 123808,
+      "unselected_failed_hinge_attempt": {
+        "record_id": "hinge_001662_s20260506",
+        "successful_responses": 0,
+        "tokens_included": false,
+        "upstream_504_attempts": 10
+      },
+      "visible_output_tokens": 68228
+    },
+    "full_every_attempt": {
+      "attempt_directories": 213,
+      "cached_input_tokens": 382417536,
+      "estimated_list_price_usd": 2220.4523879999997,
+      "http": {
+        "all_attempt_status_counts": {
+          "200": 33176,
+          "400": 6,
+          "429": 13,
+          "502": 107,
+          "503": 7,
+          "504": 2
+        },
+        "all_attempt_total_attempts": 33311,
+        "retry_attempts": 129,
+        "terminal_policy_400_calls": 6
+      },
+      "input_tokens": 608412660,
+      "output_tokens": 29975600,
+      "policy_failed_call_role_counts": {
+        "actor": 6
+      },
+      "policy_failed_calls": 6,
+      "price_basis": {
+        "cached_input_usd_per_million": 0.5,
+        "label": "estimate",
+        "output_usd_per_million": 30.0,
+        "reasoning_tokens": "included in output tokens and not double-counted",
+        "uncached_input_usd_per_million": 5.0
+      },
+      "reasoning_tokens": 22169913,
+      "recovered_infrastructure_retry": {
+        "count": 1,
+        "included_in_usage": true,
+        "reason": "Guest disk exhausted",
+        "record_id": "double_simplex_sprocket_009544_s20260505"
+      },
+      "response_status_counts": {
+        "completed": 33176
+      },
+      "selected_run_directories": 212,
+      "successful_call_role_counts": {
+        "actor": 25164,
+        "binder": 2891,
+        "binder-critic": 2830,
+        "verifier-audit": 2048,
+        "verifier-recheck": 243
+      },
+      "successful_model_calls": 33176,
+      "uncached_input_tokens": 225995124,
+      "visible_output_tokens": 7805687
+    }
+  },
+  "verification": {
+    "independent_second_pass": {
+      "completed": true,
+      "method": "separate verifier re-reads final TSV/JSONL/submissions and primary offline results, recomputes arithmetic and hashes",
+      "passed": true
+    },
+    "primary_pass": {
+      "direct_prediction_hashes_verified": 212,
+      "direct_selected_unique_offline_results": 212,
+      "full_other_terminal_failures": 0,
+      "full_policy_invalid_prompt_failures": 6,
+      "full_prediction_hashes_verified": 206,
+      "full_selected_unique_offline_results": 206,
+      "issue52_prediction_hashes_verified": 212,
+      "issue52_unique_results": 212,
+      "manifest_records_unique": true,
+      "score_arithmetic_verified": true,
+      "tracked_diff_unchanged_from_issue52_final_preflight": true
+    }
+  }
+}

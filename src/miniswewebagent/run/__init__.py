@@ -1,1 +1,0 @@
-"""CLI entrypoints for mini-swe-webagent."""

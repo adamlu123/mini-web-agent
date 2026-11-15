@@ -1,66 +1,438 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
-
 [project]
-name = "mini-swe-webagent"
-dynamic = ["version"]
-description = "Minimal local Playwright web agent"
+name = "cuawright"
+version = "0.1.0"
+description = "A terminal-first multi-benchmark harness for persistent computer-use agents"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+keywords = [
+    "computer-use",
+    "desktop-automation",
+    "benchmark",
+    "agents",
+    "evaluation",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
-    "browserbase",
-    "httpx",
-    "jinja2",
-    "platformdirs",
-    "playwright",
-    "pydantic>=2.0",
-    "python-dotenv",
-    "pyyaml",
-    "rich",
-    "textual",
-    "typer",
+    "packaging>=24",
 ]
 
-[project.optional-dependencies]
-dev = [
-    "pytest",
-    "pytest-asyncio",
-    "ruff",
-]
-# TRAPI backends (trapi, trapi_kimi) mint Azure AD tokens; imported lazily so the
-# rest of the package still works without it.
-trapi = [
-    "azure-identity",
-]
+[project.urls]
+Homepage = "https://github.com/TheoLeeCJ/cuawright-cua"
+Repository = "https://github.com/TheoLeeCJ/cuawright-cua"
+Documentation = "https://github.com/TheoLeeCJ/cuawright-cua#readme"
+Issues = "https://github.com/TheoLeeCJ/cuawright-cua/issues"
+OSWorld = "https://github.com/xlang-ai/OSWorld-V2"
+OSWorld-Data = "https://huggingface.co/datasets/xlangai/osworld_v2_tasks"
 
 [project.scripts]
-mini-web = "miniswewebagent.run.mini:app"
-mini-swe-webagent = "miniswewebagent.run.mini:app"
-mini-web-om2w = "miniswewebagent.run.benchmarks.om2w:app"
-mini-web-probe = "miniswewebagent.run.utilities.probe_website:app"
-mini-web-extra = "miniswewebagent.run.utilities.mini_extra:main"
-mini-web-traces = "miniswewebagent.run.utilities.trace_viewer:app"
-mini-web-review = "miniswewebagent.run.utilities.review_viewer:app"
+cuawright = "cuawright.cli:main"
 
-[tool.setuptools.dynamic]
-version = {attr = "miniswewebagent.__version__"}
+[project.optional-dependencies]
+providers = [
+    "anthropic[aiohttp]>=1.0.0",
+    "openai",
+    "Pillow~=11.0.0",
+    "requests~=2.31.0",
+]
+inspection = [
+    "accelerate",
+    "beautifulsoup4",
+    "borb<3.0.0",
+    "chardet",
+    "cssselect",
+    "easyocr",
+    "fastdtw",
+    "formulas",
+    "ImageHash",
+    "librosa",
+    "lxml",
+    "matplotlib~=3.7.4",
+    "mutagen",
+    "numpy",
+    "odfpy",
+    "opencv-python~=4.8.1.78",
+    "openpyxl",
+    "pandas",
+    "pdfplumber",
+    "Pillow~=11.0.0",
+    "playwright",
+    "pyacoustid",
+    "pydrive",
+    "PyGetWindow",
+    "pymupdf",
+    "pynput~=1.7.6",
+    "pypdf",
+    "pypdf2",
+    "pytesseract",
+    "python-docx",
+    "python-pptx",
+    "rapidfuzz",
+    "scikit-image",
+    "scikit-learn",
+    "torch~=2.5.0",
+    "transformers~=4.35.2",
+    "xmltodict",
+]
+cloud-legacy = [
+    "azure-identity",
+    "azure-mgmt-compute",
+    "azure-mgmt-network",
+    "boto3",
+    "dashscope",
+    "exa_py",
+    "fabric",
+    "gdown",
+    "google-genai",
+    "google-generativeai",
+    "groq",
+    "huggingface-hub>=0.35.0",
+    "pydrive",
+    "python-gitlab>=4.5.0",
+    "tldextract>=5.3.0",
+    "together",
+    "wandb",
+    "zhipuai",
+]
+osworld = [
+    "accelerate",
+    "anthropic[aiohttp]>=1.0.0",
+    "azure-identity",
+    "azure-mgmt-compute",
+    "azure-mgmt-network",
+    "backoff",
+    "beautifulsoup4",
+    "borb<3.0.0",
+    "boto3",
+    "certifi",
+    "chardet",
+    "cssselect",
+    "dashscope",
+    "docker",
+    "easyocr",
+    "exa_py",
+    "fabric",
+    "fastapi",
+    "fastdtw",
+    "flask~=3.0.0",
+    "formulas",
+    "func-timeout",
+    "gdown",
+    "google-genai",
+    "google-generativeai",
+    "groq",
+    "gymnasium~=0.28.1",
+    "huggingface-hub>=0.35.0",
+    "ImageHash",
+    "json_minify",
+    "json_repair",
+    "librosa",
+    "loguru",
+    "lxml",
+    "matplotlib~=3.7.4",
+    "mutagen",
+    "numpy",
+    "odfpy",
+    "opencv-python~=4.8.1.78",
+    "openai",
+    "openpyxl",
+    "pandas",
+    "pdfplumber",
+    "Pillow~=11.0.0",
+    "playwright",
+    "psutil~=5.9.6",
+    "pyacoustid",
+    "pyautogui~=0.9.54",
+    "pydrive",
+    "PyGetWindow",
+    "pymupdf",
+    "pynput~=1.7.6",
+    'pyobjc; platform_system == "Darwin"',
+    "pypdf",
+    "pypdf2",
+    "pytesseract",
+    "python-docx",
+    "python-dotenv",
+    "python-gitlab>=4.5.0",
+    "python-pptx",
+    "pytz~=2024.1",
+    "PyYaml",
+    'pywinauto; platform_system == "Windows"',
+    'pywin32; platform_system == "Windows"',
+    "rapidfuzz",
+    "requests~=2.31.0",
+    "requests-toolbelt~=1.0.0",
+    "scikit-image",
+    "scikit-learn",
+    "tiktoken",
+    "tldextract>=5.3.0",
+    "toml",
+    "together",
+    "torch~=2.5.0",
+    "tqdm~=4.65.0",
+    "transformers~=4.35.2",
+    "uvicorn",
+    "wandb",
+    "websockets",
+    "xmltodict",
+    "zhipuai",
+]
+odysseys = [
+    "accelerate",
+    "anthropic[aiohttp]>=1.0.0",
+    "azure-identity",
+    "azure-mgmt-compute",
+    "azure-mgmt-network",
+    "backoff",
+    "beautifulsoup4",
+    "borb<3.0.0",
+    "boto3",
+    "certifi",
+    "chardet",
+    "cssselect",
+    "dashscope",
+    "docker",
+    "easyocr",
+    "exa_py",
+    "fabric",
+    "fastapi",
+    "fastdtw",
+    "flask~=3.0.0",
+    "formulas",
+    "func-timeout",
+    "gdown",
+    "google-genai",
+    "google-generativeai",
+    "groq",
+    "gymnasium~=0.28.1",
+    "huggingface-hub>=0.35.0",
+    "ImageHash",
+    "json_minify",
+    "json_repair",
+    "librosa",
+    "loguru",
+    "lxml",
+    "matplotlib~=3.7.4",
+    "mutagen",
+    "numpy",
+    "odfpy",
+    "opencv-python~=4.8.1.78",
+    "openai",
+    "openpyxl",
+    "pandas",
+    "pdfplumber",
+    "Pillow~=11.0.0",
+    "playwright",
+    "psutil~=5.9.6",
+    "pyacoustid",
+    "pyautogui~=0.9.54",
+    "pydrive",
+    "PyGetWindow",
+    "pymupdf",
+    "pynput~=1.7.6",
+    'pyobjc; platform_system == "Darwin"',
+    "pypdf",
+    "pypdf2",
+    "pytesseract",
+    "python-docx",
+    "python-dotenv",
+    "python-gitlab>=4.5.0",
+    "python-pptx",
+    "pytz~=2024.1",
+    "PyYaml",
+    'pywinauto; platform_system == "Windows"',
+    'pywin32; platform_system == "Windows"',
+    "rapidfuzz",
+    "requests~=2.31.0",
+    "requests-toolbelt~=1.0.0",
+    "scikit-image",
+    "scikit-learn",
+    "tiktoken",
+    "tldextract>=5.3.0",
+    "toml",
+    "together",
+    "torch~=2.5.0",
+    "tqdm~=4.65.0",
+    "transformers~=4.35.2",
+    "uvicorn",
+    "wandb",
+    "websockets",
+    "xmltodict",
+    "zhipuai",
+]
+weavebench = [
+    "anthropic[aiohttp]>=1.0.0",
+    "docker>=7.0",
+    "filelock>=3.12",
+    "flask>=3.0",
+    "gymnasium>=0.29",
+    "huggingface-hub>=0.24",
+    "lxml>=4.9",
+    "openai>=1.40",
+    "Pillow~=11.0.0",
+    "psutil>=5.9",
+    "requests>=2.31",
+    "tqdm>=4.66",
+]
+benchcad = [
+    "anthropic[aiohttp]>=1.0.0",
+    "docker",
+    "openai",
+    "Pillow~=11.0.0",
+    "requests~=2.31.0",
+]
+cadgenbench = [
+    "anthropic[aiohttp]>=1.0.0",
+    "docker",
+    "mcp>=1.9,<2",
+    "openai",
+    "Pillow~=11.0.0",
+    "pydantic>=2",
+    "PyYaml",
+    "requests~=2.31.0",
+]
+full = [
+    "accelerate",
+    "anthropic[aiohttp]>=1.0.0",
+    "azure-identity",
+    "azure-mgmt-compute",
+    "azure-mgmt-network",
+    "backoff",
+    "beautifulsoup4",
+    "borb<3.0.0",
+    "boto3",
+    "certifi",
+    "chardet",
+    "cssselect",
+    "dashscope",
+    "docker>=7.0",
+    "easyocr",
+    "exa_py",
+    "fabric",
+    "fastapi",
+    "fastdtw",
+    "filelock>=3.12",
+    "flask~=3.0.0",
+    "formulas",
+    "func-timeout",
+    "gdown",
+    "google-genai",
+    "google-generativeai",
+    "groq",
+    "gymnasium~=0.28.1",
+    "huggingface-hub>=0.35.0",
+    "ImageHash",
+    "json_minify",
+    "json_repair",
+    "librosa",
+    "loguru",
+    "lxml>=4.9",
+    "matplotlib~=3.7.4",
+    "mcp>=1.9,<2",
+    "mutagen",
+    "numpy",
+    "odfpy",
+    "opencv-python~=4.8.1.78",
+    "openai>=1.40",
+    "openpyxl",
+    "pandas",
+    "pdfplumber",
+    "Pillow~=11.0.0",
+    "playwright",
+    "psutil~=5.9.6",
+    "pyacoustid",
+    "pyautogui~=0.9.54",
+    "pydantic>=2",
+    "pydrive",
+    "PyGetWindow",
+    "pymupdf",
+    "pynput~=1.7.6",
+    'pyobjc; platform_system == "Darwin"',
+    "pypdf",
+    "pypdf2",
+    "pytesseract",
+    "python-docx",
+    "python-dotenv",
+    "python-gitlab>=4.5.0",
+    "python-pptx",
+    "pytz~=2024.1",
+    "PyYaml",
+    'pywinauto; platform_system == "Windows"',
+    'pywin32; platform_system == "Windows"',
+    "rapidfuzz",
+    "requests~=2.31.0",
+    "requests-toolbelt~=1.0.0",
+    "scikit-image",
+    "scikit-learn",
+    "tiktoken",
+    "tldextract>=5.3.0",
+    "toml",
+    "together",
+    "transformers~=4.35.2",
+    "torch~=2.5.0",
+    "tqdm~=4.65.0",
+    "uvicorn",
+    "wandb",
+    "websockets",
+    "xmltodict",
+    "zhipuai",
+]
+
+[tool.uv]
+conflicts = [
+    [
+        { extra = "full" },
+        { extra = "weavebench" },
+    ],
+    [
+        { extra = "osworld" },
+        { extra = "weavebench" },
+    ],
+    [
+        { extra = "odysseys" },
+        { extra = "weavebench" },
+    ],
+]
+
+[tool.setuptools]
+include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["miniswewebagent*"]
-
-[tool.setuptools.package-data]
-miniswewebagent = ["config/**/*", "viewer/*", "review_viewer/*"]
-
-[tool.ruff]
-line-length = 100
-target-version = "py310"
-extend-exclude = [
-    # Kept byte-for-byte identical to the pinned official OSU source.
-    "om2w_judge/methods/webjudge_online_mind2web.py",
+include = [
+    "cuawright*",
+]
+exclude = [
+    "assets*",
+    "benchmark_releases*",
+    "cache*",
+    "docs*",
+    "evaluation_examples*",
+    "logs*",
+    "monitor*",
+    "scripts*",
 ]
 
-[tool.pytest.ini_options]
-testpaths = ["tests"]
+[tool.setuptools.package-data]
+"cuawright.environments.benchcad" = ["container/*"]
+"cuawright.environments.cadgenbench" = ["container/*"]
+"cuawright" = ["releases/*.json", "releases/*.md"]
+
+[dependency-groups]
+dev = [
+    "black",
+    "pytest>=9.1.1",
+]

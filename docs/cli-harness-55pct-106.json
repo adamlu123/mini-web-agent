@@ -1,0 +1,39 @@
+{
+  "profile": "cli-harness-v2-55pct-106",
+  "task_version": "v2026.06.24",
+  "attempted_tasks": 106,
+  "excluded_tasks": [
+    "026",
+    "041"
+  ],
+  "evaluated_tasks": 103,
+  "failed_zero": [
+    "060",
+    "082",
+    "086"
+  ],
+  "score_sum": 58.33904089974321,
+  "effective_mean": 0.5503683103749359,
+  "evaluated_mean": 0.5663984553373127,
+  "strict_full_count": 19,
+  "strict_binary": 0.1792452830188679,
+  "usage": {
+    "input_tokens": 532096464,
+    "cached_input_tokens": 350042240,
+    "output_tokens": 12592839,
+    "successful_calls": 18126
+  },
+  "estimated_list_cost_usd": 1463.07741,
+  "estimated_cost_per_attempted_task_usd": 13.802617075471696,
+  "result_roots": [
+    "results-actor-repair48-20260811-134300",
+    "results-actor-repair-rest58-20260811-155139",
+    "results-actor-repair-gateway12-retry-20260812-005203"
+  ],
+  "provenance": {
+    "initial_panels_commit": "ff500d9",
+    "gateway_retry_commit": "b091c78",
+    "default_harness_behavior_commit": "b091c78",
+    "single_commit_full_rerun": false
+  }
+}

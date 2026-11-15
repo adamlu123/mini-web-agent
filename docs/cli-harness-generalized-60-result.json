@@ -1,0 +1,80 @@
+{
+  "profile": "cli-harness-v2-generalized-next",
+  "behavior_commit": "0c72d74b3bb40a18ada2e24209a335afe377dfcd",
+  "result_root": "results-generalized60-w54-fixed-20260813T133828Z",
+  "task_version": "v2026.06.24",
+  "tasks": 60,
+  "concurrency": 54,
+  "model": "gpt-5.5",
+  "reasoning_effort": "xhigh",
+  "total_steps": 300,
+  "evaluated_tasks": 53,
+  "failed_zero": [
+    "021",
+    "024",
+    "042",
+    "048",
+    "056",
+    "060",
+    "082"
+  ],
+  "score_sum": 34.3663280250627,
+  "effective_mean": 0.572772133751045,
+  "evaluated_mean": 0.6484212834917491,
+  "strict_full_count": 17,
+  "promotion": false,
+  "disposition": "rejected_archival_only",
+  "future_development_base": {
+    "branch": "master",
+    "behavior_commit": "b091c78",
+    "reproduction_tag": "cli-harness-v2-55pct-106-repro-v7"
+  },
+  "postmortem": "docs/CLI_HARNESS_GENERALIZED_60_POSTMORTEM.md",
+  "protection_regressions": [
+    "095",
+    "100"
+  ],
+  "direct_harness_regressions": [
+    "024",
+    "042",
+    "050",
+    "095",
+    "100",
+    "103"
+  ],
+  "mechanism_consistent_signals": {
+    "canonical_active_surface": [
+      "062"
+    ],
+    "field_scoped_probe_candidate": [
+      "080"
+    ],
+    "conditional_missing_action_repair": [
+      "019"
+    ],
+    "infrastructure_recovery": [
+      "081"
+    ]
+  },
+  "continuation": {
+    "completion": [
+      "047",
+      "050",
+      "055",
+      "056"
+    ],
+    "local_repair": [
+      "019"
+    ],
+    "rollback_restored": [
+      "019"
+    ]
+  },
+  "forced_verifier_tasks": [
+    "019",
+    "055",
+    "060"
+  ],
+  "response_retries": 193,
+  "infrastructure_events": 3
+}
